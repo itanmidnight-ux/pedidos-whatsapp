@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Pedidos WA - Preview</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Segoe UI',sans-serif;background:#f0f4f0;display:flex;justify-content:center;align-items:flex-start;min-height:100vh;padding:20px;gap:24px;flex-wrap:wrap}
+.phone{width:375px;height:780px;background:#fff;border-radius:40px;box-shadow:0 20px 60px rgba(0,0,0,0.25),inset 0 0 0 2px #ddd;overflow:hidden;position:relative;flex-shrink:0}
+.screen{display:none;height:100%;flex-direction:column;position:absolute;width:100%;top:0;left:0}
+.screen.active{display:flex}
+.appbar{background:#2E7D32;color:#fff;padding:48px 16px 12px;display:flex;align-items:center;justify-content:space-between}
+.appbar h1{font-size:18px;font-weight:700}
+.appbar-icons{display:flex;gap:12px;opacity:.9}
+.nav-bar{background:#fff;border-top:1px solid #e0e0e0;display:flex;height:64px;flex-shrink:0}
+.nav-item{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;cursor:pointer;color:#666;font-size:11px;transition:.2s}
+.nav-item.active{color:#2E7D32}
+.nav-item svg{width:22px;height:22px}
+.badge{background:#2E7D32;color:#fff;border-radius:10px;font-size:9px;padding:1px 5px;position:relative;top:-2px}
+.content{flex:1;overflow-y:auto;background:#f5f7f5;padding:8px}
+/* Order Cards */
+.order-card{background:#fff;border-radius:16px;padding:14px;margin-bottom:8px;box-shadow:0 2px 8px rgba(0,0,0,.06);position:relative;overflow:hidden;cursor:pointer;transition:.15s}
+.order-card:active{transform:scale(.98)}
+.order-card .slide-hint{position:absolute;right:0;top:0;bottom:0;width:4px;background:linear-gradient(#2E7D32,#4CAF50);border-radius:0 16px 16px 0;opacity:.3}
+.oc-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.oc-name{font-weight:700;font-size:14px;color:#1a1a1a}
+.badge-fiado{background:#FFF3E0;color:#E65100;border-radius:10px;font-size:10px;padding:2px 8px;font-weight:700}
+.badge-pending{background:#FFEBEE;color:#c62828;border-radius:8px;font-size:9px;padding:1px 6px;font-weight:700}
+.oc-row{display:flex;align-items:center;gap:6px;margin:3px 0;font-size:13px;color:#444}
+.oc-row svg{width:15px;height:15px;flex-shrink:0}
+.oc-price{color:#2E7D32;font-weight:700;margin-left:auto}
+.oc-time{font-size:11px;color:#999;margin-top:4px;display:flex;align-items:center;gap:4px}
+.oc-time.overdue{color:#c62828;font-weight:700}
+/* Product cards */
+.prod-card{background:#fff;border-radius:16px;padding:14px;margin-bottom:8px;box-shadow:0 2px 8px rgba(0,0,0,.06);display:flex;align-items:center;gap:12px;cursor:pointer}
+.prod-icon{width:44px;height:44px;background:#E8F5E9;border-radius:12px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.prod-info{flex:1}
+.prod-name{font-weight:700;font-size:14px;color:#1a1a1a}
+.prod-aliases{font-size:11px;color:#888;margin-top:2px}
+.prod-price{font-weight:700;color:#2E7D32;font-size:14px}
+.prod-badges{display:flex;gap:4px;margin-top:4px}
+.pbadge{font-size:9px;padding:2px 6px;border-radius:6px;font-weight:700}
+.pbadge.fav{background:#FFF9C4;color:#F57F17}
+.pbadge.nofia{background:#FFEBEE;color:#c62828}
+.pbadge.nodis{background:#FFF3E0;color:#E65100}
+/* FAB */
+.fab{position:absolute;bottom:76px;right:16px;background:#2E7D32;color:#fff;border:none;border-radius:16px;padding:12px 18px;font-size:14px;font-weight:600;display:flex;align-items:center;gap:8px;box-shadow:0 4px 16px rgba(46,125,50,.4);cursor:pointer}
+.fab svg{width:20px;height:20px}
+/* Login */
+.login-bg{background:linear-gradient(160deg,#1B5E20 0%,#2E7D32 60%,#388E3C 100%);flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:32px}
+.login-icon{width:80px;height:80px;background:rgba(255,255,255,.15);border-radius:24px;display:flex;align-items:center;justify-content:center;margin-bottom:16px}
+.login-title{color:#fff;font-size:28px;font-weight:800;margin-bottom:4px}
+.login-sub{color:rgba(255,255,255,.7);font-size:13px;margin-bottom:36px}
+.login-card{background:#fff;border-radius:20px;padding:24px;width:100%;box-shadow:0 20px 40px rgba(0,0,0,.15)}
+.field{margin-bottom:16px}
+.field label{font-size:12px;color:#666;margin-bottom:4px;display:block;font-weight:600}
+.field input{width:100%;border:1.5px solid #e0e0e0;border-radius:10px;padding:11px 14px;font-size:14px;outline:none}
+.field input:focus{border-color:#2E7D32}
+.btn-login{width:100%;background:#2E7D32;color:#fff;border:none;border-radius:12px;padding:14px;font-size:16px;font-weight:700;cursor:pointer;margin-top:4px}
+/* Modal */
+.modal-overlay{position:absolute;inset:0;background:rgba(0,0,0,.5);z-index:10;display:flex;align-items:flex-end}
+.modal-sheet{background:#fff;border-radius:24px 24px 0 0;padding:20px;width:100%;max-height:85%}
+.modal-handle{width:40px;height:4px;background:#e0e0e0;border-radius:2px;margin:0 auto 16px}
+.modal-title{font-size:18px;font-weight:700;margin-bottom:16px}
+.modal-divider{height:1px;background:#f0f0f0;margin:14px 0}
+.modal-row{display:flex;gap:10px;align-items:flex-start;padding:6px 0}
+.modal-row svg{width:18px;height:18px;color:#2E7D32;flex-shrink:0;margin-top:2px}
+.modal-label{font-size:11px;color:#999}
+.modal-value{font-size:14px;color:#1a1a1a;font-weight:500}
+.wa-bubble{background:#DCF8C6;border-radius:12px;padding:12px;font-size:13px;color:#333;line-height:1.4;margin:12px 0}
+.btn-deliver{width:100%;background:#2E7D32;color:#fff;border:none;border-radius:12px;padding:13px;font-size:14px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;margin-top:8px}
+/* Nav selector */
+.screen-tabs{display:flex;gap:8px;justify-content:center;margin:16px 0;flex-wrap:wrap}
+.stab{padding:8px 16px;border-radius:20px;cursor:pointer;font-size:13px;border:2px solid #2E7D32;color:#2E7D32;font-weight:600;transition:.2s}
+.stab.active{background:#2E7D32;color:#fff}
+.empty-state{display:flex;flex-direction:column;align-items:center;justify-content:center;flex:1;color:#aaa;gap:8px;font-size:14px}
+</style>
+</head>
+<body>
+
+<div style="text-align:center;width:100%">
+  <h2 style="color:#2E7D32;font-size:22px;font-weight:800;margin-bottom:4px">📱 Pedidos WhatsApp — Vista Previa</h2>
+  <p style="color:#666;margin-bottom:16px;font-size:14px">Haz clic en las pestañas para explorar cada pantalla</p>
+  <div class="screen-tabs">
+    <div class="stab active" onclick="showScreen('login')">🔐 Login</div>
+    <div class="stab" onclick="showScreen('dashboard')">📦 Pedidos</div>
+    <div class="stab" onclick="showScreen('productos')">🐾 Productos</div>
+    <div class="stab" onclick="showScreen('detalle')">🧾 Detalle Pedido</div>
+  </div>
+</div>
+
+<!-- PHONE -->
+<div class="phone">
+
+  <!-- LOGIN -->
+  <div class="screen active" id="screen-login">
+    <div class="login-bg">
+      <div class="login-icon">
+        <svg fill="white" viewBox="0 0 24 24" width="42" height="42"><path d="M20 7H4a2 2 0 00-2 2v9a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2z"/><path d="M16 7V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v2"/></svg>
+      </div>
+      <div class="login-title">Pedidos</div>
+      <div class="login-sub">Sistema de gestión WhatsApp</div>
+      <div class="login-card">
+        <div class="field">
+          <label>URL del servidor</label>
+          <input type="text" value="https://francoise-subhumid-maire.ngrok-free.dev" readonly>
+        </div>
+        <div class="field">
+          <label>PIN de acceso</label>
+          <input type="password" value="1234" readonly>
+        </div>
+        <button class="btn-login" onclick="showScreen('dashboard')">Ingresar →</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- DASHBOARD -->
+  <div class="screen" id="screen-dashboard">
+    <div class="appbar">
+      <h1>Pedidos Activos</h1>
+      <div class="appbar-icons">
+        <svg fill="white" viewBox="0 0 24 24" width="20" height="20"><path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z"/></svg>
+      </div>
+    </div>
+    <div class="content">
+      <!-- Card 1 -->
+      <div class="order-card" onclick="showScreen('detalle')">
+        <div class="slide-hint"></div>
+        <div class="oc-header">
+          <div class="oc-name">María López</div>
+          <div class="badge-fiado">FIADO</div>
+        </div>
+        <div class="oc-row">
+          <svg fill="#2E7D32" viewBox="0 0 24 24"><path d="M20 7H4a2 2 0 00-2 2v9a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2z"/></svg>
+          Purina Dog Chow
+          <div class="oc-price">$85,000</div>
+        </div>
+        <div class="oc-row">
+          <svg fill="#999" viewBox="0 0 24 24"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg>
+          Para donde Doña Juanita
+        </div>
+        <div class="oc-time">🕐 Hoy 08:32 AM <span style="margin-left:auto">💬</span></div>
+      </div>
+      <!-- Card 2 -->
+      <div class="order-card" onclick="showScreen('detalle')">
+        <div class="slide-hint"></div>
+        <div class="oc-header">
+          <div class="oc-name">Pedro Martínez</div>
+        </div>
+        <div class="oc-row">
+          <svg fill="#2E7D32" viewBox="0 0 24 24"><path d="M20 7H4a2 2 0 00-2 2v9a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2z"/></svg>
+          Cat Chow Adulto
+          <div class="oc-price">$45,000</div>
+        </div>
+        <div class="oc-row">
+          <svg fill="#999" viewBox="0 0 24 24"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg>
+          Barrio El Carmen, Cra 5 #12-34
+        </div>
+        <div class="oc-time">🕐 Hoy 09:15 AM</div>
+      </div>
+      <!-- Card 3 pendiente -->
+      <div class="order-card" onclick="showScreen('detalle')">
+        <div class="slide-hint"></div>
+        <div class="oc-header">
+          <div class="oc-name">573001234567</div>
+          <div class="badge-pending">PENDIENTE</div>
+        </div>
+        <div class="oc-row">
+          <svg fill="#2E7D32" viewBox="0 0 24 24"><path d="M20 7H4a2 2 0 00-2 2v9a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2z"/></svg>
+          Dog Chow Cachorros
+          <div class="oc-price">$92,000</div>
+        </div>
+        <div class="oc-row">
+          <svg fill="#999" viewBox="0 0 24 24"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg>
+          Calle 15 #8-22 Apto 301
+        </div>
+        <div class="oc-time overdue">⚠️ Ayer 04:20 PM &nbsp;<span class="badge-pending">PENDIENTE</span></div>
+      </div>
+      <p style="text-align:center;color:#aaa;font-size:12px;margin-top:8px">← Desliza tarjeta para marcar ENTREGADO →</p>
+    </div>
+    <div class="nav-bar">
+      <div class="nav-item active">
+        <svg fill="currentColor" viewBox="0 0 24 24"><path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"/></svg>
+        Pedidos <span class="badge">3</span>
+      </div>
+      <div class="nav-item" onclick="showScreen('productos')">
+        <svg fill="currentColor" viewBox="0 0 24 24"><path d="M20 7H4a2 2 0 00-2 2v9a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2z"/><path d="M16 7V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v2"/></svg>
+        Productos
+      </div>
+    </div>
+  </div>
+
+  <!-- PRODUCTOS -->
+  <div class="screen" id="screen-productos">
+    <div class="appbar">
+      <h1>Productos</h1>
+      <div class="appbar-icons">
+        <svg fill="white" viewBox="0 0 24 24" width="20" height="20"><path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z"/></svg>
+      </div>
+    </div>
+    <div class="content">
+      <div class="prod-card">
+        <div class="prod-icon">⭐</div>
+        <div class="prod-info">
+          <div class="prod-name">Purina Dog Chow</div>
+          <div class="prod-aliases">purina, dog chow, puri</div>
+          <div class="prod-badges"><span class="pbadge fav">★ Favorito</span></div>
+        </div>
+        <div class="prod-price">$85,000</div>
+      </div>
+      <div class="prod-card">
+        <div class="prod-icon">🐱</div>
+        <div class="prod-info">
+          <div class="prod-name">Cat Chow Adulto</div>
+          <div class="prod-aliases">cat chow, gatos</div>
+          <div class="prod-badges"></div>
+        </div>
+        <div class="prod-price">$45,000</div>
+      </div>
+      <div class="prod-card">
+        <div class="prod-icon">🐶</div>
+        <div class="prod-info">
+          <div class="prod-name">Dog Chow Cachorros</div>
+          <div class="prod-aliases">cachorros, perrito</div>
+          <div class="prod-badges"><span class="pbadge nofia">🚫 No se fía</span></div>
+        </div>
+        <div class="prod-price">$92,000</div>
+      </div>
+      <div class="prod-card" style="opacity:.5">
+        <div class="prod-icon">📦</div>
+        <div class="prod-info">
+          <div class="prod-name">Pro Plan Adulto</div>
+          <div class="prod-aliases">proplan, pro plan</div>
+          <div class="prod-badges"><span class="pbadge nodis">⏸ No disponible</span></div>
+        </div>
+        <div class="prod-price">$120,000</div>
+      </div>
+      <p style="text-align:center;color:#aaa;font-size:11px;margin-top:8px">Mantén presionado para seleccionar y ver opciones</p>
+    </div>
+    <button class="fab">
+      <svg fill="white" viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+      Producto
+    </button>
+    <div class="nav-bar">
+      <div class="nav-item" onclick="showScreen('dashboard')">
+        <svg fill="currentColor" viewBox="0 0 24 24"><path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"/></svg>
+        Pedidos
+      </div>
+      <div class="nav-item active">
+        <svg fill="currentColor" viewBox="0 0 24 24"><path d="M20 7H4a2 2 0 00-2 2v9a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2z"/><path d="M16 7V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v2"/></svg>
+        Productos
+      </div>
+    </div>
+  </div>
+
+  <!-- DETALLE PEDIDO -->
+  <div class="screen" id="screen-detalle">
+    <div class="appbar">
+      <h1>Pedidos Activos</h1>
+    </div>
+    <div class="content" style="position:relative">
+      <div class="order-card" style="opacity:.4">
+        <div class="oc-header"><div class="oc-name">María López</div><div class="badge-fiado">FIADO</div></div>
+        <div class="oc-row" style="font-size:12px">Purina Dog Chow &nbsp; <div class="oc-price">$85,000</div></div>
+      </div>
+    </div>
+    <!-- Modal detalle -->
+    <div class="modal-overlay">
+      <div class="modal-sheet">
+        <div class="modal-handle"></div>
+        <div class="modal-title">Detalle del Pedido</div>
+        <div class="modal-divider"></div>
+        <div class="modal-row">
+          <svg fill="#2E7D32" viewBox="0 0 24 24"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+          <div><div class="modal-label">Cliente</div><div class="modal-value">María López · 573001111111</div></div>
+        </div>
+        <div class="modal-row">
+          <svg fill="#2E7D32" viewBox="0 0 24 24"><path d="M20 7H4a2 2 0 00-2 2v9a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2z"/></svg>
+          <div><div class="modal-label">Producto</div><div class="modal-value">Purina Dog Chow — $85,000</div></div>
+        </div>
+        <div class="modal-row">
+          <svg fill="#2E7D32" viewBox="0 0 24 24"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg>
+          <div><div class="modal-label">Dirección</div><div class="modal-value">Para donde Doña Juanita</div></div>
+        </div>
+        <div class="modal-row">
+          <svg fill="#E65100" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
+          <div><div class="modal-label">Pago</div><div class="modal-value" style="color:#E65100;font-weight:700">FIADO — "mañana le pago"</div></div>
+        </div>
+        <div class="modal-row">
+          <svg fill="#2E7D32" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm.5 5H11v6l5.25 3.15.75-1.23-4.5-2.67V7z"/></svg>
+          <div><div class="modal-label">Solicitado</div><div class="modal-value">30/05/2026 08:32 AM</div></div>
+        </div>
+        <div class="modal-divider"></div>
+        <div style="font-size:12px;font-weight:700;margin-bottom:6px;color:#333">Mensaje original WhatsApp</div>
+        <div class="wa-bubble">me regalas un bulto de purina para donde doña juanita, mañana le pago 🙏</div>
+        <button class="btn-deliver" onclick="showScreen('dashboard')">
+          <svg fill="white" viewBox="0 0 24 24" width="18" height="18"><path d="M9 16.2L4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4L9 16.2z"/></svg>
+          Marcar como ENTREGADO
+        </button>
+      </div>
+    </div>
+    <div class="nav-bar">
+      <div class="nav-item active" onclick="showScreen('dashboard')">
+        <svg fill="currentColor" viewBox="0 0 24 24"><path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"/></svg>
+        Pedidos
+      </div>
+      <div class="nav-item" onclick="showScreen('productos')">
+        <svg fill="currentColor" viewBox="0 0 24 24"><path d="M20 7H4a2 2 0 00-2 2v9a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2z"/></svg>
+        Productos
+      </div>
+    </div>
+  </div>
+
+</div><!-- /phone -->
+
+<!-- Info lateral -->
+<div style="max-width:300px;padding:10px">
+  <h3 style="color:#2E7D32;margin-bottom:12px;font-size:16px">ℹ️ Funcionalidades</h3>
+  <div style="background:#fff;border-radius:12px;padding:16px;box-shadow:0 2px 12px rgba(0,0,0,.08);margin-bottom:12px">
+    <b style="color:#2E7D32">📦 Dashboard</b>
+    <ul style="margin:8px 0 0 16px;font-size:13px;color:#555;line-height:1.8">
+      <li>Tarjetas de pedidos en tiempo real</li>
+      <li>Deslizar → botón ENTREGADO</li>
+      <li>Badge PENDIENTE en rojo (días anteriores)</li>
+      <li>Badge FIADO en naranja</li>
+      <li>Toque largo → comentar / ver detalle</li>
+      <li>Modo offline con cache local</li>
+    </ul>
+  </div>
+  <div style="background:#fff;border-radius:12px;padding:16px;box-shadow:0 2px 12px rgba(0,0,0,.08);margin-bottom:12px">
+    <b style="color:#2E7D32">🐾 Productos</b>
+    <ul style="margin:8px 0 0 16px;font-size:13px;color:#555;line-height:1.8">
+      <li>FAB (+) → agregar producto</li>
+      <li>Nombre, precio, aliases/apodos</li>
+      <li>Toque largo → selección múltiple</li>
+      <li>Opciones: Favorito ⭐ | No disponible | No se fía | Eliminar</li>
+    </ul>
+  </div>
+  <div style="background:#fff;border-radius:12px;padding:16px;box-shadow:0 2px 12px rgba(0,0,0,.08)">
+    <b style="color:#2E7D32">🧾 Detalle Pedido</b>
+    <ul style="margin:8px 0 0 16px;font-size:13px;color:#555;line-height:1.8">
+      <li>Mensaje original de WhatsApp</li>
+      <li>Datos extraídos por IA</li>
+      <li>Campo de comentarios</li>
+      <li>Botón marcar entregado</li>
+      <li>PDF diario a las 11:59 PM</li>
+    </ul>
+  </div>
+</div>
+
+<script>
+function showScreen(id) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.stab').forEach(t => t.classList.remove('active'));
+  document.getElementById('screen-' + id).classList.add('active');
+  const map = {login:0, dashboard:1, productos:2, detalle:3};
+  document.querySelectorAll('.stab')[map[id]]?.classList.add('active');
+}
+</script>
+</body>
+</html>
