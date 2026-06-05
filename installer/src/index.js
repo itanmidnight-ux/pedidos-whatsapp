@@ -304,7 +304,7 @@ async function ensureNpmDeps(sp, envPath) {
   sp.text = 'Verificando dependencias npm...';
 
   // Validar todas las dependencias críticas, no solo express
-  const criticalDeps = ['express', 'better-sqlite3', 'whatsapp-web.js'];
+  const criticalDeps = ['express', 'better-sqlite3', '@whiskeysockets/baileys'];
   const allInstalled = criticalDeps.every(dep =>
     exists(path.join(SERVER_DIR, 'node_modules', dep))
   );
