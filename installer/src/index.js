@@ -432,7 +432,7 @@ svc.install();
 setTimeout(() => process.exit(0), 15000);
 `.trim();
 
-async function stopExistingService(sp) {
+async function stopExistingService(sp, envPath) {
   sp.text = 'Verificando servicio existente...';
   const status = run(`sc query ${SVC_NAME}`);
   if (!status) { sp.succeed(chalk.green('Sin instalación previa ✓')); return; }
@@ -451,8 +451,9 @@ svc.uninstall();
 setTimeout(() => process.exit(0), 10000);
 `.trim());
 
+  const nodeEnv = { ...process.env, PATH: envPath };
   try {
-    runOrThrow(`node "${uninstallScript}"`, { cwd: SERVER_DIR, timeout: 15000 });
+    runOrThrow(`node "${uninstallScript}"`, { cwd: SERVER_DIR, env: nodeEnv, timeout: 15000 });
   } catch { /* ignorar */ }
   try { fs.unlinkSync(uninstallScript); } catch { /* ignore */ }
   await delay(3000);
@@ -472,7 +473,7 @@ async function installService(sp, envPath) {
   write(installScript, SVC_SCRIPT(process.execPath, SERVER_DIR));
 
   try {
-    runOrThrow(`node "${installScript}"`, { cwd: SERVER_DIR, timeout: 30000 });
+    runOrThrow(`node "${installScript}"`, { cwd: SERVER_DIR, env: { ...process.env, PATH: envPath }, timeout: 30000 });
     await delay(5000);
     try { fs.unlinkSync(installScript); } catch { /* ignore */ }
     sp.succeed(chalk.green('Servicio Windows instalado ✓'));
@@ -622,7 +623,7 @@ async function main() {
 
   // ── Servicio Windows ──────────────────────────────────────
   sp = ora({ color: 'green' }).start();
-  await stopExistingService(sp);
+  await stopExistingService(sp, envPath);
 
   sp = ora({ color: 'green' }).start();
   await installService(sp, envPath);

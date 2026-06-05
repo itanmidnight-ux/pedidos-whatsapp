@@ -78,17 +78,21 @@ if ($javaCmd) {
 
 # -- 2. Flutter -----------------------------------------------
 step "Verificando Flutter..."
-try {
-    $fv = & flutter --version 2>&1 | Select-String "Flutter"
-    ok "Flutter: $($fv -replace 'Flutter (\S+).*','$1')"
-} catch {
+# Use junction C:\devflutter to avoid spaces-in-path bug with objective_c native assets hook
+$FLUTTER = if (Test-Path "C:\devflutter\bin\flutter.bat") {
+    "C:\devflutter\bin\flutter.bat"
+} else {
+    "$env:USERPROFILE\scoop\apps\flutter\current\bin\flutter.bat"
+}
+if (-not (Test-Path $FLUTTER)) {
     warn "Flutter no encontrado. Instalando via Scoop..."
     & "$env:USERPROFILE\scoop\shims\scoop.cmd" bucket add extras 2>$null
     & "$env:USERPROFILE\scoop\shims\scoop.cmd" install flutter 2>&1 | Select-Object -Last 3
     $env:PATH = "$env:USERPROFILE\scoop\apps\flutter\current\bin;$env:PATH"
-    try { $fv2 = & flutter --version 2>&1 | Select-String "Flutter"; ok "Flutter instalado: $fv2" }
-    catch { fail "Flutter no pudo instalarse." }
+    if (-not (Test-Path $FLUTTER)) { fail "Flutter no pudo instalarse." }
 }
+$fv = & $FLUTTER --version 2>&1 | Select-String "Flutter"
+ok "Flutter: $($fv -replace 'Flutter (\S+).*','$1') [$FLUTTER]"
 
 # -- 3. Android SDK -------------------------------------------
 step "Verificando Android SDK..."
@@ -153,8 +157,10 @@ $sdkConfigured = (Test-Path (Join-Path $SDK "platform-tools\adb.exe")) -and
                  ($env:ANDROID_HOME -or $env:ANDROID_SDK_ROOT)
 if (-not $sdkConfigured) {
     warn "Configurando Android SDK en Flutter..."
-    & flutter config --android-sdk $SDK 2>&1 | Out-Null
-    "y" | & flutter doctor --android-licenses 2>&1 | Out-Null
+    $ErrorActionPreference = 'Continue'
+    & $FLUTTER config --android-sdk $SDK 2>&1 | Out-Null
+    "y" | & $FLUTTER doctor --android-licenses 2>&1 | Out-Null
+    $ErrorActionPreference = 'Stop'
 }
 ok "Flutter configurado"
 
@@ -167,8 +173,11 @@ $pkgConfig  = Join-Path $APPDIR ".dart_tool\package_config.json"
 $pubFresh   = (Test-Path $pubLock) -and (Test-Path $pkgConfig) -and
               ((Get-Item $pubLock).LastWriteTime -ge (Get-Item $pubYaml).LastWriteTime)
 if (-not $pubFresh -or $Clean) {
-    & flutter pub get 2>&1 | Select-Object -Last 3
-    if ($LASTEXITCODE -ne 0) { fail "flutter pub get fallo" }
+    $ErrorActionPreference = 'Continue'
+    & $FLUTTER pub get 2>&1 | Select-Object -Last 3
+    $pubExitCode = $LASTEXITCODE
+    $ErrorActionPreference = 'Stop'
+    if ($pubExitCode -ne 0) { fail "flutter pub get fallo" }
     ok "Dependencias actualizadas"
 } else {
     ok "Dependencias OK (cache)"
@@ -177,18 +186,25 @@ if (-not $pubFresh -or $Clean) {
 # -- 6. Clean (opcional) --------------------------------------
 if ($Clean) {
     step "Limpiando build anterior..."
-    & flutter clean 2>&1 | Out-Null
+    $ErrorActionPreference = 'Continue'
+    & $FLUTTER clean 2>&1 | Out-Null
+    $ErrorActionPreference = 'Stop'
     ok "Clean completado"
 }
 
 # -- 7. Build APK ---------------------------------------------
 step "Compilando APK release (arm64 optimizado)..."
-Write-Host "  >> minSdk 23 | targetSdk 35 | platform arm64-only`n"
+Write-Host "  >> minSdk 23 | targetSdk 36 | platform arm64-only`n"
 
-$buildOut = & flutter build apk --release --no-pub --target-platform android-arm64 --obfuscate --split-debug-info="$APPDIR\debug-symbols" 2>&1
-$buildOut | Select-String "error:|Error:|warning:" -ErrorAction SilentlyContinue | ForEach-Object { warn $_ }
+# Flutter may write KGP WARNINGs to stderr — suspend Stop to avoid false failure
+$ErrorActionPreference = 'Continue'
+$buildOut = & $FLUTTER build apk --release --no-pub --target-platform android-arm64 --obfuscate --split-debug-info="$APPDIR\debug-symbols" 2>&1
+$buildExitCode = $LASTEXITCODE
+$ErrorActionPreference = 'Stop'
 
-if ($LASTEXITCODE -ne 0) {
+$buildOut | Select-String "error:|Error:" -ErrorAction SilentlyContinue | ForEach-Object { warn $_ }
+
+if ($buildExitCode -ne 0) {
     $buildOut | Select-Object -Last 20 | ForEach-Object { Write-Host $_ }
     fail "flutter build apk fallo (ver arriba)"
 }
