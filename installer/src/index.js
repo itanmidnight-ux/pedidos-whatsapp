@@ -24,13 +24,14 @@ const NODE_VERSION  = '20.20.2';
 
 // ── Credenciales pre-configuradas ────────────────────────────
 const ENV_DEFAULTS = {
-  PORT:        '3000',
-  API_KEY:     '80721f27d4b9e6b1250ccf94f5356f1d9368993ffd0e51d1d9470754e85b9171',
-  JWT_SECRET:  'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2',
-  NGROK_DOMAIN: NGROK_DOMAIN,
-  OLLAMA_MODEL: 'llama3.2:1b',
-  WORKER_PIN:  '1234',
-  BOT_ENABLED: 'true',
+  PORT:           '3000',
+  API_KEY:        '80721f27d4b9e6b1250ccf94f5356f1d9368993ffd0e51d1d9470754e85b9171',
+  JWT_SECRET:     'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2',
+  NGROK_AUTHTOKEN: NGROK_TOKEN,
+  NGROK_DOMAIN:   NGROK_DOMAIN,
+  OLLAMA_MODEL:   'llama3.2:1b',
+  WORKER_PIN:     '1234',
+  BOT_ENABLED:    'true',
 };
 
 // ── Helpers ───────────────────────────────────────────────────
@@ -83,32 +84,58 @@ async function isAdmin() {
   catch { return false; }
 }
 
+// Directorios conocidos donde puede instalarse Node.js en cualquier Windows
+const NODE_DIRS = [
+  'C:\\Program Files\\nodejs',
+  path.join(process.env.ProgramFiles || 'C:\\Program Files', 'nodejs'),
+  path.join(process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)', 'nodejs'),
+  'C:\\nodejs',
+  path.join(INSTALL_DIR, 'node'),
+].filter((v, i, a) => v && a.indexOf(v) === i); // dedup
+
 function nodePATH() {
-  const candidates = [
-    'C:\\Program Files\\nodejs',
-    path.join(process.env.ProgramFiles || '', 'nodejs'),
-    path.join(INSTALL_DIR, 'node'),
-  ];
-  return process.env.PATH + ';' + candidates.join(';');
+  return process.env.PATH + ';' + NODE_DIRS.join(';');
 }
 
-function ngrokPATH() { return nodePATH() + ';' + path.join(INSTALL_DIR, 'ngrok'); }
+function ngrokPATH(base) {
+  return (base || nodePATH()) + ';' + path.join(INSTALL_DIR, 'ngrok');
+}
+
+// Detecta node en cualquier Windows: primero PATH, luego paths absolutos
+function detectNode(searchPath) {
+  const v = run('node --version', { env: { ...process.env, PATH: searchPath } });
+  if (v) {
+    const major = parseInt(v.replace(/[^0-9]/, ''));
+    if (major >= NODE_REQUIRED) return { version: v, path: searchPath };
+  }
+  for (const dir of NODE_DIRS) {
+    const exe = path.join(dir, 'node.exe');
+    if (exists(exe)) {
+      const v2 = run(`"${exe}" --version`);
+      if (v2) {
+        const major2 = parseInt(v2.replace(/[^0-9]/, ''));
+        if (major2 >= NODE_REQUIRED) return { version: v2, path: searchPath + ';' + dir };
+      }
+    }
+  }
+  return null;
+}
 
 // ── PASO 1: Node.js ───────────────────────────────────────────
 async function ensureNode(sp) {
   sp.text = 'Verificando Node.js...';
-  const fullPath = nodePATH();
+  const basePath = nodePATH();
 
-  const v = run('node --version', { env: { ...process.env, PATH: fullPath } });
-  const major = v ? parseInt(v.replace(/[^0-9]/, '')) : 0;
-
-  if (major >= NODE_REQUIRED) {
-    sp.succeed(chalk.green(`Node.js ${v} ✓`));
-    return fullPath;
+  // ¿Ya está instalado?
+  const existing = detectNode(basePath);
+  if (existing) {
+    sp.succeed(chalk.green(`Node.js ${existing.version} ✓`));
+    return existing.path;
   }
 
+  // Descargar e instalar MSI oficial
   sp.text = `Descargando Node.js ${NODE_VERSION} LTS...`;
-  const msi = path.join(os.tmpdir(), 'node-setup.msi');
+  const msi = path.join(os.tmpdir(), `node-v${NODE_VERSION}-x64.msi`);
 
   try {
     if (!exists(msi)) {
@@ -118,18 +145,51 @@ async function ensureNode(sp) {
       );
     }
     sp.text = 'Instalando Node.js (puede tardar 2 min)...';
-    runOrThrow(
-      `msiexec /i "${msi}" /quiet /norestart ADDLOCAL=ALL`,
-      { timeout: 300000 }
-    );
-    try { fs.unlinkSync(msi); } catch { /* ignore */ }
+    runOrThrow(`msiexec /i "${msi}" /quiet /norestart ADDLOCAL=ALL`, { timeout: 300000 });
+    // NO borrar MSI todavía — se borra solo si verificación es exitosa
 
-    const v2 = run('node --version', { env: { ...process.env, PATH: fullPath } });
-    if (v2) { sp.succeed(chalk.green(`Node.js ${v2} instalado ✓`)); return fullPath; }
-    sp.warn(chalk.yellow('Node.js instalado — reinicia el instalador'));
-    process.exit(0);
+    // Windows necesita un momento para registrar la instalación
+    await delay(2000);
+
+    // Verificar usando path absoluto directo (bypass PATH refresh)
+    const installed = detectNode(basePath);
+    if (installed) {
+      try { fs.unlinkSync(msi); } catch { /* ignore */ }
+      sp.succeed(chalk.green(`Node.js ${installed.version} instalado ✓`));
+      return installed.path;
+    }
+
+    // Fallback: winget (Windows 10 1809+ y Server 2019+)
+    sp.text = 'Instalando Node.js via winget (método alternativo)...';
+    try {
+      runOrThrow(
+        'winget install OpenJS.NodeJS.LTS -e --silent --accept-source-agreements --accept-package-agreements',
+        { timeout: 300000 }
+      );
+      await delay(2000);
+      const installed2 = detectNode(basePath);
+      if (installed2) {
+        try { fs.unlinkSync(msi); } catch { /* ignore */ }
+        sp.succeed(chalk.green(`Node.js ${installed2.version} instalado ✓`));
+        return installed2.path;
+      }
+    } catch { /* winget no disponible en este Windows */ }
+
+    // Último recurso: node.exe existe físicamente pero aún no es ejecutable
+    // (puede pasar si Windows Installer tiene pending reboot parcial)
+    for (const dir of NODE_DIRS) {
+      if (exists(path.join(dir, 'node.exe'))) {
+        try { fs.unlinkSync(msi); } catch { /* ignore */ }
+        sp.succeed(chalk.green(`Node.js instalado en ${dir} ✓`));
+        return basePath + ';' + dir;
+      }
+    }
+
+    throw new Error(
+      'Node.js se instaló pero no responde. Reinicia el equipo y ejecuta el instalador de nuevo.'
+    );
   } catch (e) {
-    sp.fail(chalk.red('Error instalando Node.js: ' + e.message));
+    sp.fail(chalk.red('Error instalando Node.js: ' + e.message.split('\n')[0]));
     throw e;
   }
 }
@@ -172,11 +232,10 @@ async function ensureNgrok(sp, envPath) {
   try {
     if (!exists(zip)) {
       await download(
-        'https://bin.ngrok.com/a/971cHyC98V7/ngrok-v3-3.39.6-windows-amd64.zip',
+        'https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip',
         zip
       );
     }
-    // usar PowerShell para extraer (no depende de 7zip)
     runOrThrow(`powershell -Command "Expand-Archive -Path '${zip}' -DestinationPath '${dir}' -Force"`);
     try { fs.unlinkSync(zip); } catch { /* ignore */ }
     sp.succeed(chalk.green('ngrok instalado ✓'));
@@ -195,7 +254,6 @@ async function ensureServerCode(sp) {
     return;
   }
 
-  // Intentar git clone primero
   const gitAvailable = !!run('git --version');
   fs.mkdirSync(INSTALL_DIR, { recursive: true });
 
@@ -212,7 +270,6 @@ async function ensureServerCode(sp) {
     } catch { /* fallback to ZIP */ }
   }
 
-  // Fallback: descargar ZIP de GitHub
   sp.text = 'Descargando código (ZIP)...';
   const zip = path.join(os.tmpdir(), 'pedidos-app.zip');
   const tmp = path.join(os.tmpdir(), 'pedidos-extract');
@@ -224,7 +281,6 @@ async function ensureServerCode(sp) {
     fs.mkdirSync(tmp, { recursive: true });
     runOrThrow(`powershell -Command "Expand-Archive -Path '${zip}' -DestinationPath '${tmp}' -Force"`);
 
-    // La carpeta extraída tiene nombre pedidos-whatsapp-main
     const extracted = fs.readdirSync(tmp).find(d => d.startsWith('pedidos-whatsapp'));
     if (!extracted) throw new Error('Estructura de ZIP inesperada');
 
@@ -242,9 +298,14 @@ async function ensureServerCode(sp) {
 // ── PASO 5: npm install ───────────────────────────────────────
 async function ensureNpmDeps(sp, envPath) {
   sp.text = 'Verificando dependencias npm...';
-  const nodeModules = path.join(SERVER_DIR, 'node_modules', 'express');
 
-  if (exists(nodeModules)) {
+  // Validar todas las dependencias críticas, no solo express
+  const criticalDeps = ['express', 'better-sqlite3', 'whatsapp-web.js'];
+  const allInstalled = criticalDeps.every(dep =>
+    exists(path.join(SERVER_DIR, 'node_modules', dep))
+  );
+
+  if (allInstalled) {
     sp.succeed(chalk.green('Dependencias npm ya instaladas ✓'));
     return;
   }
@@ -254,6 +315,15 @@ async function ensureNpmDeps(sp, envPath) {
 
   try {
     runOrThrow('npm install --production --legacy-peer-deps --no-audit', { cwd: SERVER_DIR, env });
+
+    // Verificar que las deps críticas realmente quedaron instaladas
+    const missing = criticalDeps.filter(dep =>
+      !exists(path.join(SERVER_DIR, 'node_modules', dep))
+    );
+    if (missing.length > 0) {
+      throw new Error(`Dependencias faltantes después de npm install: ${missing.join(', ')}`);
+    }
+
     sp.succeed(chalk.green('Dependencias instaladas ✓'));
   } catch (e) {
     sp.fail(chalk.red('Error npm install: ' + e.message.split('\n')[0]));
@@ -261,19 +331,76 @@ async function ensureNpmDeps(sp, envPath) {
   }
 }
 
-// ── PASO 6: Escribir .env ─────────────────────────────────────
+// ── PASO 6: Ollama (LLM) ─────────────────────────────────────
+async function ensureOllama(sp, envPath) {
+  sp.text = 'Verificando Ollama...';
+  const ollamaDirs = ['C:\\Program Files\\Ollama', path.join(INSTALL_DIR, 'ollama')];
+  const ollamaPath = envPath + ';' + ollamaDirs.join(';');
+  const env = { ...process.env, PATH: ollamaPath };
+  const model = ENV_DEFAULTS.OLLAMA_MODEL;
+
+  const vOllama = run('ollama --version', { env }) || run('ollama list', { env });
+
+  if (vOllama !== null) {
+    // Ollama presente — asegurar que el servicio esté corriendo
+    spawn('ollama', ['serve'], { env, stdio: 'ignore', detached: true }).unref();
+    await delay(3000);
+
+    const models = run('ollama list', { env }) || '';
+    if (models.includes(model.split(':')[0])) {
+      sp.succeed(chalk.green(`Ollama activo (modelo: ${model}) ✓`));
+      return;
+    }
+    sp.text = `Descargando modelo ${model} (3-5 min)...`;
+    try {
+      runOrThrow(`ollama pull ${model}`, { env, timeout: 600000 });
+      sp.succeed(chalk.green(`Ollama listo (${model}) ✓`));
+    } catch {
+      sp.warn(chalk.yellow(`Ollama activo — descarga modelo manualmente: ollama pull ${model}`));
+    }
+    return;
+  }
+
+  // Instalar Ollama
+  sp.text = 'Descargando Ollama para Windows...';
+  const setup = path.join(os.tmpdir(), 'OllamaSetup.exe');
+  try {
+    if (!exists(setup)) {
+      await download('https://ollama.com/download/OllamaSetup.exe', setup);
+    }
+    sp.text = 'Instalando Ollama (puede tardar 2 min)...';
+    runOrThrow(`"${setup}" /S`, { timeout: 180000 });
+    try { fs.unlinkSync(setup); } catch { /* ignore */ }
+
+    await delay(5000); // Ollama inicia su servicio al instalarse
+
+    spawn('ollama', ['serve'], { env, stdio: 'ignore', detached: true }).unref();
+    await delay(4000);
+
+    sp.text = `Descargando modelo ${model} (3-5 min, puede tardar en VPS lento)...`;
+    try {
+      runOrThrow(`ollama pull ${model}`, { env, timeout: 600000 });
+      sp.succeed(chalk.green(`Ollama instalado (${model}) ✓`));
+    } catch {
+      sp.warn(chalk.yellow(`Ollama instalado — ejecuta: ollama pull ${model}`));
+    }
+  } catch (e) {
+    sp.warn(chalk.yellow('Ollama: ' + e.message.split('\n')[0] + ' — servidor funciona sin LLM (modo reglas)'));
+  }
+}
+
+// ── PASO 7: Escribir .env ─────────────────────────────────────
 function writeEnv(phone) {
   const envPath = path.join(SERVER_DIR, '.env');
   const lines = Object.entries({ ...ENV_DEFAULTS, BOT_PHONE: phone }).map(([k, v]) => `${k}=${v}`);
-  // No sobreescribir si ya existe con mismo teléfono (idempotente)
   if (exists(envPath)) {
     const current = fs.readFileSync(envPath, 'utf8');
-    if (current.includes(`BOT_PHONE=${phone}`)) return; // ya configurado
+    if (current.includes(`BOT_PHONE=${phone}`)) return;
   }
   write(envPath, lines.join('\n') + '\n');
 }
 
-// ── PASO 7: Configurar ngrok ──────────────────────────────────
+// ── PASO 8: Configurar ngrok ──────────────────────────────────
 function configureNgrok(sp, envPath) {
   sp.text = 'Configurando ngrok...';
   try {
@@ -287,7 +414,7 @@ function configureNgrok(sp, envPath) {
   }
 }
 
-// ── PASO 8: Servicio Windows ──────────────────────────────────
+// ── PASO 9: Servicio Windows ──────────────────────────────────
 const SVC_SCRIPT = (nodeExe, serverDir) => `
 const { Service } = require('node-windows');
 const svc = new Service({
@@ -335,7 +462,6 @@ setTimeout(() => process.exit(0), 10000);
 async function installService(sp, envPath) {
   sp.text = 'Instalando servicio Windows...';
 
-  // node-windows debe estar instalado
   const nwPath = path.join(SERVER_DIR, 'node_modules', 'node-windows');
   if (!exists(nwPath)) {
     const env = { ...process.env, PATH: envPath };
@@ -355,7 +481,7 @@ async function installService(sp, envPath) {
   }
 }
 
-// ── PASO 9: Verificar servidor ────────────────────────────────
+// ── PASO 10: Verificar servidor ───────────────────────────────
 async function waitForServer(sp, port = 3000, maxWait = 30000) {
   sp.text = 'Esperando que el servidor inicie...';
   const start = Date.now();
@@ -378,7 +504,7 @@ async function waitForServer(sp, port = 3000, maxWait = 30000) {
   return false;
 }
 
-// ── PASO 10: Lanzar bot y mostrar pairing code ────────────────
+// ── PASO 11: Lanzar bot y mostrar pairing code ────────────────
 function launchBotWindow() {
   const bat = path.join(INSTALL_DIR, 'ver-bot.bat');
   write(bat, [
@@ -445,7 +571,6 @@ async function main() {
   console.log(chalk.cyan.bold('  Configuración'));
   console.log(chalk.gray('  ─────────────────────────────────────────────\n'));
 
-  // Si ya hay .env, leer el teléfono existente
   let defaultPhone = '57';
   if (yaInstalado) {
     const envContent = fs.readFileSync(path.join(SERVER_DIR, '.env'), 'utf8');
@@ -468,20 +593,23 @@ async function main() {
 
   // ── Instalar herramientas ─────────────────────────────────
   let sp = ora({ color: 'green' }).start();
-
   const envPath = await ensureNode(sp);
 
   sp = ora({ color: 'green' }).start();
   await ensureGit(sp);
 
   sp = ora({ color: 'green' }).start();
-  await ensureNgrok(sp, ngrokPATH());
+  await ensureNgrok(sp, ngrokPATH(envPath));
 
   sp = ora({ color: 'green' }).start();
   await ensureServerCode(sp);
 
   sp = ora({ color: 'green' }).start();
   await ensureNpmDeps(sp, envPath);
+
+  // ── Ollama (LLM) ──────────────────────────────────────────
+  sp = ora({ color: 'green' }).start();
+  await ensureOllama(sp, envPath);
 
   // ── Configurar .env ───────────────────────────────────────
   sp = ora({ text: 'Configurando variables de entorno...', color: 'green' }).start();
@@ -490,7 +618,7 @@ async function main() {
 
   // ── Configurar ngrok ──────────────────────────────────────
   sp = ora({ color: 'green' }).start();
-  configureNgrok(sp, ngrokPATH());
+  configureNgrok(sp, ngrokPATH(envPath));
 
   // ── Servicio Windows ──────────────────────────────────────
   sp = ora({ color: 'green' }).start();
