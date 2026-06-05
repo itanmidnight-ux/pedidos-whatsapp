@@ -109,11 +109,17 @@ fi
 RAM_GB=$(free -g 2>/dev/null | awk '/^Mem:/{print $2}' || echo 1)
 if ! command -v ollama &>/dev/null && [ "$RAM_GB" -ge 2 ]; then
   info "Instalando Ollama (RAM disponible: ${RAM_GB}GB)..."
-  curl -fsSL https://ollama.ai/install.sh | sh >> "$LOG/ollama.log" 2>&1 \
-    && ollama serve >> "$LOG/ollama.log" 2>&1 & sleep 3 \
-    && ollama pull "${OLLAMA_MODEL:-llama3.2:1b}" >> "$LOG/ollama.log" 2>&1 \
-    && ok "Ollama instalado" \
-    || warn "Ollama no pudo instalarse — modo reglas activo"
+  if curl -fsSL https://ollama.com/install.sh | sh >> "$LOG/ollama.log" 2>&1; then
+    ollama serve >> "$LOG/ollama.log" 2>&1 &
+    sleep 8
+    if ollama pull "${OLLAMA_MODEL:-llama3.2:1b}" >> "$LOG/ollama.log" 2>&1; then
+      ok "Ollama instalado"
+    else
+      warn "Ollama instalado — modelo pendiente: ollama pull ${OLLAMA_MODEL:-llama3.2:1b}"
+    fi
+  else
+    warn "Ollama no pudo instalarse — modo reglas activo"
+  fi
 fi
 
 # ── 8. Parar instancias previas ───────────────────────────────
@@ -133,7 +139,7 @@ lsof -ti tcp:${PORT:-3000} &>/dev/null \
 # ── 9. Servidor Node.js ───────────────────────────────────────
 info "Iniciando servidor..."
 cd "$PROJ/server"
-node src/index.js >> "$LOG/server.log" 2>&1 &
+nohup node src/index.js >> "$LOG/server.log" 2>&1 &
 SERVER_PID=$!
 
 SERVER_OK=0
@@ -181,7 +187,7 @@ printf "${GREEN}${BOLD}║${NC} App:    https://%-27s${GREEN}${BOLD}║${NC}\n" 
 printf "${GREEN}${BOLD}║${NC} API:    https://%-27s${GREEN}${BOLD}║${NC}\n" "$NGROK_DOMAIN/api/"
 printf "${GREEN}${BOLD}║${NC} Estado: https://%-27s${GREEN}${BOLD}║${NC}\n" "$NGROK_DOMAIN/health"
 echo -e "${GREEN}${BOLD}╠════════════════════════════════════════════╣${NC}"
-echo -e "${GREEN}${BOLD}║${NC} Usuarios: jesus(admin) | johana | felipe | fabian ${GREEN}${BOLD}║${NC}"
+echo -e "${GREEN}${BOLD}║${NC} Usuarios: jesus | johana | felipe | fabian  ${GREEN}${BOLD}║${NC}"
 echo -e "${GREEN}${BOLD}║${NC} PIN: 1234 para todos                       ${GREEN}${BOLD}║${NC}"
 echo -e "${GREEN}${BOLD}║${NC} Logs: $LOG${GREEN}${BOLD}║${NC}"
 echo -e "${GREEN}${BOLD}╚════════════════════════════════════════════╝${NC}"
