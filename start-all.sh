@@ -182,8 +182,48 @@ ok "Servidor activo en :${PORT:-3000} (PID $SERVER_PID)"
 
 # ── 10. Bot WhatsApp ──────────────────────────────────────────
 if [ "${BOT_ENABLED:-false}" = "true" ] && [ -n "${BOT_PHONE:-}" ]; then
-  ok "Bot WhatsApp: iniciando con teléfono configurado"
-  info "Revisa $LOG/server.log para el código de vinculación si es primera vez"
+  AUTH_DIR="${HOME}/pedidos-bot/auth"
+  SESSION_EXISTS=0
+  [ -d "$AUTH_DIR" ] && [ -n "$(ls -A "$AUTH_DIR" 2>/dev/null)" ] && SESSION_EXISTS=1
+
+  if [ "$SESSION_EXISTS" = "1" ]; then
+    ok "Bot WhatsApp: sesión guardada — reconectando automáticamente"
+  else
+    ok "Bot WhatsApp: primera ejecución — esperando código de vinculación..."
+    echo ""
+    # Esperar hasta 60s a que el código aparezca en el log
+    PAIR_CODE=""
+    for i in $(seq 1 30); do
+      PAIR_CODE=$(grep -o 'Pairing code: [A-Z0-9-]*' "$LOG/server.log" 2>/dev/null | tail -1 | sed 's/Pairing code: //')
+      [ -n "$PAIR_CODE" ] && break
+      sleep 2
+    done
+
+    if [ -n "$PAIR_CODE" ]; then
+      echo -e "${GREEN}${BOLD}╔══════════════════════════════════════════════╗${NC}"
+      echo -e "${GREEN}${BOLD}║   CÓDIGO DE VINCULACIÓN WHATSAPP             ║${NC}"
+      echo -e "${GREEN}${BOLD}╠══════════════════════════════════════════════╣${NC}"
+      echo -e "${GREEN}${BOLD}║${NC}   ${BOLD}${PAIR_CODE}${NC}$(printf '%*s' $((38 - ${#PAIR_CODE})))"${GREEN}${BOLD}║${NC}"
+      echo -e "${GREEN}${BOLD}╠══════════════════════════════════════════════╣${NC}"
+      echo -e "${GREEN}${BOLD}║${NC} 1. Abre WhatsApp en tu teléfono              ${GREEN}${BOLD}║${NC}"
+      echo -e "${GREEN}${BOLD}║${NC} 2. Menú (⋮) → Dispositivos vinculados        ${GREEN}${BOLD}║${NC}"
+      echo -e "${GREEN}${BOLD}║${NC} 3. Vincular un dispositivo                   ${GREEN}${BOLD}║${NC}"
+      echo -e "${GREEN}${BOLD}║${NC} 4. Vincular con número de teléfono           ${GREEN}${BOLD}║${NC}"
+      echo -e "${GREEN}${BOLD}║${NC} 5. Ingresa el código de arriba               ${GREEN}${BOLD}║${NC}"
+      echo -e "${GREEN}${BOLD}╚══════════════════════════════════════════════╝${NC}"
+      echo ""
+      # Esperar confirmación de conexión (hasta 120s)
+      for i in $(seq 1 60); do
+        grep -q '\[bot\] ✅ Connected' "$LOG/server.log" 2>/dev/null && break
+        sleep 2
+      done
+      grep -q '\[bot\] ✅ Connected' "$LOG/server.log" 2>/dev/null \
+        && ok "Bot WhatsApp CONECTADO ✓" \
+        || warn "Bot aún no conectado — revisa el código e intenta de nuevo"
+    else
+      warn "Código no apareció en 60s — revisa $LOG/server.log"
+    fi
+  fi
 else
   warn "Bot WhatsApp: desactivado (configura BOT_ENABLED=true y BOT_PHONE en .env)"
 fi
