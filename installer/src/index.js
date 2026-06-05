@@ -418,6 +418,24 @@ function configureNgrok(sp, envPath) {
   }
 }
 
+// ── Encontrar node.exe real (nunca process.execPath dentro de pkg) ──
+function findNodeExe(envPath) {
+  // 1. Buscar en rutas conocidas directamente
+  for (const dir of NODE_DIRS) {
+    const exe = path.join(dir, 'node.exe');
+    if (exists(exe)) return exe;
+  }
+  // 2. Buscar via where.exe con el PATH extendido
+  const result = run('where.exe node', { env: { ...process.env, PATH: envPath } });
+  if (result) {
+    const lines = result.split('\n').map(l => l.trim()).filter(l => l.endsWith('.exe'));
+    // Excluir el propio instalador si aparece
+    const real = lines.find(l => !l.toLowerCase().includes('instalar'));
+    if (real) return real;
+  }
+  return null;
+}
+
 // ── PASO 9: Servicio Windows ──────────────────────────────────
 const SVC_SCRIPT = (nodeExe, serverDir) => `
 const { Service } = require('node-windows');
@@ -426,6 +444,7 @@ const svc = new Service({
   description: '${SVC_DESC}',
   script: '${path.join(serverDir, 'src', 'index.js').replace(/\\/g, '\\\\')}',
   workingDirectory: '${serverDir.replace(/\\/g, '\\\\')}',
+  execPath: '${nodeExe.replace(/\\/g, '\\\\')}',
   nodeOptions: [],
   env: [{ name: 'NODE_ENV', value: 'production' }]
 });
@@ -445,6 +464,9 @@ async function stopExistingService(sp, envPath) {
   run(`sc stop ${SVC_NAME}`);
   await delay(4000);
 
+  const nodeExe = findNodeExe(envPath);
+  if (!nodeExe) { sp.warn(chalk.yellow('node.exe no encontrado — saltando desinstalación')); return; }
+
   const uninstallScript = path.join(INSTALL_DIR, '_uninstall-svc.js');
   write(uninstallScript, `
 const { Service } = require('node-windows');
@@ -455,9 +477,8 @@ svc.uninstall();
 setTimeout(() => process.exit(0), 10000);
 `.trim());
 
-  const nodeEnv = { ...process.env, PATH: envPath };
   try {
-    runOrThrow(`node "${uninstallScript}"`, { cwd: SERVER_DIR, env: nodeEnv, timeout: 15000 });
+    runOrThrow(`"${nodeExe}" "${uninstallScript}"`, { cwd: SERVER_DIR, env: { ...process.env, PATH: envPath }, timeout: 15000 });
   } catch { /* ignorar */ }
   try { fs.unlinkSync(uninstallScript); } catch { /* ignore */ }
   await delay(3000);
@@ -467,6 +488,9 @@ setTimeout(() => process.exit(0), 10000);
 async function installService(sp, envPath) {
   sp.text = 'Instalando servicio Windows...';
 
+  const nodeExe = findNodeExe(envPath);
+  if (!nodeExe) throw new Error('No se encontró node.exe — reinstala Node.js y vuelve a ejecutar');
+
   const nwPath = path.join(SERVER_DIR, 'node_modules', 'node-windows');
   if (!exists(nwPath)) {
     const env = { ...process.env, PATH: envPath };
@@ -474,13 +498,13 @@ async function installService(sp, envPath) {
   }
 
   const installScript = path.join(INSTALL_DIR, '_install-svc.js');
-  write(installScript, SVC_SCRIPT(process.execPath, SERVER_DIR));
+  write(installScript, SVC_SCRIPT(nodeExe, SERVER_DIR));
 
   try {
-    runOrThrow(`node "${installScript}"`, { cwd: SERVER_DIR, env: { ...process.env, PATH: envPath }, timeout: 30000 });
+    runOrThrow(`"${nodeExe}" "${installScript}"`, { cwd: SERVER_DIR, env: { ...process.env, PATH: envPath }, timeout: 30000 });
     await delay(5000);
     try { fs.unlinkSync(installScript); } catch { /* ignore */ }
-    sp.succeed(chalk.green('Servicio Windows instalado ✓'));
+    sp.succeed(chalk.green(`Servicio Windows instalado ✓ [${nodeExe}]`));
   } catch (e) {
     sp.warn(chalk.yellow('Servicio: ' + e.message));
   }
@@ -611,10 +635,6 @@ async function main() {
 
   sp = ora({ color: 'green' }).start();
   await ensureNpmDeps(sp, envPath);
-
-  // ── Ollama (LLM) ──────────────────────────────────────────
-  sp = ora({ color: 'green' }).start();
-  await ensureOllama(sp, envPath);
 
   // ── Configurar .env ───────────────────────────────────────
   sp = ora({ text: 'Configurando variables de entorno...', color: 'green' }).start();
