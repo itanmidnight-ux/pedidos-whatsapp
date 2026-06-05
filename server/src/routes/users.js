@@ -31,14 +31,11 @@ router.post('/', adminAuth, async (req, res) => {
   if (db.prepare('SELECT id FROM users WHERE username = ?').get(name))
     return res.status(409).json({ error: 'Usuario ya existe' });
 
-  const [passHash, pinHash] = await Promise.all([
-    bcrypt.hash(String(pin), SALT),
-    bcrypt.hash(String(pin), SALT),
-  ]);
+  const pinHash = await bcrypt.hash(String(pin), SALT);
 
   const result = db.prepare(
     'INSERT INTO users (username, password_hash, pin, display_name, role) VALUES (?,?,?,?,?)'
-  ).run(name, passHash, pinHash, display_name?.trim() || name, role);
+  ).run(name, pinHash, pinHash, display_name?.trim() || name, role);
 
   const user = db.prepare(`SELECT ${SAFE_FIELDS} FROM users WHERE id = ?`).get(result.lastInsertRowid);
   res.status(201).json({ user });
@@ -62,9 +59,9 @@ router.put('/:id', adminAuth, async (req, res) => {
   if (req.body.role         !== undefined) { updates.push('role=?');         vals.push(req.body.role); }
   if (req.body.active       !== undefined) { updates.push('active=?');       vals.push(req.body.active ? 1 : 0); }
   if (req.body.pin          !== undefined) {
-    const [ph, pinh] = await Promise.all([bcrypt.hash(String(req.body.pin), SALT), bcrypt.hash(String(req.body.pin), SALT)]);
+    const pinh = await bcrypt.hash(String(req.body.pin), SALT);
     updates.push('password_hash=?', 'pin=?');
-    vals.push(ph, pinh);
+    vals.push(pinh, pinh);
   }
 
   if (!updates.length) return res.status(400).json({ error: 'Nada que actualizar' });

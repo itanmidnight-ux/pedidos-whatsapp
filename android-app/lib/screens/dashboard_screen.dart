@@ -5,6 +5,7 @@ import '../widgets/order_card.dart';
 import '../widgets/company_header.dart';
 import 'products_screen.dart';
 import 'messages_screen.dart';
+import 'users_screen.dart';
 
 // ── Filter state ──────────────────────────────────────────────
 const _allStatuses = {'pending', 'claimed', 'en_camino'};
@@ -27,16 +28,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
     });
   }
 
-  static const _titles = ['Pedidos Activos', 'Productos', 'Mensajes'];
+  static const _titlesWorker = ['Pedidos Activos', 'Productos', 'Mensajes'];
+  static const _titlesAdmin  = ['Pedidos Activos', 'Productos', 'Mensajes', 'Usuarios'];
 
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<AppProvider>();
+    final titles = provider.isAdmin ? _titlesAdmin : _titlesWorker;
+    final safeTab = _tab < titles.length ? _tab : 0;
 
     return Scaffold(
       backgroundColor: const Color(0xFFF8F4EE),
       appBar: CompanyHeader(
-        pageTitle: _titles[_tab],
+        pageTitle: titles[safeTab],
         actions: [
           if (!provider.isOnline)
             const Padding(
@@ -74,7 +78,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ),
         ],
       ),
-      body: IndexedStack(index: _tab, children: [
+      body: IndexedStack(index: safeTab, children: [
         // PEDIDOS
         Column(children: [
           // Filter chips
@@ -135,9 +139,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
         const ProductsScreen(),
         // MENSAJES
         const MessagesScreen(),
+        // USUARIOS (admin only — placeholder para workers para que IndexedStack no rompa)
+        if (provider.isAdmin) const UsersScreen(),
       ]),
       bottomNavigationBar: NavigationBar(
-        selectedIndex: _tab,
+        selectedIndex: safeTab,
         onDestinationSelected: (i) => setState(() => _tab = i),
         backgroundColor: Colors.white,
         indicatorColor: const Color(0xFFD4ECB8),
@@ -168,6 +174,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
               backgroundColor: Colors.red,
               child: const Icon(Icons.chat_bubble_rounded, color: Color(0xFF2D5016))),
             label: 'Mensajes'),
+          if (provider.isAdmin)
+            NavigationDestination(
+              icon: Badge(
+                isLabelVisible: provider.users.isNotEmpty,
+                label: Text('${provider.users.length}'),
+                backgroundColor: const Color(0xFFD4800A),
+                child: const Icon(Icons.group_outlined)),
+              selectedIcon: const Icon(Icons.group_rounded, color: Color(0xFF2D5016)),
+              label: 'Usuarios'),
         ],
       ),
     );

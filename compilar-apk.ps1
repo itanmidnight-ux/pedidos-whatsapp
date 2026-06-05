@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 # ================================================================
-#  compilar-apk.ps1 — Compila APK de Concentrados Monserrath
-#  Instala automáticamente: Java 17, Android SDK, Flutter
+#  compilar-apk.ps1 -- Compila APK de Concentrados Monserrath
+#  Instala automaticamente: Java 17, Android SDK, Flutter
 #  Uso: .\compilar-apk.ps1
 # ================================================================
 
@@ -14,62 +14,70 @@ $SDK    = Join-Path $env:LOCALAPPDATA "Android\Sdk"
 $OUT    = Join-Path $PROJ "app-release.apk"
 
 $GREEN = "`e[32m"; $YELLOW = "`e[33m"; $RED = "`e[31m"; $NC = "`e[0m"; $BOLD = "`e[1m"
-function ok($m)   { Write-Host "${GREEN}✓${NC} $m" }
-function warn($m) { Write-Host "${YELLOW}⚠${NC}  $m" }
-function step($m) { Write-Host "${BOLD}→ $m${NC}" }
-function fail($m) { Write-Host "${RED}✗ ERROR:${NC} $m"; exit 1 }
+function ok($m)   { Write-Host "${GREEN}OK${NC} $m" }
+function warn($m) { Write-Host "${YELLOW}WARN${NC} $m" }
+function step($m) { Write-Host "${BOLD}>> $m${NC}" }
+function fail($m) { Write-Host "${RED}ERROR:${NC} $m"; exit 1 }
 
 # Refresh PATH helper
 function RefreshPath {
     $paths = @(
         "$env:USERPROFILE\scoop\shims",
         "$env:USERPROFILE\scoop\apps\flutter\current\bin",
-        (Get-Command java -ErrorAction SilentlyContinue)?.Source | Split-Path
+        "$env:USERPROFILE\scoop\apps\temurin17-jdk\current\bin"
     ) | Where-Object { $_ -and (Test-Path $_) }
+    $javaCmd = Get-Command java -ErrorAction SilentlyContinue
+    if ($javaCmd) { $paths += (Split-Path $javaCmd.Source) }
     $env:PATH = ($paths + ($env:PATH -split ';') | Select-Object -Unique) -join ';'
 }
 
 Write-Host ""
-Write-Host "${GREEN}${BOLD}╔════════════════════════════════════════════╗${NC}"
-Write-Host "${GREEN}${BOLD}║  Compilador APK - Concentrados Monserrath  ║${NC}"
-Write-Host "${GREEN}${BOLD}╚════════════════════════════════════════════╝${NC}"
+Write-Host "${GREEN}${BOLD}+============================================+${NC}"
+Write-Host "${GREEN}${BOLD}|  Compilador APK - Concentrados Monserrath  |${NC}"
+Write-Host "${GREEN}${BOLD}+============================================+${NC}"
 Write-Host ""
 
-# ── 1. Java 17 ───────────────────────────────────────────────
+# Apply scoop PATH first
+$env:PATH = "$env:USERPROFILE\scoop\shims;$env:USERPROFILE\scoop\apps\temurin17-jdk\current\bin;$env:USERPROFILE\scoop\apps\flutter\current\bin;$env:PATH"
+
+# -- 1. Java 17 -----------------------------------------------
 step "Verificando Java 17..."
 $javaOk = $false
-try {
-    $jv = & java -version 2>&1 | Select-String "version"
-    if ($jv -match '"17\.|"21\.|"22\.|"23\.|"24\.') { $javaOk = $true }
-} catch {}
+$jvVer   = ''
+
+# cmd /c con 2>&1 DENTRO de las comillas: cmd procesa el redirect, no PS
+# Evita ErrorRecord que termina con ErrorActionPreference=Stop
+$jvRaw = cmd /c "java -version 2>&1"
+$jvStr = ($jvRaw | ForEach-Object { "$_" }) -join ' '
+if ($jvStr -match '"([^"]+)"') { $jvVer = $Matches[1] }
+if ($jvStr -match '1[7-9]\.|2[0-9]\.') { $javaOk = $true }
 
 if (-not $javaOk) {
     warn "Java 17 no encontrado. Instalando via Scoop..."
-    $env:PATH = "$env:USERPROFILE\scoop\shims;$env:PATH"
     try {
-        & "$env:USERPROFILE\scoop\shims\scoop.cmd" bucket add extras 2>$null
-        & "$env:USERPROFILE\scoop\shims\scoop.cmd" install temurin17-jdk 2>&1 | Select-Object -Last 3
+        & "$env:USERPROFILE\scoop\shims\scoop.cmd" bucket add java 2>$null
+        & "$env:USERPROFILE\scoop\shims\scoop.cmd" install java/temurin17-jdk 2>&1 | Select-Object -Last 3
     } catch {
-        warn "Scoop falló, intentando winget..."
+        warn "Scoop fallo, intentando winget..."
         & winget install EclipseAdoptium.Temurin.17.JDK -e --silent 2>&1 | Select-Object -Last 2
     }
     RefreshPath
-    try { $jv2 = & java -version 2>&1; ok "Java instalado: $($jv2 | Select-String 'version')" }
-    catch { fail "Java 17 no pudo instalarse. Instala manualmente desde https://adoptium.net" }
+    $jv2Str = (cmd /c "java -version 2>&1" | ForEach-Object { "$_" }) -join ' '
+    if ($jv2Str -match '1[7-9]\.|2[0-9]\.') { ok "Java instalado" }
+    else { fail "Java 17 no pudo instalarse. Instala desde https://adoptium.net" }
 } else {
-    ok "Java: $($jv -replace '.*version "([^"]+)".*','$1')"
+    ok "Java: $jvVer"
 }
 
 # Configurar JAVA_HOME
-$javaExe = (Get-Command java -ErrorAction SilentlyContinue)?.Source
-if ($javaExe) {
-    $env:JAVA_HOME = (Split-Path (Split-Path $javaExe))
+$javaCmd = Get-Command java -ErrorAction SilentlyContinue
+if ($javaCmd) {
+    $env:JAVA_HOME = Split-Path (Split-Path $javaCmd.Source)
     ok "JAVA_HOME = $env:JAVA_HOME"
-} else { fail "No se encontró java en PATH. Reinicia PowerShell e intenta de nuevo." }
+} else { fail "No se encontro java en PATH. Reinicia PowerShell e intenta de nuevo." }
 
-# ── 2. Flutter ───────────────────────────────────────────────
+# -- 2. Flutter -----------------------------------------------
 step "Verificando Flutter..."
-$env:PATH = "$env:USERPROFILE\scoop\shims;$env:USERPROFILE\scoop\apps\flutter\current\bin;$env:PATH"
 try {
     $fv = & flutter --version 2>&1 | Select-String "Flutter"
     ok "Flutter: $($fv -replace 'Flutter (\S+).*','$1')"
@@ -82,9 +90,9 @@ try {
     catch { fail "Flutter no pudo instalarse." }
 }
 
-# ── 3. Android SDK ───────────────────────────────────────────
+# -- 3. Android SDK -------------------------------------------
 step "Verificando Android SDK..."
-$env:ANDROID_HOME    = $SDK
+$env:ANDROID_HOME     = $SDK
 $env:ANDROID_SDK_ROOT = $SDK
 $env:PATH = "$SDK\cmdline-tools\latest\bin;$SDK\platform-tools;$SDK\build-tools\34.0.0;$env:PATH"
 
@@ -95,18 +103,15 @@ if (-not (Test-Path $sdkManager)) {
     $tmpZip = Join-Path $env:TEMP "cmdline-tools.zip"
     $tmpDir = Join-Path $env:TEMP "cmdline-tools-extract"
 
-    # Descargar cmdline-tools
     $url = "https://dl.google.com/android/repository/commandlinetools-win-11076708_latest.zip"
     try {
         Invoke-WebRequest -Uri $url -OutFile $tmpZip -UseBasicParsing
         ok "cmdline-tools descargado"
-    } catch { fail "No se pudo descargar Android cmdline-tools. Verifica conexión a internet." }
+    } catch { fail "No se pudo descargar Android cmdline-tools. Verifica conexion a internet." }
 
-    # Extraer
     New-Item -ItemType Directory -Force $tmpDir | Out-Null
     Expand-Archive -Path $tmpZip -DestinationPath $tmpDir -Force
 
-    # Instalar en SDK path correcto
     $dest = Join-Path $SDK "cmdline-tools\latest"
     New-Item -ItemType Directory -Force (Split-Path $dest) | Out-Null
     if (Test-Path (Join-Path $tmpDir "cmdline-tools")) {
@@ -132,7 +137,6 @@ $missing = $requiredPkgs | Where-Object {
 
 if ($missing) {
     step "Instalando componentes SDK: $($missing -join ', ')..."
-    # Aceptar licencias automaticamente
     $licenses = "y`n" * 10
     $licenses | & $sdkManager --licenses 2>&1 | Out-Null
 
@@ -143,55 +147,63 @@ if ($missing) {
     ok "Componentes SDK instalados"
 } else { ok "Android SDK components OK" }
 
-# ── 4. Flutter doctor ────────────────────────────────────────
-step "Verificando flutter doctor..."
-$doctorOut = & flutter doctor 2>&1 | Out-String
-$noAndroid = $doctorOut -match 'Android toolchain.*✗|Android SDK.*not found'
-if ($noAndroid) {
-    warn "Flutter no detecta Android SDK. Configurando..."
+# -- 4. Flutter doctor (solo si SDK no está configurado) ------
+step "Verificando configuración Android..."
+$sdkConfigured = (Test-Path (Join-Path $SDK "platform-tools\adb.exe")) -and
+                 ($env:ANDROID_HOME -or $env:ANDROID_SDK_ROOT)
+if (-not $sdkConfigured) {
+    warn "Configurando Android SDK en Flutter..."
     & flutter config --android-sdk $SDK 2>&1 | Out-Null
     "y" | & flutter doctor --android-licenses 2>&1 | Out-Null
 }
 ok "Flutter configurado"
 
-# ── 5. pub get ───────────────────────────────────────────────
-step "Obteniendo dependencias Flutter..."
+# -- 5. pub get (omite si pubspec.lock está actualizado) ------
+step "Verificando dependencias Flutter..."
 Set-Location $APPDIR
-& flutter pub get 2>&1 | Select-Object -Last 3
-if ($LASTEXITCODE -ne 0) { fail "flutter pub get falló" }
-ok "Dependencias OK"
+$pubLock    = Join-Path $APPDIR "pubspec.lock"
+$pubYaml    = Join-Path $APPDIR "pubspec.yaml"
+$pkgConfig  = Join-Path $APPDIR ".dart_tool\package_config.json"
+$pubFresh   = (Test-Path $pubLock) -and (Test-Path $pkgConfig) -and
+              ((Get-Item $pubLock).LastWriteTime -ge (Get-Item $pubYaml).LastWriteTime)
+if (-not $pubFresh -or $Clean) {
+    & flutter pub get 2>&1 | Select-Object -Last 3
+    if ($LASTEXITCODE -ne 0) { fail "flutter pub get fallo" }
+    ok "Dependencias actualizadas"
+} else {
+    ok "Dependencias OK (cache)"
+}
 
-# ── 6. Clean (opcional) ──────────────────────────────────────
+# -- 6. Clean (opcional) --------------------------------------
 if ($Clean) {
     step "Limpiando build anterior..."
     & flutter clean 2>&1 | Out-Null
     ok "Clean completado"
 }
 
-# ── 7. Build APK ─────────────────────────────────────────────
-step "Compilando APK release (puede tardar 5-10 min)..."
-Write-Host "  → minSdk 23 | targetSdk 35 | compileSdk 35`n"
+# -- 7. Build APK ---------------------------------------------
+step "Compilando APK release (arm64 optimizado)..."
+Write-Host "  >> minSdk 23 | targetSdk 35 | platform arm64-only`n"
 
-$buildOut = & flutter build apk --release --no-pub --obfuscate --split-debug-info="$APPDIR\debug-symbols" 2>&1
+$buildOut = & flutter build apk --release --no-pub --target-platform android-arm64 --obfuscate --split-debug-info="$APPDIR\debug-symbols" 2>&1
 $buildOut | Select-String "error:|Error:|warning:" -ErrorAction SilentlyContinue | ForEach-Object { warn $_ }
 
 if ($LASTEXITCODE -ne 0) {
     $buildOut | Select-Object -Last 20 | ForEach-Object { Write-Host $_ }
-    fail "flutter build apk falló (ver arriba)"
+    fail "flutter build apk fallo (ver arriba)"
 }
 
-# ── 8. Copiar APK ────────────────────────────────────────────
+# -- 8. Copiar APK --------------------------------------------
 $apkSrc = Join-Path $APPDIR "build\app\outputs\flutter-apk\app-release.apk"
 if (Test-Path $apkSrc) {
     Copy-Item $apkSrc $OUT -Force
     $size = [math]::Round((Get-Item $OUT).Length / 1MB, 1)
     Write-Host ""
-    Write-Host "${GREEN}${BOLD}╔════════════════════════════════════════════╗${NC}"
-    Write-Host "${GREEN}${BOLD}║         APK COMPILADO EXITOSAMENTE         ║${NC}"
-    Write-Host "${GREEN}${BOLD}╠════════════════════════════════════════════╣${NC}"
-    Write-Host "${GREEN}${BOLD}║${NC} Archivo: app-release.apk (${size}MB)$((' ' * [Math]::Max(0, 19 - "$size".Length)))${GREEN}${BOLD}║${NC}"
-    Write-Host "${GREEN}${BOLD}║${NC} Ruta:    $($OUT.Substring(0, [Math]::Min($OUT.Length, 44)).PadRight(44)) ${GREEN}${BOLD}║${NC}"
-    Write-Host "${GREEN}${BOLD}╚════════════════════════════════════════════╝${NC}"
+    Write-Host "${GREEN}${BOLD}+============================================+${NC}"
+    Write-Host "${GREEN}${BOLD}|       APK COMPILADO EXITOSAMENTE           |${NC}"
+    Write-Host "${GREEN}${BOLD}+--------------------------------------------+${NC}"
+    Write-Host "${GREEN}${BOLD}|${NC} Archivo: app-release.apk (${size}MB)$((' ' * [Math]::Max(0, 19 - "$size".Length)))${GREEN}${BOLD}|${NC}"
+    Write-Host "${GREEN}${BOLD}+============================================+${NC}"
     Write-Host ""
 } else {
     fail "APK no encontrado en $apkSrc"
