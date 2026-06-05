@@ -1,0 +1,419 @@
+AUDITORIA COMPLETA DE ERRORES - pedidos-whatsapp
+Fecha de auditoria: 2026-06-05 UTC
+Repositorio: /workspace/pedidos-whatsapp
+
+IMPORTANTE
+=========
+Este archivo fue creado como reporte de auditoria, no como correccion automatica del codigo. Se revisaron los archivos fuente, configuracion, scripts y artefactos incluidos en la rama. Se intentaron comprobaciones de compilacion/ejecucion y descompresion del RAR.
+
+Limitaciones verificadas del entorno:
+1. No hay Flutter/Dart instalado en el contenedor, por lo que no se pudo ejecutar `flutter analyze`, `flutter test` ni `flutter build apk`.
+2. No hay `unrar`, `7z`, `bsdtar` ni `file` instalados. `apt-get` y `pip` fallaron por bloqueo 403 del proxy/repositorio, por lo que no fue posible instalar un extractor RAR. `unzip` no puede abrir RAR5.
+3. `npm ci` del servidor no pudo completar porque una dependencia transitoria de Baileys intenta resolver `github.com/whiskeysockets/libsignal-node.git` por SSH y el DNS/red del entorno lo bloquea.
+4. Por esas limitaciones no se puede garantizar una ejecucion real de Android/Windows/WhatsApp en este contenedor; aun asi se enumeran los errores detectables por lectura, sintaxis y ejecucion parcial.
+
+COMPROBACIONES EJECUTADAS
+=========================
+1. `find .. -name AGENTS.md -print`: no se encontraron instrucciones AGENTS.md.
+2. `rg --files -g '!node_modules' -g '!vendor' -g '!dist' -g '!build'`: inventario de archivos del repositorio.
+3. `node --check` sobre todos los JS propios: no detecto errores de sintaxis JS.
+4. `npm ci` en `installer`: finalizo correctamente.
+5. `npm run build` en `installer`: fallo porque `pkg` no esta instalado como dependencia/devDependency.
+6. `npm ci` en `server`: fallo por dependencia git/SSH de Baileys (`github.com/whiskeysockets/libsignal-node.git`).
+7. `node src/index.js` en `server`: fallo por falta de `dotenv` al no poder completarse `npm ci`.
+8. `bash -n start-all.sh` y `bash -n server/scripts/start.sh`: no detectaron errores de sintaxis Bash.
+9. `unzip -t instalar-monserrath.rar`: fallo porque el archivo es RAR y no ZIP.
+10. Revision estatica de imports/requires: `installer/src/index.js` usa `node-windows` en scripts dinamicos; no esta en `installer/package.json`, aunque se instala dinamicamente dentro del servidor.
+
+RESUMEN CRITICO
+===============
+1. CRITICO - El RAR `instalar-monserrath.rar` no pudo descomprimirse en el entorno actual. El archivo comienza con firma RAR5 (`52 61 72 21 1a 07 01 00`) y contiene el nombre `instalar-monserrath.exe`, pero no hay extractor RAR disponible y la instalacion de herramientas fue bloqueada.
+2. CRITICO - `installer` no puede compilar el EXE desde el repositorio porque el script usa `pkg` pero `pkg` no esta declarado en `installer/package.json`.
+3. CRITICO - `server` no instala dependencias de forma reproducible en el entorno auditado por dependencia git/SSH de Baileys.
+4. CRITICO - La documentacion dice que el bot actual usa `whatsapp-web.js`, pero el codigo y package usan Baileys; existe inconsistencia arquitectonica.
+5. CRITICO - `start-windows.ps1` declara PowerShell 5.1, pero usa operador ternario `? :` y `goto`, lo que rompe ejecucion en Windows PowerShell 5.1.
+6. ALTO - Rutas de pedidos interpolan parametros de consulta en SQL (`status`, `days`) y abren riesgo de inyeccion SQL/errores de ejecucion.
+7. ALTO - El parser LLM ignora `OLLAMA_URL` y usa siempre `http://localhost:11434`; ademas el modelo por defecto en codigo difiere de la documentacion.
+8. ALTO - Credenciales reales/API keys/tokens/ngrok/JWT estan hardcodeados en documentos e instalador.
+9. ALTO - El modo offline de Flutter guarda acciones pendientes, pero no se sincroniza automaticamente al volver online salvo que alguien llame manualmente `syncPendingActions`.
+10. MEDIO - Multiproducto se guarda en `order_items`, pero UI principal sigue mostrando solo `product_name/product_price` y puede ocultar productos secundarios.
+
+DETALLE POR ARCHIVO
+===================
+
+[README.md]
+1. Error de documentacion/arquitectura: indica rutas `backend/`, `bot/`, `app/`, pero el repositorio real usa `server/`, `android-app/` e `installer/`.
+2. Error de documentacion: declara bot `whatsapp-web.js (Puppeteer)`, pero `server/package.json` y `server/src/services/waBot.js` usan Baileys.
+3. Error de version: declara Flutter 3.44, version que no coincide con canales estables conocidos y no se valida en el proyecto.
+4. Riesgo de confusion operativa: instrucciones `cd backend` y `cd app` no funcionan en esta estructura.
+
+[CLAUDE.md]
+1. Error de documentacion/operacion: repite que el bot fue migrado a `whatsapp-web.js`, pero el codigo usa Baileys.
+2. Inconsistencia tecnica: dice DB siempre async, pero se usa `better-sqlite3`, que es sincronico; las rutas Express ejecutan consultas bloqueantes.
+3. Riesgo de proceso: contiene instrucciones de herramientas externas no disponibles en este entorno.
+
+[CONTINUE.md]
+1. Error de seguridad: contiene tokens, API key, JWT secret, PIN y dominio ngrok en texto plano.
+2. Error de documentacion: declara migracion a `whatsapp-web.js`, QR auth y `LocalAuth`, pero el codigo actual usa Baileys y pairing code.
+3. Error de estado del proyecto: lista fases como en progreso/completadas que no coinciden completamente con el codigo implementado.
+4. Riesgo operativo: usuarios y PIN por defecto (`1234`) quedan documentados.
+
+[SKILL.md]
+1. No se detectaron errores funcionales verificables con la auditoria estatica; revisar si su contenido sigue vigente antes de usarlo como instruccion operativa.
+
+[package.json]
+1. Archivo duplicado en raiz con nombre `pedidos-server`; puede confundir instalacion porque el servidor real esta en `server/package.json`.
+2. Si alguien ejecuta `npm install` en la raiz, instalara dependencias en lugar equivocado y no en `server/`.
+
+[server/package.json]
+1. Error de instalacion reproducible: dependencia Baileys puede requerir git/SSH hacia GitHub por `libsignal-node`, fallo observado en `npm ci`.
+2. Inconsistencia: incluye `baileys-antiban`, pero no se usa en ningun require detectado.
+3. Falta script de test/lint/healthcheck automatizado para CI.
+4. Inconsistencia con documentacion: no declara `whatsapp-web.js` ni `qrcode-terminal`, pese a documentos que dicen usar wwebjs/QR.
+
+[server/package-lock.json]
+1. Riesgo heredado: lockfile esta acoplado a dependencias que fallan al resolver por git/SSH en el entorno auditado.
+2. Debe regenerarse despues de decidir proveedor real de WhatsApp y quitar dependencias no usadas.
+
+[server/src/index.js]
+1. Error de ejecucion observado: `node src/index.js` falla con `Cannot find module 'dotenv'` cuando `npm ci` no se completa.
+2. Riesgo de CORS: acepta cualquier origen que termine en `.ngrok-free.dev` o `.ngrok.io`; permite origenes ngrok ajenos.
+3. Riesgo operativo: sirve `/app` desde `server/src/webapp`, pero ese directorio no aparece en el repositorio auditado; `/app` puede quedar vacio/404 si no se copia build web.
+4. Riesgo de disponibilidad: inicializa bot dentro del callback de `app.listen`; si `initBot` tarda o bloquea, puede degradar arranque.
+5. Error de CSP/conexion potencial: `connectSrc` solo permite self y `https://*.ngrok-free.dev`; podria bloquear otros dominios configurados.
+
+[server/src/db/database.js]
+1. Error de seguridad: usuarios seed con password/PIN `1234` se crean automaticamente.
+2. Error de migracion silenciosa: las migraciones capturan y descartan todo error; un error real de esquema se oculta igual que una columna existente.
+3. Riesgo de rendimiento: `better-sqlite3` es sincronico; todas las consultas bloquean el event loop.
+4. Riesgo de rotacion: si un usuario seed ya existe, no se actualiza PIN/password aunque el valor por defecto cambie.
+5. Riesgo de ubicacion: DB se guarda en `server/pedidos.db`; en despliegues con reinstalacion/clone puede perderse si no se preserva.
+
+[server/src/db/schema.sql]
+1. Riesgo de integridad: no hay constraints CHECK para estados de pedidos, direcciones o booleanos.
+2. Riesgo de integridad: `orders.product_id` no tiene foreign key hacia `products(id)`.
+3. Riesgo de integridad: `order_items.product_id` tampoco tiene foreign key hacia `products(id)`.
+4. Riesgo funcional: `orders.product_name` es NOT NULL, lo que fuerza un producto principal incluso cuando `order_items` permite multiples productos.
+5. Riesgo de auditoria: no hay columnas `updated_at` para rastrear cambios.
+
+[server/src/middleware/auth.js]
+1. Error de configuracion: si `API_KEY` o `JWT_SECRET` no estan definidos, todas las rutas protegidas fallan o JWT puede lanzar errores.
+2. Riesgo de seguridad: no valida issuer/audience en JWT.
+3. Riesgo de seguridad: API key se compara con igualdad simple, no comparacion constante.
+
+[server/src/routes/auth.js]
+1. Riesgo de configuracion: firma JWT con `process.env.JWT_SECRET` sin validar que exista.
+2. Riesgo de enumeracion: diferencia mensajes de error entre usuario inexistente, PIN incorrecto y password requerido.
+3. Riesgo de compatibilidad: mezcla callbacks bcrypt dentro de ruta Express sin `next(err)`; errores quedan como respuesta 401 generica.
+4. Riesgo de seguridad: PIN de 4 digitos es muy debil aunque exista rate limit.
+
+[server/src/routes/bot.js]
+1. Error de documentacion/API: fallback reporta provider `baileys`, mientras documentos dicen wwebjs.
+2. Riesgo operativo: `/restart` llama `initBot()` sin limpiar timers/socket previos; puede duplicar listeners/conexiones.
+3. Falta endpoint `/qr` pese a que la documentacion de API lo lista como planeado.
+
+[server/src/routes/messages.js]
+1. Riesgo funcional: `PUT /:id/sent` no verifica que exista el mensaje; responde success aunque no actualice nada.
+2. Riesgo funcional: `PUT /:id/flag` tampoco verifica existencia.
+3. Riesgo de UX: `GET /` agrupa por phone pero `customer_name` no esta agregado; SQLite puede devolver un nombre arbitrario si hay multiples.
+4. Riesgo de rendimiento: subconsultas correlacionadas por conversacion pueden degradarse con muchos mensajes.
+5. Riesgo de seguridad: endpoint de salida pendiente depende de API key global compartida.
+
+[server/src/routes/orders.js]
+1. CRITICO: `status` de query se interpola directo dentro de `WHERE o.status IN (${status})`; riesgo de SQL injection y error si se envia `status=pending` sin comillas.
+2. CRITICO: `days` se interpola en `datetime('now', '-${days} days')`; `parseInt` reduce algunos ataques pero no valida rango ni NaN de forma robusta.
+3. Error de rutas: `/api/orders/pending` esta definido despues de `/:id`; en Express, `GET /pending` puede caer primero en `/:id` con `parseInt('pending')` y devolver 404/consulta invalida antes de llegar a la ruta legacy.
+4. Error funcional: `deliver` actualiza sin verificar que el pedido exista; puede responder `null` con 200.
+5. Error funcional: `comment` actualiza sin verificar existencia; puede responder ok aunque no haya fila.
+6. Riesgo de estado: `deliver` permite entregar pedidos cancelados o de otro empleado; no valida estado ni ownership.
+7. Riesgo de estado: `cancel` no valida estado actual; puede cancelar entregados.
+8. Riesgo de estado: `unclaim` puede liberar pedidos entregados/cancelados si `claimed_by` coincide.
+9. Riesgo de orden: estados usan mezcla `entregado`, `delivered`, `cancelled`; falta normalizacion.
+
+[server/src/routes/products.js]
+1. Error funcional: `PUT` usa `name ? name.trim() : null`; no permite actualizar nombre a string valido pero falsy tras validacion rara, y usa truthiness para aliases.
+2. Error funcional: `aliases ? JSON.stringify(aliases) : null` impide guardar un array vacio `[]` para borrar alias.
+3. Error funcional: `DELETE` no verifica existencia; responde success aunque no borre nada.
+4. Riesgo de integridad: borrar producto no afecta pedidos ni items historicos; puede quedar inconsistencia si se esperaba FK.
+
+[server/src/routes/users.js]
+1. Riesgo de seguridad: permite crear usuarios con PIN muy corto si no hay validacion minima suficiente (revisar longitud real en codigo antes de produccion).
+2. Riesgo funcional: actualizaciones parciales deben verificar existencia y filas afectadas.
+3. Riesgo de seguridad: administracion depende solo del rol embebido en JWT hasta expiracion; cambios de rol no invalidan token activo.
+
+[server/src/routes/webhook.js]
+1. Riesgo funcional: flujo de pending depende de `pending_orders` con una sola fila por telefono; conversaciones simultaneas del mismo telefono pisan contexto.
+2. Riesgo de bot: mensajes de saludo no guardan siempre contexto de conversacion como entrada de pedido, segun flujo.
+3. Riesgo de fiado: deteccion por palabras puede marcar como fiado frases ambiguas con dias de semana.
+4. Riesgo de confirmacion: multi-producto solo se crea si tambien se detecta direccion en el primer mensaje; si falta direccion, puede degradar a flujo de producto unico.
+5. Riesgo de datos: telefono y nombre llegan del bot/webhook; no hay validacion fuerte del nombre.
+6. Riesgo de parseo: depende de funciones fuzzy/LLM que pueden fallar silenciosamente y crear pendientes incompletos.
+
+[server/src/services/llmParser.js]
+1. Error de configuracion: instancia Ollama fija `http://localhost:11434` y no usa `process.env.OLLAMA_URL`.
+2. Error de inconsistencia: modelo por defecto en codigo es `qwen2.5:3b`, pero documentos/configuracion dicen `llama3.2:1b`.
+3. Riesgo de bucle/rendimiento: Levenshtein se ejecuta por palabra/producto sin limites estrictos de longitud; mensajes largos o muchos productos pueden bloquear el event loop.
+4. Error de parseo: `JSON.parse(prod.aliases || '[]')` puede lanzar si aliases esta corrupto; no hay fallback local.
+5. Riesgo de prompt injection: texto del cliente se inserta directamente en prompt LLM.
+6. Riesgo de calidad: catch vacio oculta errores de Ollama y de JSON; no quedan logs para diagnostico.
+7. Codigo muerto: `QTY_RE` se declara pero no se usa.
+
+[server/src/services/waBot.js]
+1. Inconsistencia critica: usa Baileys, no `whatsapp-web.js` como indica la documentacion.
+2. Riesgo de conexion: requiere `BOT_PHONE`; si falta, el bot queda deshabilitado aunque el servidor arranque.
+3. Riesgo de reconexion: `initBot()` puede llamarse multiples veces sin cerrar socket anterior ni limpiar estado global.
+4. Riesgo de perdida de mensajes: si `postInbound` falla, el bot puede continuar sin reintentos persistentes.
+5. Riesgo de entrega: polling outbound depende de timer en memoria; si proceso se reinicia, mensajes no enviados esperan al proximo arranque.
+6. Riesgo de proveedor: Baileys puede romper por cambios de WhatsApp y dependencia externa no reproducible.
+
+[server/src/services/pdfGenerator.js]
+1. Riesgo funcional: si no existe el directorio de salida o falla escritura, debe validarse manejo de error en runtime.
+2. Riesgo de datos: pedidos multiproducto pueden no reflejarse completo si el PDF se basa solo en columnas principales y no en `order_items`.
+3. Riesgo horario: usa fechas localtime/Date sin zona configurable; puede variar entre VPS y negocio.
+
+[server/src/services/pdfScheduler.js]
+1. Riesgo operativo: scheduler corre en memoria; si el proceso esta apagado a la hora programada, no genera PDF atrasado.
+2. Riesgo de duplicado: si hay dos instancias del servidor, ambas pueden ejecutar el cron.
+
+[server/scripts/healthcheck.js]
+1. Riesgo de configuracion: depende de `.env` y host/puerto local; no valida endpoints autenticados.
+2. No detecta estado real del bot WhatsApp ni dependencia Ollama.
+
+[server/scripts/start.sh]
+1. No se detectaron errores de sintaxis Bash.
+2. Riesgo operativo: si instala dependencias en produccion puede fallar por red igual que `npm ci`.
+
+[server/src/preview.html]
+1. Riesgo de UI/preview: es una vista estatica; puede quedar desincronizada de la app Flutter real.
+2. No se pudo validar render visual en navegador dentro de esta auditoria.
+
+[installer/package.json]
+1. CRITICO: el script `build` usa `pkg`, pero `pkg` no esta en dependencies ni devDependencies; `npm run build` fallo con `sh: 1: pkg: not found`.
+2. Riesgo de reproducibilidad: no hay script de test.
+
+[installer/package-lock.json]
+1. Queda consistente con `installer/package.json`, pero no incluye `pkg`; por eso no puede compilar el EXE.
+2. Debe regenerarse si se agrega `pkg`.
+
+[installer/src/index.js]
+1. Error de seguridad: contiene ngrok token, API key, JWT secret y PIN por defecto hardcodeados.
+2. Riesgo critico: descarga codigo desde rama `main` de GitHub en vez de usar el codigo exacto empaquetado; el EXE instalado puede no coincidir con esta rama/commit.
+3. Riesgo de servicio: instala `node-windows` dinamicamente en `server`, pero no valida que quede disponible antes de generar scripts de servicio salvo existencia de carpeta.
+4. Riesgo de bot duplicado: despues de instalar servicio, tambien lanza una ventana con `node src/index.js`; puede haber dos procesos servidor/bot simultaneos usando el mismo puerto/auth.
+5. Riesgo de ngrok: configura authtoken global y dominio fijo, lo cual no sirve si el token/dominio se revocan o cambian.
+6. Riesgo de red: descarga Node, Git, ngrok y codigo; instalacion offline/VPS cerrado falla.
+7. Riesgo de permisos: exige administrador; correcto para servicio, pero bloquea usos portables.
+8. Riesgo de quoting: comandos Windows con paths y PowerShell embebido deben probarse en Windows real.
+
+[instalar-monserrath.rar]
+1. CRITICO: no se pudo descomprimir en este entorno por ausencia de extractor RAR5.
+2. `unzip -t` fallo porque no es ZIP.
+3. `apt-get install unrar-free`, `npm install node-unrar-js` y `pip install rarfile` fallaron por bloqueo 403/red.
+4. Se detecto firma RAR5 y nombre interno `instalar-monserrath.exe`, pero no se pudo extraer ni auditar el EXE.
+5. Recomendacion: subir el EXE descomprimido o agregar tambien un ZIP, y publicar checksum SHA256.
+
+[start-all.sh]
+1. No se detectaron errores de sintaxis Bash con `bash -n`.
+2. Riesgo operativo: instala nvm/ngrok/Ollama desde internet; falla en entornos sin red.
+3. Riesgo de seguridad: consume `.env` con `source`; valores mal escapados pueden ejecutar shell.
+4. Riesgo de procesos: `pkill -f "node src/index.js"` puede matar procesos no relacionados si coinciden.
+5. Riesgo de compatibilidad: requiere `lsof`, `curl`, `tar`, `free`, `awk`; no valida todos antes de usarlos.
+
+[start-windows.ps1]
+1. CRITICO: declara `#Requires -Version 5.1`, pero usa operador ternario `? :` en lineas como BOT_ENABLED/ngrokDomain; Windows PowerShell 5.1 no soporta esa sintaxis.
+2. CRITICO: usa `goto :skepngrok`, que no es comando valido de PowerShell; ademas la etiqueta no existe.
+3. Riesgo de ruta: asume Node/ngrok/Ollama instalados con Scoop en rutas fijas del usuario.
+4. Riesgo de instalacion: ejecuta npm install pero no comprueba `$LASTEXITCODE`; puede continuar aunque falle.
+5. Riesgo operativo: mata todos los procesos `node` y `ngrok` del usuario, no solo los del proyecto.
+6. Riesgo de URL UI: resumen imprime `https://localhost:3000` cuando no hay ngrok, URL incorrecta para localhost.
+
+[stop-windows.ps1]
+1. CRITICO: asigna a `$pid`, pero `$PID` es variable automatica de PowerShell y es de solo lectura; por ser case-insensitive, puede fallar.
+2. Riesgo operativo: fallback mata `node`, `ngrok` y `ollama` globalmente, no solo procesos del proyecto.
+3. Riesgo de datos: elimina `.pids.json` aunque algunos procesos no hayan podido detenerse.
+
+[compilar-apk.ps1]
+1. Riesgo de reproducibilidad: descarga Flutter/Android SDK si faltan; depende de internet.
+2. Riesgo de version: instala SDK/build-tools mixtos 34/35 y usa compile target 35; debe validarse con Gradle real.
+3. No se pudo ejecutar en este contenedor porque no hay PowerShell/Flutter/Android SDK.
+
+[android-app/pubspec.yaml]
+1. No se pudo validar `flutter pub get` por falta de Flutter.
+2. Riesgo de version: SDK `>=3.0.0 <4.0.0` amplio; dependencias modernas pueden exigir SDK/Gradle especificos.
+3. Falta dependencia `sqflite` aunque documentos mencionan cache robusto con sqflite.
+
+[android-app/pubspec.lock]
+1. No se pudo validar contra `flutter pub get`.
+2. Debe regenerarse si se cambia el SDK Flutter o dependencias.
+
+[android-app/lib/main.dart]
+1. Riesgo de inicializacion: si `ApiService.init()` falla por secure storage/shared preferences, la app no arranca.
+2. Riesgo de push: OneSignal solo inicializa con compile-time env; si no se pasa `ONESIGNAL_APP_ID`, push queda silenciosamente desactivado.
+
+[android-app/lib/services/api_service.dart]
+1. Riesgo de entorno: URL ngrok hardcodeada como default; si cambia dominio, app instalada queda apuntando a servidor viejo hasta configurar manualmente.
+2. Riesgo de errores: varios `jsonDecode(res.body)['error']` pueden fallar si el servidor responde HTML/texto/no JSON.
+3. Riesgo offline: no hay cola de salida aqui; depende de `LocalDB` y Provider.
+4. Riesgo de timeout: 10 segundos fijos pueden ser insuficientes en VPS lento/ngrok.
+5. Riesgo de seguridad: token JWT se envia a cualquier URL guardada por el usuario sin validacion de esquema/dominio.
+
+[android-app/lib/services/local_db.dart]
+1. Error de datos: cache usa SharedPreferences, no una DB robusta; puede romperse con listas grandes.
+2. Error de modelo: `Order.toMap()` guarda `customer_phone`, pero `Order.fromJson()` lee `phone`; se pierde telefono al leer cache offline.
+3. Error de modelo: no guarda `items` multiproducto, `claimed_by_display` ni `claimed_by_name` exactos.
+4. Riesgo de sincronizacion: `clearPendingSync()` borra toda la cola aunque algunas acciones fallen dentro del loop del Provider.
+5. Riesgo de conflicto: acciones offline no guardan version/fecha; pueden sobrescribir estado actualizado por otro empleado.
+
+[android-app/lib/providers/app_provider.dart]
+1. Error funcional: `syncPendingActions()` no se llama automaticamente en `refreshAll()` ni al recuperar conexion; la cola offline puede quedarse sin enviar.
+2. Error de sincronizacion: si una accion pendiente falla, se ignora y al final se borra toda la cola.
+3. Riesgo de estado: `isOnline` se calcula una vez en `refreshAll`; acciones posteriores pueden intentar online aunque la conexion ya haya caido.
+4. Riesgo de UX: errores en refresh/products/users se silencian sin mostrar causa.
+5. Riesgo de permiso: `isAdmin` depende del rol local almacenado en secure storage hasta que expire o se cierre sesion.
+
+[android-app/lib/models/order.dart]
+1. Error de compatibilidad cache: lee `phone`, pero `toMap()` escribe `customer_phone`.
+2. Error multiproducto: `toMap()` no serializa `items`; cache offline pierde detalle de pedido compuesto.
+3. Riesgo de cast: `(j['items'] as List?)?.cast<Map<String, dynamic>>()` puede fallar si la lista decodificada es `List<dynamic>` con mapas no tipados segun plataforma.
+
+[android-app/lib/models/product.dart]
+1. Riesgo de parseo: `price: (j['price'] as num).toDouble()` falla si API devuelve string o null.
+2. Riesgo de alias: si API devuelve aliases como string JSON por alguna ruta no parseada, la app lo convierte a lista vacia.
+
+[android-app/lib/models/message.dart]
+1. No se detectaron errores de compilacion visibles por lectura.
+2. Riesgo funcional: `sent` se modela como int, no bool/estado; no distingue fallos permanentes.
+
+[android-app/lib/screens/login_screen.dart]
+1. Riesgo UI: no se observo validacion fuerte de PIN antes de enviar, mas alla del backend.
+2. Riesgo UX: errores de red/JSON pueden mostrarse como excepciones genericas.
+
+[android-app/lib/screens/dashboard_screen.dart]
+1. Riesgo UI: si `_filter` queda vacio, se muestra “No hay pedidos activos” aunque existan pedidos.
+2. Riesgo UX: los botones usan `order.id!`; si llega un pedido local sin id, crashea.
+3. Riesgo de actualizacion: no hay timer/SSE activo; los pedidos no se refrescan en tiempo real salvo pull/acciones.
+
+[android-app/lib/screens/products_screen.dart]
+1. Error de precio: al crear producto elimina puntos y comas; no soporta decimales reales y puede convertir `12.50` en `1250`.
+2. Riesgo UI: controladores de bottom sheet no se eliminan con `dispose`; fuga menor.
+3. Riesgo permisos: si pantalla esta disponible para workers, cualquier JWT puede modificar productos porque backend solo exige jwtAuth.
+
+[android-app/lib/screens/messages_screen.dart]
+1. Riesgo de tiempo real: no hay SSE/websocket; dependera de refresco manual o navegacion.
+2. Riesgo UX: errores de API pueden ocultarse.
+
+[android-app/lib/screens/chat_screen.dart]
+1. Riesgo de bucle/polling: timer cada 4 segundos llama API indefinidamente mientras la pantalla esta abierta; puede consumir bateria/red.
+2. Riesgo de carrera: `_load()` puede solaparse si una llamada tarda mas de 4 segundos.
+3. Riesgo UX: errores de carga se silencian.
+
+[android-app/lib/widgets/company_header.dart]
+1. No se detectaron errores de compilacion visibles por lectura.
+2. Revisar visualmente en dispositivos pequenos para evitar overflow.
+
+[android-app/lib/widgets/order_card.dart]
+1. Riesgo UI: si `order.productName` viene vacio en multiproducto, la tarjeta oculta detalle real.
+2. Riesgo UX: acciones deslizables pueden estar disponibles aunque el estado/permiso backend las rechace.
+3. Riesgo telefono: llamada depende de `customerPhone`; cache offline puede perderlo por bug de `Order.toMap()`.
+
+[android-app/lib/widgets/order_detail_modal.dart]
+1. Error multiproducto: muestra un solo `order.productName` y no lista `order.items`.
+2. Riesgo UX: boton entregar aparece en el modal sin validar estado/propietario visible.
+3. Riesgo UI: mensaje WhatsApp largo puede ocupar demasiado alto, aunque este dentro de ListView.
+
+[android-app/android/settings.gradle.kts]
+1. No se pudo validar Gradle por falta de Flutter/Android SDK.
+2. Revisar compatibilidad de plugin Flutter generado con version Gradle local.
+
+[android-app/android/build.gradle.kts]
+1. No se pudo validar Gradle.
+2. Riesgo de versiones si plugins/Gradle wrapper no coinciden.
+
+[android-app/android/app/build.gradle.kts]
+1. No se pudo compilar.
+2. Revisar minSdk/targetSdk contra dependencias OneSignal/secure storage.
+
+[android-app/android/gradle.properties]
+1. No se detectaron errores visibles por lectura.
+
+[android-app/android/gradle/wrapper/gradle-wrapper.properties]
+1. No se pudo descargar/ejecutar Gradle en este entorno.
+
+[android-app/android/app/proguard-rules.pro]
+1. No se detectaron reglas criticas visibles, pero deben revisarse para OneSignal/secure storage si release obfuscado falla.
+
+[android-app/android/app/src/main/AndroidManifest.xml]
+1. No se pudo validar con Android build tools.
+2. Revisar permisos de internet, cleartext y configuracion de OneSignal en build real.
+
+[android-app/android/app/src/debug/AndroidManifest.xml]
+1. No se detectaron errores visibles por lectura.
+
+[android-app/android/app/src/profile/AndroidManifest.xml]
+1. No se detectaron errores visibles por lectura.
+
+[android-app/android/app/src/main/kotlin/com/concentrados/monserrath/MainActivity.kt]
+1. No se detectaron errores visibles por lectura.
+
+[android-app/android/app/src/main/res/values/styles.xml]
+1. No se detectaron errores visibles por lectura.
+
+[android-app/android/app/src/main/res/values-night/styles.xml]
+1. No se detectaron errores visibles por lectura.
+
+[android-app/android/app/src/main/res/values/colors.xml]
+1. No se detectaron errores visibles por lectura.
+
+[android-app/android/app/src/main/res/xml/network_security_config.xml]
+1. Riesgo de seguridad: si permite cleartext o dominios amplios, debe limitarse a dominios necesarios. No se pudo validar runtime.
+
+[android-app/android/app/src/main/res/drawable/launch_background.xml]
+1. No se detectaron errores visibles por lectura.
+
+[android-app/android/app/src/main/res/drawable-v21/launch_background.xml]
+1. No se detectaron errores visibles por lectura.
+
+[android-app/web/index.html]
+1. No se pudo validar build web.
+2. Riesgo de desincronizacion si assets generados por Flutter no estan presentes.
+
+[android-app/web/manifest.json]
+1. No se detectaron errores visibles por lectura.
+
+[android-app/web/favicon.png]
+1. No se audito contenido grafico binario; validar visualmente.
+
+[android-app/web/icons/Icon-192.png]
+1. No se audito contenido grafico binario; validar visualmente.
+
+[android-app/web/icons/Icon-512.png]
+1. No se audito contenido grafico binario; validar visualmente.
+
+[android-app/web/icons/Icon-maskable-192.png]
+1. No se audito contenido grafico binario; validar visualmente.
+
+[android-app/web/icons/Icon-maskable-512.png]
+1. No se audito contenido grafico binario; validar visualmente.
+
+[android-app/assets/icon/app_icon.png]
+1. No se audito contenido grafico binario; validar visualmente.
+
+[android-app/assets/icon/app_icon_foreground.png]
+1. No se audito contenido grafico binario; validar visualmente.
+
+[android-app/test/widget_test.dart]
+1. Test placeholder no valida la app real; da falsa confianza.
+2. No se pudo ejecutar `flutter test` por falta de Flutter.
+
+RECOMENDACIONES PRIORITARIAS
+============================
+1. Subir tambien `instalar-monserrath.exe` extraido o un `.zip` verificable, junto con SHA256.
+2. Agregar `pkg` como devDependency del instalador o documentar build global.
+3. Decidir proveedor de WhatsApp: Baileys o whatsapp-web.js, y alinear README, CONTINUE, package y codigo.
+4. Corregir SQL injection en `server/src/routes/orders.js` usando allowlists y placeholders.
+5. Corregir `start-windows.ps1` para PowerShell 5.1 o cambiar `#Requires` a 7+ y eliminar `goto`.
+6. Sacar credenciales del repositorio y rotar tokens/API keys/JWT/ngrok expuestos.
+7. Hacer que `syncPendingActions()` se ejecute automaticamente y no borre acciones fallidas.
+8. Agregar CI con `npm ci`, `node --check`, pruebas de rutas, `flutter analyze` y `flutter test`.
+9. Agregar pruebas de instalador en Windows real y pruebas de arranque bot/servidor con `.env` minimo.
+10. Agregar render/pruebas visuales de la app para pantallas pequenas y pedidos multiproducto.
