@@ -22,6 +22,21 @@ echo -e "${GREEN}${BOLD}╚═════════════════�
 echo ""
 mkdir -p "$LOG"
 
+# ── 0. Auto-descarga repo si server/ no existe ───────────────
+if [ ! -d "$PROJ/server" ]; then
+  warn "Directorio server/ no encontrado — descargando repositorio..."
+  REPO_ZIP="https://github.com/itanmidnight-ux/pedidos-whatsapp/archive/refs/heads/main.zip"
+  TMP=$(mktemp -d)
+  curl -fsSL "$REPO_ZIP" -o "$TMP/repo.zip" \
+    || err "No se pudo descargar repositorio de GitHub"
+  command -v unzip &>/dev/null \
+    || { command -v apt-get &>/dev/null && apt-get install -y unzip -qq 2>/dev/null; }
+  unzip -q "$TMP/repo.zip" -d "$TMP/"
+  cp -r "$TMP"/pedidos-whatsapp-main/server "$PROJ/"
+  rm -rf "$TMP"
+  ok "Repositorio descargado desde GitHub"
+fi
+
 # ── 1. Node.js via nvm ───────────────────────────────────────
 info "Verificando Node.js..."
 export NVM_DIR="$HOME/.nvm"
@@ -203,7 +218,7 @@ if [ "${BOT_ENABLED:-false}" = "true" ] && [ -n "${BOT_PHONE:-}" ]; then
       echo -e "${GREEN}${BOLD}╔══════════════════════════════════════════════╗${NC}"
       echo -e "${GREEN}${BOLD}║   CÓDIGO DE VINCULACIÓN WHATSAPP             ║${NC}"
       echo -e "${GREEN}${BOLD}╠══════════════════════════════════════════════╣${NC}"
-      echo -e "${GREEN}${BOLD}║${NC}   ${BOLD}${PAIR_CODE}${NC}$(printf '%*s' $((38 - ${#PAIR_CODE})))"${GREEN}${BOLD}║${NC}"
+      echo -e "${GREEN}${BOLD}║${NC}   ${BOLD}${PAIR_CODE}${NC}$(printf '%*s' $((38 - ${#PAIR_CODE})) '')${GREEN}${BOLD}║${NC}"
       echo -e "${GREEN}${BOLD}╠══════════════════════════════════════════════╣${NC}"
       echo -e "${GREEN}${BOLD}║${NC} 1. Abre WhatsApp en tu teléfono              ${GREEN}${BOLD}║${NC}"
       echo -e "${GREEN}${BOLD}║${NC} 2. Menú (⋮) → Dispositivos vinculados        ${GREEN}${BOLD}║${NC}"
@@ -243,6 +258,53 @@ done
     || err "ngrok no respondió en 15s — revisa $LOG/ngrok.log"
 }
 ok "Túnel activo: https://$NGROK_DOMAIN"
+
+# ── 12. Servicio systemd (persistencia en reboot) ─────────────
+SVC="pedidos-monserrath"
+SVC_FILE="/etc/systemd/system/${SVC}.service"
+if command -v systemctl &>/dev/null && [ "$(cat /proc/1/comm 2>/dev/null)" = "systemd" ]; then
+  if [ ! -f "$SVC_FILE" ]; then
+    info "Configurando servicio systemd para auto-inicio en reboot..."
+    NODE_BIN=$(command -v node)
+    SVC_DEF="[Unit]
+Description=Pedidos Concentrados Monserrath
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=$(whoami)
+WorkingDirectory=${PROJ}/server
+ExecStart=${NODE_BIN} src/index.js
+Restart=always
+RestartSec=10
+StartLimitIntervalSec=120
+StartLimitBurst=5
+StandardOutput=append:${LOG}/server.log
+StandardError=append:${LOG}/server.log
+EnvironmentFile=${PROJ}/server/.env
+
+[Install]
+WantedBy=multi-user.target"
+    if [ "$(id -u)" = "0" ]; then
+      printf '%s\n' "$SVC_DEF" > "$SVC_FILE"
+      systemctl daemon-reload 2>/dev/null && systemctl enable "$SVC" 2>/dev/null \
+        && ok "Servicio systemd: ${SVC} habilitado (auto-inicio en reboot)" \
+        || warn "systemctl enable falló — ver: systemctl status ${SVC}"
+    elif command -v sudo &>/dev/null; then
+      printf '%s\n' "$SVC_DEF" | sudo tee "$SVC_FILE" > /dev/null
+      sudo systemctl daemon-reload 2>/dev/null && sudo systemctl enable "$SVC" 2>/dev/null \
+        && ok "Servicio systemd: ${SVC} habilitado (auto-inicio en reboot)" \
+        || warn "systemctl enable falló — ver: systemctl status ${SVC}"
+    else
+      warn "Sin root/sudo — systemd no configurado. Ejecutar con sudo para persistencia."
+    fi
+  else
+    ok "Servicio systemd: ${SVC} ya configurado"
+  fi
+else
+  warn "systemd no disponible — reiniciar con: bash start-all.sh"
+fi
 
 # ── Resumen ───────────────────────────────────────────────────
 echo ""
