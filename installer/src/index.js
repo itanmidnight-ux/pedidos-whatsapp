@@ -66,10 +66,14 @@ function download(url, dest) {
   return new Promise((resolve, reject) => {
     fs.mkdirSync(path.dirname(dest), { recursive: true });
     const file = fs.createWriteStream(dest);
-    function get(u) {
+    function get(u, depth = 0) {
+      if (depth > 10) { file.close(); return reject(new Error(`Demasiadas redirecciones: ${u}`)); }
       const mod = u.startsWith('https') ? https : http;
       mod.get(u, { headers: { 'User-Agent': 'Mozilla/5.0' } }, res => {
-        if ([301, 302, 307, 308].includes(res.statusCode)) return get(res.headers.location);
+        if ([301, 302, 307, 308].includes(res.statusCode)) {
+          res.resume();
+          return get(res.headers.location, depth + 1);
+        }
         if (res.statusCode !== 200) { file.close(); return reject(new Error(`HTTP ${res.statusCode} para ${u}`)); }
         res.pipe(file);
         file.on('finish', () => { file.close(); resolve(); });
@@ -343,7 +347,7 @@ async function ensureOllama(sp, envPath) {
 
   if (vOllama !== null) {
     // Ollama presente — asegurar que el servicio esté corriendo
-    spawn('ollama', ['serve'], { env, stdio: 'ignore', detached: true }).unref();
+    spawn('ollama', ['serve'], { env, stdio: 'ignore', detached: true }).on('error', () => {}).unref();
     await delay(3000);
 
     const models = run('ollama list', { env }) || '';
@@ -374,7 +378,7 @@ async function ensureOllama(sp, envPath) {
 
     await delay(5000); // Ollama inicia su servicio al instalarse
 
-    spawn('ollama', ['serve'], { env, stdio: 'ignore', detached: true }).unref();
+    spawn('ollama', ['serve'], { env, stdio: 'ignore', detached: true }).on('error', () => {}).unref();
     await delay(4000);
 
     sp.text = `Descargando modelo ${model} (3-5 min, puede tardar en VPS lento)...`;
