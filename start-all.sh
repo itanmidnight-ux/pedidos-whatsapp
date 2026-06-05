@@ -51,7 +51,33 @@ fi
 # ── 3. .env ────────────────────────────────────────────────────
 info "Verificando configuración..."
 ENV_FILE="$PROJ/server/.env"
-[ ! -f "$ENV_FILE" ] && err ".env no encontrado en $ENV_FILE"
+
+if [ ! -f "$ENV_FILE" ]; then
+  warn ".env no encontrado — creando configuración automática..."
+
+  # Pedir solo BOT_PHONE (único dato variable por negocio)
+  BOT_PHONE_VAL=""
+  if [ -t 0 ]; then
+    read -rp "  Número WhatsApp del negocio (ej: 573001234567): " BOT_PHONE_VAL
+  fi
+  [ -z "$BOT_PHONE_VAL" ] && BOT_PHONE_VAL="57"
+
+  mkdir -p "$(dirname "$ENV_FILE")"
+  cat > "$ENV_FILE" <<'ENVEOF'
+PORT=3000
+API_KEY=80721f27d4b9e6b1250ccf94f5356f1d9368993ffd0e51d1d9470754e85b9171
+JWT_SECRET=a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2
+NGROK_AUTHTOKEN=34G7biMjp4tdGcupxvySfJvYqrQ_6BEU8VntbCjSudDRWntdB
+NGROK_DOMAIN=francoise-subhumid-maire.ngrok-free.dev
+OLLAMA_MODEL=llama3.2:1b
+WORKER_PIN=1234
+BOT_ENABLED=true
+ENVEOF
+  echo "BOT_PHONE=${BOT_PHONE_VAL}" >> "$ENV_FILE"
+  chmod 600 "$ENV_FILE"
+  ok ".env creado (permisos 600)"
+fi
+
 set -a; source "$ENV_FILE"; set +a
 [ -z "$NGROK_DOMAIN" ]    && err "NGROK_DOMAIN no configurado en .env"
 [ -z "$NGROK_AUTHTOKEN" ] && err "NGROK_AUTHTOKEN no configurado en .env"
