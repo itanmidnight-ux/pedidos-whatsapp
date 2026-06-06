@@ -24,7 +24,6 @@ class CompanyHeader extends StatelessWidget implements PreferredSizeWidget {
           width: double.infinity,
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
-            mainAxisSize: MainAxisSize.min,
             children: [
               const Text('🌾', style: TextStyle(fontSize: 12)),
               const SizedBox(width: 6),
