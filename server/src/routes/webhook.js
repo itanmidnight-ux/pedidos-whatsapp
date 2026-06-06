@@ -4,6 +4,7 @@ const { apiKeyAuth } = require('../middleware/auth');
 const {
   parseOrderMessage, parseMultiItems, fuzzyProductMatch, extractAddress,
   isGreeting, isComplaint, isConfirmation, isDenial,
+  hasOrderContent, findAmbiguousCategory,
 } = require('../services/llmParser');
 const { getDB } = require('../db/database');
 
@@ -98,8 +99,8 @@ router.post('/message', apiKeyAuth, async (req, res) => {
     });
   }
 
-  // ── Saludo sin pedido ─────────────────────────────────────
-  if (isGreeting(message) && !pending) {
+  // ── Saludo sin pedido (solo si el mensaje NO contiene una orden) ────
+  if (isGreeting(message) && !pending && !hasOrderContent(message)) {
     const products = db.prepare('SELECT * FROM products WHERE available=1').all();
     const menuLines = products.map((p, i) => `  ${i+1}. ${p.name} — $${Number(p.price).toLocaleString('es-CO')}`).join('\n');
     return res.json({
@@ -247,6 +248,17 @@ router.post('/message', apiKeyAuth, async (req, res) => {
   }
 
   if (!hasProduct) {
+    // Categoría ambigua: producto parcialmente identificado, múltiples opciones
+    if (parsed.needs_clarification && Array.isArray(parsed.ambiguous_candidates) && parsed.ambiguous_candidates.length >= 2) {
+      const kw       = parsed.ambiguous_keyword || 'producto';
+      const kwCap    = kw.charAt(0).toUpperCase() + kw.slice(1);
+      const optLines = parsed.ambiguous_candidates.map((p, i) => `  ${i+1}. ${p.name}`).join('\n');
+      savePending(db, phone, { ...parsed, wa_message: message, missing_field: 'product' });
+      return res.json({
+        success: false, pending: true,
+        reply: `¿${kwCap} de qué?\n${optLines}\n\n¿Cuál deseas?`,
+      });
+    }
     savePending(db, phone, { ...parsed, wa_message: message, missing_field: 'product' });
     return res.json({
       success: false, pending: true,
