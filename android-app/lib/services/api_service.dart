@@ -147,12 +147,14 @@ class ApiService {
 
   static Future<Product> createProduct(Product p) async {
     final res = await http.post(Uri.parse('$_serverUrl/api/products'), headers: _headers, body: jsonEncode(p.toJson())).timeout(const Duration(seconds: 10));
-    return Product.fromJson(jsonDecode(res.body));
+    if (res.statusCode == 200 || res.statusCode == 201) return Product.fromJson(jsonDecode(res.body));
+    throw Exception(jsonDecode(res.body)['error'] ?? 'Error creando producto: ${res.statusCode}');
   }
 
   static Future<Product> updateProduct(int id, Map<String, dynamic> data) async {
     final res = await http.put(Uri.parse('$_serverUrl/api/products/$id'), headers: _headers, body: jsonEncode(data)).timeout(const Duration(seconds: 10));
-    return Product.fromJson(jsonDecode(res.body));
+    if (res.statusCode == 200) return Product.fromJson(jsonDecode(res.body));
+    throw Exception(jsonDecode(res.body)['error'] ?? 'Error actualizando producto: ${res.statusCode}');
   }
 
   static Future<void> deleteProduct(int id) async {

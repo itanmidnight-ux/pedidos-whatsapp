@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import '../models/order.dart';
@@ -16,6 +17,29 @@ class AppProvider extends ChangeNotifier {
   int  flaggedCount = 0;
   bool loading      = false;
 
+  Timer? _refreshTimer;
+
+  void startAutoRefresh() {
+    _refreshTimer?.cancel();
+    _refreshTimer = Timer.periodic(const Duration(seconds: 20), (_) async {
+      if (isLoggedIn) {
+        isOnline = await _checkOnline();
+        await Future.wait([refreshOrders(), refreshFlagged()]);
+      }
+    });
+  }
+
+  void stopAutoRefresh() {
+    _refreshTimer?.cancel();
+    _refreshTimer = null;
+  }
+
+  @override
+  void dispose() {
+    _refreshTimer?.cancel();
+    super.dispose();
+  }
+
   Future<bool> _checkOnline() async {
     try {
       final res = await http.get(
@@ -27,6 +51,7 @@ class AppProvider extends ChangeNotifier {
   }
 
   Future<void> logout() async {
+    stopAutoRefresh();
     await ApiService.logout();
     isLoggedIn = false;
     orders = []; products = []; users = [];
@@ -43,6 +68,7 @@ class AppProvider extends ChangeNotifier {
     isLoggedIn = true; isOnline = true;
     notifyListeners();
     await refreshAll();
+    startAutoRefresh();
   }
 
   Future<void> refreshAll() async {

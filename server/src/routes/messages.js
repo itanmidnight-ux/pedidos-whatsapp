@@ -134,7 +134,9 @@ router.post('/send-media', jwtAuth, upload.single('file'), (req, res) => {
   if (!validPhone(phone)) return res.status(400).json({ error: 'phone inválido' });
   if (!['audio', 'image'].includes(media_type)) return res.status(400).json({ error: 'media_type inválido' });
 
-  const ext = media_type === 'audio' ? 'm4a' : 'jpg';
+  const mimeExt = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif',
+    'audio/mp4': 'm4a', 'audio/aac': 'aac', 'audio/ogg': 'ogg', 'audio/mpeg': 'mp3' };
+  const ext = mimeExt[req.file.mimetype] || (media_type === 'audio' ? 'm4a' : 'jpg');
   const newFilename = `${phone}_${Date.now()}.${ext}`;
   const destPath    = path.join(MEDIA_DIR, newFilename);
 

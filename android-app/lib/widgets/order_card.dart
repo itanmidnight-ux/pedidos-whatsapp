@@ -40,8 +40,14 @@ class OrderCard extends StatelessWidget {
   void _callClient() async {
     final phone = order.customerPhone;
     if (phone == null) return;
-    final uri = Uri.parse('tel:+$phone');
+    final uri = Uri.parse('tel:+${_normalizePhone(phone)}');
     if (await canLaunchUrl(uri)) launchUrl(uri);
+  }
+
+  String _normalizePhone(String phone) {
+    final digits = phone.replaceAll(RegExp(r'\D'), '');
+    if (digits.length == 10 && digits.startsWith('3')) return '57$digits';
+    return digits;
   }
 
   void _sendWhatsApp(BuildContext ctx) async {
@@ -51,9 +57,13 @@ class OrderCard extends StatelessWidget {
         const SnackBar(content: Text('Cliente sin número de teléfono')));
       return;
     }
-    final uri = Uri.parse('https://wa.me/$phone');
+    final normalized = _normalizePhone(phone);
+    final uri = Uri.parse('https://wa.me/$normalized');
     if (await canLaunchUrl(uri)) {
       launchUrl(uri, mode: LaunchMode.externalApplication);
+    } else {
+      if (ctx.mounted) ScaffoldMessenger.of(ctx).showSnackBar(
+        const SnackBar(content: Text('No se pudo abrir WhatsApp')));
     }
   }
 

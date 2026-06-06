@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_slidable/flutter_slidable.dart';
 import 'package:cached_network_image/cached_network_image.dart';
@@ -18,6 +19,7 @@ class _MessagesScreenState extends State<MessagesScreen> with SingleTickerProvid
   bool _loading = true;
   final _searchCtrl = TextEditingController();
   String _query = '';
+  Timer? _pollTimer;
 
   @override
   void initState() {
@@ -25,10 +27,21 @@ class _MessagesScreenState extends State<MessagesScreen> with SingleTickerProvid
     _tabs = TabController(length: 2, vsync: this);
     _load();
     _searchCtrl.addListener(() => setState(() => _query = _searchCtrl.text.toLowerCase()));
+    _pollTimer = Timer.periodic(const Duration(seconds: 15), (_) => _silentRefresh());
+  }
+
+  Future<void> _silentRefresh() async {
+    try {
+      final results = await Future.wait([
+        ApiService.getConversations(archived: false),
+        ApiService.getConversations(archived: true),
+      ]);
+      if (mounted) setState(() { _chats = results[0]; _archived = results[1]; });
+    } catch (_) {}
   }
 
   @override
-  void dispose() { _tabs.dispose(); _searchCtrl.dispose(); super.dispose(); }
+  void dispose() { _tabs.dispose(); _searchCtrl.dispose(); _pollTimer?.cancel(); super.dispose(); }
 
   Future<void> _load() async {
     setState(() => _loading = true);
