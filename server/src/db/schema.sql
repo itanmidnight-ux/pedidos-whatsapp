@@ -68,6 +68,15 @@ CREATE TABLE IF NOT EXISTS order_items (
 );
 CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items(order_id);
 
+CREATE TABLE IF NOT EXISTS promotional_campaigns (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  message     TEXT NOT NULL,
+  target_type TEXT DEFAULT 'all',
+  sent_count  INTEGER DEFAULT 0,
+  created_by  INTEGER REFERENCES users(id),
+  created_at  TEXT DEFAULT (datetime('now','localtime'))
+);
+
 CREATE TABLE IF NOT EXISTS pending_orders (
   id               INTEGER PRIMARY KEY AUTOINCREMENT,
   phone            TEXT UNIQUE NOT NULL,
