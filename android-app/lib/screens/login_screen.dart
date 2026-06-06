@@ -18,7 +18,7 @@ class _LoginScreenState extends State<LoginScreen> {
     final user = _userCtrl.text.trim();
     final pin  = _pinCtrl.text;
     if (user.isEmpty || pin.isEmpty) {
-      setState(() => _error = 'Ingresa usuario y PIN');
+      setState(() => _error = 'Ingresa usuario y contraseña');
       return;
     }
     setState(() { _loading = true; _error = null; });
@@ -73,11 +73,11 @@ class _LoginScreenState extends State<LoginScreen> {
               TextField(
                 controller: _pinCtrl,
                 obscureText: _obscure,
-                keyboardType: TextInputType.number,
+                keyboardType: TextInputType.visiblePassword,
                 decoration: InputDecoration(
-                  labelText: 'PIN',
-                  hintText: '4 dígitos',
-                  prefixIcon: const Icon(Icons.pin_outlined),
+                  labelText: 'Contraseña',
+                  hintText: 'Tu contraseña',
+                  prefixIcon: const Icon(Icons.lock_outline_rounded),
                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
                   suffixIcon: IconButton(
                     icon: Icon(_obscure ? Icons.visibility_off_outlined : Icons.visibility_outlined),

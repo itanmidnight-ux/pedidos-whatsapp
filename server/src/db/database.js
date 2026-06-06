@@ -104,6 +104,8 @@ async function initDB() {
        delivery_date TEXT,
        created_at DATETIME DEFAULT (datetime('now','localtime'))
      )`,
+    // User address for delivery
+    'ALTER TABLE users ADD COLUMN address TEXT',
   ];
   for (const sql of migrations) {
     try { db.exec(sql); } catch { /* already exists */ }

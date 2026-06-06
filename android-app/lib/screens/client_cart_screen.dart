@@ -5,10 +5,10 @@ import '../services/api_service.dart';
 
 class ClientCartScreen extends StatefulWidget {
   const ClientCartScreen({super.key});
-  @override State<ClientCartScreen> createState() => _ClientCartScreenState();
+  @override State<ClientCartScreen> createState() => ClientCartScreenState();
 }
 
-class _ClientCartScreenState extends State<ClientCartScreen> {
+class ClientCartScreenState extends State<ClientCartScreen> {
   static const _green = Color(0xFF1E6B2E);
   List<CartItem> _items = [];
   bool _loading = true;
@@ -19,6 +19,8 @@ class _ClientCartScreenState extends State<ClientCartScreen> {
     super.initState();
     _load();
   }
+
+  void reload() { if (mounted) _load(); }
 
   Future<void> _load() async {
     setState(() => _loading = true);

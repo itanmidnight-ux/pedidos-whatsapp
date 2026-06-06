@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
@@ -18,63 +19,96 @@ class _ProductsScreenState extends State<ProductsScreen> {
   void _showAddProduct() {
     final nameCtrl  = TextEditingController();
     final priceCtrl = TextEditingController();
-    final aliasCtrl = TextEditingController();
-    final aliases   = <String>[];
+    final picker    = ImagePicker();
 
     showModalBottomSheet(
       context: context, isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setModal) => Padding(
-          padding: EdgeInsets.fromLTRB(20, 20, 20, MediaQuery.of(ctx).viewInsets.bottom + 20),
-          child: Column(mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start, children: [
-            const Text('Nuevo Producto',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 16),
-            TextField(controller: nameCtrl,
-              decoration: const InputDecoration(
-                labelText: 'Nombre del producto', border: OutlineInputBorder())),
-            const SizedBox(height: 12),
-            TextField(controller: priceCtrl,
-              decoration: const InputDecoration(
-                labelText: 'Precio', border: OutlineInputBorder(), prefixText: '\$'),
-              keyboardType: TextInputType.number),
-            const SizedBox(height: 12),
-            Row(children: [
-              Expanded(child: TextField(controller: aliasCtrl,
+      builder: (ctx) {
+        XFile? pickedImage;
+        return StatefulBuilder(
+          builder: (ctx, setModal) => SingleChildScrollView(
+            padding: EdgeInsets.fromLTRB(20, 20, 20, MediaQuery.of(ctx).viewInsets.bottom + 24),
+            child: Column(mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Center(child: Container(width: 40, height: 4,
+                decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)))),
+              const SizedBox(height: 16),
+              const Text('Nuevo Producto',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF2D5016))),
+              const SizedBox(height: 16),
+              TextField(controller: nameCtrl,
                 decoration: const InputDecoration(
-                  labelText: 'Agregar apodo/alias', border: OutlineInputBorder()))),
-              const SizedBox(width: 8),
-              IconButton(
-                icon: const Icon(Icons.add_circle, color: Colors.green, size: 32),
-                onPressed: () {
-                  if (aliasCtrl.text.trim().isNotEmpty) {
-                    setModal(() { aliases.add(aliasCtrl.text.trim()); aliasCtrl.clear(); });
+                  labelText: 'Nombre del producto',
+                  prefixIcon: Icon(Icons.inventory_2_outlined),
+                  border: OutlineInputBorder())),
+              const SizedBox(height: 12),
+              TextField(controller: priceCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Precio', border: OutlineInputBorder(), prefixText: '\$'),
+                keyboardType: TextInputType.number),
+              const SizedBox(height: 16),
+              const Text('Foto del producto',
+                style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+              const SizedBox(height: 8),
+              GestureDetector(
+                onTap: () async {
+                  final img = await picker.pickImage(source: ImageSource.gallery, imageQuality: 80);
+                  if (img != null) setModal(() => pickedImage = img);
+                },
+                child: Container(
+                  width: double.infinity, height: 130,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF5F5F5),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: pickedImage != null ? const Color(0xFF2D5016) : Colors.grey.shade300,
+                      width: pickedImage != null ? 2 : 1)),
+                  child: pickedImage != null
+                    ? ClipRRect(
+                        borderRadius: BorderRadius.circular(11),
+                        child: Image.file(File(pickedImage!.path), fit: BoxFit.cover))
+                    : Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                        Icon(Icons.add_photo_alternate_rounded, size: 40, color: Colors.grey.shade400),
+                        const SizedBox(height: 6),
+                        Text('Toca para agregar foto',
+                          style: TextStyle(color: Colors.grey.shade500, fontSize: 13)),
+                      ]),
+                ),
+              ),
+              const SizedBox(height: 20),
+              SizedBox(width: double.infinity, child: FilledButton.icon(
+                icon: const Icon(Icons.check_rounded),
+                label: const Text('Guardar Producto'),
+                onPressed: () async {
+                  final price = double.tryParse(
+                    priceCtrl.text.replaceAll(',', '').replaceAll('.', ''));
+                  if (nameCtrl.text.trim().isEmpty || price == null) return;
+                  final capturedName  = nameCtrl.text.trim();
+                  final capturedImage = pickedImage;
+                  Navigator.pop(ctx);
+                  try {
+                    final product = await context.read<AppProvider>().createProduct(
+                      Product(name: capturedName, aliases: [], price: price));
+                    if (capturedImage != null && product.id != null) {
+                      await ApiService.uploadProductImage(product.id!, capturedImage.path);
+                      await context.read<AppProvider>().refreshProducts();
+                    }
+                  } catch (e) {
+                    if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                      content: Text(e.toString().replaceAll('Exception: ', '')),
+                      backgroundColor: Colors.red.shade700));
                   }
-                }),
+                },
+                style: FilledButton.styleFrom(
+                  backgroundColor: const Color(0xFF2D5016),
+                  minimumSize: const Size(double.infinity, 50)),
+              )),
             ]),
-            if (aliases.isNotEmpty) Wrap(spacing: 6, children: aliases
-              .map((a) => Chip(label: Text(a),
-                onDeleted: () => setModal(() => aliases.remove(a)))).toList()),
-            const SizedBox(height: 16),
-            SizedBox(width: double.infinity, child: FilledButton(
-              onPressed: () async {
-                final price = double.tryParse(
-                  priceCtrl.text.replaceAll(',', '').replaceAll('.', ''));
-                if (nameCtrl.text.trim().isEmpty || price == null) return;
-                Navigator.pop(ctx);
-                await context.read<AppProvider>().createProduct(
-                  Product(name: nameCtrl.text.trim(),
-                    aliases: List.from(aliases), price: price));
-              },
-              style: FilledButton.styleFrom(backgroundColor: const Color(0xFF2D5016)),
-              child: const Text('Guardar Producto'),
-            )),
-          ]),
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 

@@ -10,6 +10,7 @@ export HOME="${HOME:-/home/kali}"
 LOG="$PROJ/logs"
 ENV_FILE="$PROJ/server/.env"
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'; BOLD='\033[1m'
+TUNNEL_TYPE="${TUNNEL_TYPE:-ngrok}"  # ngrok | cloudflared
 
 ok()   { echo -e "${GREEN}✓${NC} $1"; }
 warn() { echo -e "${YELLOW}⚠${NC}  $1"; }
@@ -209,27 +210,48 @@ else
   warn "BD no existe — se crea al primer inicio"
 fi
 
-# ── 7. ngrok ──────────────────────────────────────────────────
-info "Verificando ngrok..."
+# ── 7. Túnel (ngrok o cloudflared) ────────────────────────────
 export PATH="$PATH:$HOME/bin:/usr/local/bin:/snap/bin"
-if ! command -v ngrok &>/dev/null; then
-  warn "ngrok no encontrado. Descargando..."
-  ARCH=$(uname -m)
-  case "$ARCH" in
-    aarch64|arm64) NGROK_PKG="ngrok-v3-stable-linux-arm64.tgz" ;;
-    armv7l)        NGROK_PKG="ngrok-v3-stable-linux-arm.tgz" ;;
-    *)             NGROK_PKG="ngrok-v3-stable-linux-amd64.tgz" ;;
-  esac
-  mkdir -p "$HOME/bin"
-  curl -fsSL "https://bin.equinox.io/c/bNyj1mQVY4c/$NGROK_PKG" \
-    | tar xz -C "$HOME/bin/" \
-    || err "No se pudo descargar ngrok"
-  chmod +x "$HOME/bin/ngrok"
-  ok "ngrok instalado"
+
+if [ "$TUNNEL_TYPE" = "cloudflared" ]; then
+  info "Verificando cloudflared..."
+  if ! command -v cloudflared &>/dev/null; then
+    warn "cloudflared no encontrado. Instalando..."
+    ARCH=$(uname -m)
+    case "$ARCH" in
+      aarch64|arm64) CF_PKG="cloudflared-linux-arm64" ;;
+      armv7l)        CF_PKG="cloudflared-linux-arm" ;;
+      *)             CF_PKG="cloudflared-linux-amd64" ;;
+    esac
+    mkdir -p "$HOME/bin"
+    curl -fsSL "https://github.com/cloudflare/cloudflared/releases/latest/download/${CF_PKG}" \
+      -o "$HOME/bin/cloudflared" \
+      || err "No se pudo descargar cloudflared"
+    chmod +x "$HOME/bin/cloudflared"
+    ok "cloudflared instalado"
+  fi
+  ok "cloudflared: $(cloudflared --version 2>/dev/null | head -1)"
+else
+  info "Verificando ngrok..."
+  if ! command -v ngrok &>/dev/null; then
+    warn "ngrok no encontrado. Descargando..."
+    ARCH=$(uname -m)
+    case "$ARCH" in
+      aarch64|arm64) NGROK_PKG="ngrok-v3-stable-linux-arm64.tgz" ;;
+      armv7l)        NGROK_PKG="ngrok-v3-stable-linux-arm.tgz" ;;
+      *)             NGROK_PKG="ngrok-v3-stable-linux-amd64.tgz" ;;
+    esac
+    mkdir -p "$HOME/bin"
+    curl -fsSL "https://bin.equinox.io/c/bNyj1mQVY4c/$NGROK_PKG" \
+      | tar xz -C "$HOME/bin/" \
+      || err "No se pudo descargar ngrok"
+    chmod +x "$HOME/bin/ngrok"
+    ok "ngrok instalado"
+  fi
+  ngrok config add-authtoken "$NGROK_AUTHTOKEN" &>/dev/null \
+    || err "ngrok authtoken inválido — verifica NGROK_AUTHTOKEN en .env"
+  ok "ngrok: $(ngrok version 2>/dev/null | head -1)"
 fi
-ngrok config add-authtoken "$NGROK_AUTHTOKEN" &>/dev/null \
-  || err "ngrok authtoken inválido — verifica NGROK_AUTHTOKEN en .env"
-ok "ngrok: $(ngrok version 2>/dev/null | head -1)"
 
 # ── 8. Parser NLP (NLP.js — entrenado automáticamente al iniciar servidor) ──
 ok "Parser NLP.js activo — entrenamiento automático con productos de DB"
@@ -353,28 +375,61 @@ else
   warn "Bot WhatsApp desactivado — configura BOT_PHONE con número válido en .env"
 fi
 
-# ── 12. Túnel ngrok ───────────────────────────────────────────
-info "Iniciando túnel ngrok..."
-ngrok http "${PORT_VAL}" --url="$NGROK_DOMAIN" --log=stdout >> "$LOG/ngrok.log" 2>&1 &
-NGROK_PID=$!
-echo "$NGROK_PID" > "$PROJ/ngrok.pid"
+# ── 12. Túnel ─────────────────────────────────────────────────
+info "Iniciando túnel ($TUNNEL_TYPE)..."
+TUNNEL_URL=""
 
-NGROK_OK=0
-for i in $(seq 1 20); do
-  curl -s http://localhost:4040/api/tunnels 2>/dev/null | grep -q '"public_url"' \
-    && NGROK_OK=1 && break
-  kill -0 "$NGROK_PID" 2>/dev/null || {
-    tail -5 "$LOG/ngrok.log" >&2
-    err "ngrok murió al iniciar — revisa $LOG/ngrok.log"
+if [ "$TUNNEL_TYPE" = "cloudflared" ]; then
+  : > "$LOG/tunnel.log"
+  # Named tunnel (si CF_TUNNEL_NAME está configurado) o quick tunnel
+  if [ -n "${CF_TUNNEL_NAME:-}" ]; then
+    cloudflared tunnel run "$CF_TUNNEL_NAME" >> "$LOG/tunnel.log" 2>&1 &
+  else
+    cloudflared tunnel --url "http://localhost:${PORT_VAL}" --no-autoupdate >> "$LOG/tunnel.log" 2>&1 &
+  fi
+  TUNNEL_PID=$!
+  echo "$TUNNEL_PID" > "$PROJ/tunnel.pid"
+
+  TUNNEL_OK=0
+  for i in $(seq 1 30); do
+    TUNNEL_URL=$(grep -oP 'https://[a-z0-9\-]+\.trycloudflare\.com' "$LOG/tunnel.log" 2>/dev/null | tail -1)
+    [ -n "$TUNNEL_URL" ] && TUNNEL_OK=1 && break
+    # Named tunnel
+    grep -q 'Registered tunnel connection' "$LOG/tunnel.log" 2>/dev/null && TUNNEL_OK=1 && break
+    kill -0 "$TUNNEL_PID" 2>/dev/null || { tail -5 "$LOG/tunnel.log" >&2; err "cloudflared murió al iniciar"; }
+    sleep 2
+  done
+  [ "$TUNNEL_OK" = "1" ] || { tail -5 "$LOG/tunnel.log" >&2; err "cloudflared no respondió en 60s"; }
+  [ -z "$TUNNEL_URL" ] && TUNNEL_URL="${CF_TUNNEL_NAME:-cloudflared-tunnel}"
+  ok "Túnel cloudflared activo: $TUNNEL_URL"
+
+else
+  # ngrok (default)
+  : > "$LOG/ngrok.log"
+  ngrok http "${PORT_VAL}" --url="$NGROK_DOMAIN" --log=stdout >> "$LOG/ngrok.log" 2>&1 &
+  TUNNEL_PID=$!
+  echo "$TUNNEL_PID" > "$PROJ/tunnel.pid"
+  # Keep legacy ngrok.pid for compatibility
+  echo "$TUNNEL_PID" > "$PROJ/ngrok.pid"
+
+  NGROK_OK=0
+  for i in $(seq 1 20); do
+    curl -s http://localhost:4040/api/tunnels 2>/dev/null | grep -q '"public_url"' \
+      && NGROK_OK=1 && break
+    kill -0 "$TUNNEL_PID" 2>/dev/null || {
+      tail -5 "$LOG/ngrok.log" >&2
+      err "ngrok murió al iniciar — revisa $LOG/ngrok.log"
+    }
+    sleep 1
+  done
+  [ "$NGROK_OK" = "1" ] || {
+    grep -qE "ERR_NGROK_4018|authentication failed" "$LOG/ngrok.log" 2>/dev/null \
+      && err "ngrok: authtoken inválido — verifica NGROK_AUTHTOKEN en .env" \
+      || { tail -5 "$LOG/ngrok.log" >&2; err "ngrok no respondió en 20s — revisa $LOG/ngrok.log"; }
   }
-  sleep 1
-done
-[ "$NGROK_OK" = "1" ] || {
-  grep -qE "ERR_NGROK_4018|authentication failed" "$LOG/ngrok.log" 2>/dev/null \
-    && err "ngrok: authtoken inválido — verifica NGROK_AUTHTOKEN en .env" \
-    || { tail -5 "$LOG/ngrok.log" >&2; err "ngrok no respondió en 20s — revisa $LOG/ngrok.log"; }
-}
-ok "Túnel activo: https://$NGROK_DOMAIN"
+  TUNNEL_URL="https://$NGROK_DOMAIN"
+  ok "Túnel ngrok activo: $TUNNEL_URL"
+fi
 
 # ── 13. Servicio systemd (persistencia en reboot) ─────────────
 SVC="pedidos-monserrath"
@@ -439,34 +494,55 @@ else
   warn "NLP health check no respondió — revisar: tail -f $LOG/server.log"
 fi
 
-# ── 15. Watchdog — reinicio automático si servidor cae ────────
+# ── 15. Watchdog — reinicio automático servidor + túnel ───────
 (
   while true; do
     sleep 30
+    # Servidor
     if ! kill -0 "$SERVER_PID" 2>/dev/null; then
-      echo "[watchdog] Servidor caído — reiniciando..." >> "$LOG/server.log"
+      echo "[watchdog] $(date '+%H:%M:%S') Servidor caído — reiniciando..." >> "$LOG/server.log"
       cd "$PROJ/server"
       nohup node src/index.js >> "$LOG/server.log" 2>&1 &
       SERVER_PID=$!
       echo "$SERVER_PID" > "$PROJ/server.pid"
     fi
+    # Túnel
+    if ! kill -0 "$TUNNEL_PID" 2>/dev/null; then
+      echo "[watchdog] $(date '+%H:%M:%S') Túnel caído — reiniciando..." >> "$LOG/tunnel.log"
+      if [ "$TUNNEL_TYPE" = "cloudflared" ]; then
+        if [ -n "${CF_TUNNEL_NAME:-}" ]; then
+          cloudflared tunnel run "$CF_TUNNEL_NAME" >> "$LOG/tunnel.log" 2>&1 &
+        else
+          cloudflared tunnel --url "http://localhost:${PORT_VAL}" --no-autoupdate >> "$LOG/tunnel.log" 2>&1 &
+        fi
+      else
+        ngrok http "${PORT_VAL}" --url="$NGROK_DOMAIN" --log=stdout >> "$LOG/ngrok.log" 2>&1 &
+      fi
+      TUNNEL_PID=$!
+      echo "$TUNNEL_PID" > "$PROJ/tunnel.pid"
+    fi
+    # WhatsApp health check
+    WA_STATUS=$(curl -sf -H "Authorization: Bearer __internal__" "http://localhost:${PORT_VAL}/api/bot/status" 2>/dev/null || echo '{"ready":false}')
+    if echo "$WA_STATUS" | grep -q '"ready":false'; then
+      echo "[watchdog] $(date '+%H:%M:%S') WhatsApp no conectado — esperando reconexión automática..." >> "$LOG/server.log"
+    fi
   done
 ) &
 echo $! > "$PROJ/watchdog.pid"
-ok "Watchdog activo (PID $(cat "$PROJ/watchdog.pid"))"
+ok "Watchdog activo (servidor + túnel + WA, PID $(cat "$PROJ/watchdog.pid"))"
 
 # ── Resumen ───────────────────────────────────────────────────
 echo ""
 echo -e "${GREEN}${BOLD}╔════════════════════════════════════════════╗${NC}"
 echo -e "${GREEN}${BOLD}║       SISTEMA ACTIVO Y FUNCIONANDO         ║${NC}"
 echo -e "${GREEN}${BOLD}╠════════════════════════════════════════════╣${NC}"
-printf "${GREEN}${BOLD}║${NC} App:    https://%-27s${GREEN}${BOLD}║${NC}\n" "$NGROK_DOMAIN/app/"
-printf "${GREEN}${BOLD}║${NC} API:    https://%-27s${GREEN}${BOLD}║${NC}\n" "$NGROK_DOMAIN/api/"
-printf "${GREEN}${BOLD}║${NC} Estado: https://%-27s${GREEN}${BOLD}║${NC}\n" "$NGROK_DOMAIN/health"
+printf "${GREEN}${BOLD}║${NC} App:    %-36s${GREEN}${BOLD}║${NC}\n" "${TUNNEL_URL}/app/"
+printf "${GREEN}${BOLD}║${NC} API:    %-36s${GREEN}${BOLD}║${NC}\n" "${TUNNEL_URL}/api/"
+printf "${GREEN}${BOLD}║${NC} Estado: %-36s${GREEN}${BOLD}║${NC}\n" "${TUNNEL_URL}/health"
 echo -e "${GREEN}${BOLD}╠════════════════════════════════════════════╣${NC}"
 echo -e "${GREEN}${BOLD}║${NC} Roles: admin | worker | client             ${GREEN}${BOLD}║${NC}"
-echo -e "${GREEN}${BOLD}║${NC} PIN admin (jesus/johana): 1234             ${GREEN}${BOLD}║${NC}"
-echo -e "${GREEN}${BOLD}║${NC} Rutas: /api/estados /api/cart /api/settings${GREEN}${BOLD}║${NC}"
+echo -e "${GREEN}${BOLD}║${NC} Auth: contraseña (no PIN) — mín 1 char     ${GREEN}${BOLD}║${NC}"
+printf "${GREEN}${BOLD}║${NC} Túnel: %-36s${GREEN}${BOLD}║${NC}\n" "$TUNNEL_TYPE"
 printf "${GREEN}${BOLD}║${NC} Logs: %-37s${GREEN}${BOLD}║${NC}\n" "$LOG/"
 echo -e "${GREEN}${BOLD}╚════════════════════════════════════════════╝${NC}"
 echo ""
