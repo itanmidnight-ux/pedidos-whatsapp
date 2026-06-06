@@ -158,13 +158,30 @@ async function connect() {
       clearTimers();
       const FATAL = [DisconnectReason.loggedOut, DisconnectReason.forbidden, DisconnectReason.badSession, 411];
       if (FATAL.includes(code)) {
-        console.error(`[bot] ❌ Fatal disconnect (${code}). Delete ${AUTH_DIR} and restart.`);
+        console.error(`[bot] ❌ Fatal disconnect (${code}). Limpiando sesión y reconectando...`);
+        try {
+          const files = fs.readdirSync(AUTH_DIR);
+          for (const f of files) fs.unlinkSync(path.join(AUTH_DIR, f));
+        } catch (_) {}
+        pairingDone = false;
+        retryCount  = 0;
+        setTimeout(connect, 8000);
         return;
       }
-      if (retryCount >= MAX_RETRIES) { console.error('[bot] ❌ Max retries.'); return; }
+      if (retryCount >= MAX_RETRIES) {
+        console.error('[bot] ❌ Max retries alcanzados. Reiniciando ciclo de autenticación...');
+        try {
+          const files = fs.readdirSync(AUTH_DIR);
+          for (const f of files) fs.unlinkSync(path.join(AUTH_DIR, f));
+        } catch (_) {}
+        pairingDone = false;
+        retryCount  = 0;
+        setTimeout(connect, 15000);
+        return;
+      }
       const backoff = code === DisconnectReason.restartRequired ? 500 : Math.min(1000 * 2 ** retryCount, 30000);
       retryCount++;
-      console.log(`[bot] Reconnecting in ${backoff}ms (${retryCount}/${MAX_RETRIES})…`);
+      console.log(`[bot] Reconectando en ${backoff}ms (${retryCount}/${MAX_RETRIES})…`);
       setTimeout(connect, backoff);
     }
   });

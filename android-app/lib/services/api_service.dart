@@ -78,7 +78,7 @@ class ApiService {
     final res = await http.post(
       Uri.parse('$_serverUrl/api/auth/token'),
       headers: {'Content-Type': 'application/json', 'ngrok-skip-browser-warning': 'true'},
-      body: jsonEncode({'username': username.toLowerCase().trim(), 'pin': pin}),
+      body: jsonEncode({'username': username.toLowerCase().trim(), 'password': pin}),
     ).timeout(const Duration(seconds: 10));
     if (res.statusCode == 200) {
       final body = jsonDecode(res.body) as Map<String, dynamic>;
@@ -160,9 +160,9 @@ class ApiService {
     throw Exception('Error usuarios: ${res.statusCode}');
   }
 
-  static Future<Map<String, dynamic>> createUser(String username, String pin, String displayName, {String role = 'worker'}) async {
+  static Future<Map<String, dynamic>> createUser(String username, String password, String displayName, {String role = 'worker', String? address}) async {
     final res = await http.post(Uri.parse('$_serverUrl/api/users'), headers: _headers,
-      body: jsonEncode({'username': username, 'pin': pin, 'display_name': displayName, 'role': role})).timeout(const Duration(seconds: 10));
+      body: jsonEncode({'username': username, 'password': password, 'display_name': displayName, 'role': role, if (address != null && address.isNotEmpty) 'address': address})).timeout(const Duration(seconds: 10));
     if (res.statusCode == 201) return jsonDecode(res.body)['user'];
     throw Exception(jsonDecode(res.body)['error'] ?? 'Error creando usuario');
   }

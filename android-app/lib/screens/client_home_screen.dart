@@ -16,6 +16,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
   static const _green = Color(0xFF1E6B2E);
   int _tab = 0;
   List<Estado> _estados = [];
+  final _cartKey = GlobalKey<ClientCartScreenState>();
 
   @override
   void initState() {
@@ -42,12 +43,8 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
       backgroundColor: const Color(0xFFF5F5F0),
       appBar: AppBar(
         backgroundColor: _green,
-        title: Row(children: [
-          const Text('Concentrados', style: TextStyle(
-            color: Colors.white, fontWeight: FontWeight.bold, fontSize: 17)),
-          const SizedBox(width: 4),
-          const Text('Monserrath', style: TextStyle(color: Colors.white70, fontSize: 17)),
-        ]),
+        title: const Text('Concentrados Monserrath', style: TextStyle(
+          color: Colors.white, fontWeight: FontWeight.bold, fontSize: 17)),
         actions: [
           if (_estados.isNotEmpty)
             Stack(children: [
@@ -87,13 +84,16 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
           ),
         ],
       ),
-      body: IndexedStack(index: _tab, children: const [
-        ClientProductsScreen(),
-        ClientCartScreen(),
+      body: IndexedStack(index: _tab, children: [
+        const ClientProductsScreen(),
+        ClientCartScreen(key: _cartKey),
       ]),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _tab,
-        onDestinationSelected: (i) => setState(() => _tab = i),
+        onDestinationSelected: (i) {
+          setState(() => _tab = i);
+          if (i == 1) _cartKey.currentState?.reload();
+        },
         backgroundColor: Colors.white,
         indicatorColor: const Color(0xFFC8E6C9),
         destinations: const [

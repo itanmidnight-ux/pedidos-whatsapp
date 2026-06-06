@@ -20,7 +20,7 @@ class DashboardScreen extends StatefulWidget {
 
 class _DashboardScreenState extends State<DashboardScreen> {
   int _tab = 0;
-  Set<String> _filter = Set.from(_allStatuses);
+  Set<String> _filter = {};
 
   @override
   void initState() {

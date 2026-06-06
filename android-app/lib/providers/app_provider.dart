@@ -129,8 +129,10 @@ class AppProvider extends ChangeNotifier {
   }
 
   // ── Products ──────────────────────────────────────────────
-  Future<void> createProduct(Product p) async {
-    products.add(await ApiService.createProduct(p)); notifyListeners();
+  Future<Product> createProduct(Product p) async {
+    final product = await ApiService.createProduct(p);
+    products.add(product); notifyListeners();
+    return product;
   }
 
   Future<void> updateProduct(int id, Map<String, dynamic> data) async {
@@ -145,8 +147,8 @@ class AppProvider extends ChangeNotifier {
   }
 
   // ── Users (admin) ─────────────────────────────────────────
-  Future<void> createUser(String username, String pin, String displayName, {String role = 'worker'}) async {
-    final user = await ApiService.createUser(username, pin, displayName, role: role);
+  Future<void> createUser(String username, String password, String displayName, {String role = 'worker', String? address}) async {
+    final user = await ApiService.createUser(username, password, displayName, role: role, address: address);
     users.add(user); notifyListeners();
   }
 

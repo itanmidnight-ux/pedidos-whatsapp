@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
+// no flutter/services needed
 import 'package:provider/provider.dart';
 import '../providers/app_provider.dart';
 import '../services/api_service.dart';
@@ -38,7 +38,9 @@ class _UsersScreenState extends State<UsersScreen> {
     final isEdit = user != null;
     final displayCtrl  = TextEditingController(text: isEdit ? user['display_name'] ?? '' : '');
     final usernameCtrl = TextEditingController(text: isEdit ? user['username'] ?? '' : '');
-    final pinCtrl      = TextEditingController();
+    final pwCtrl       = TextEditingController();
+    final addressCtrl  = TextEditingController(text: isEdit ? user['address'] ?? '' : '');
+    bool  pwObscure    = true;
     String role = isEdit ? (user['role'] ?? 'worker') : 'worker';
     bool   active = isEdit ? (user['active'] == 1 || user['active'] == true) : true;
     final formKey = GlobalKey<FormState>();
@@ -96,21 +98,44 @@ class _UsersScreenState extends State<UsersScreen> {
                 ),
                 const SizedBox(height: 12),
 
-                // PIN
-                TextFormField(
-                  controller: pinCtrl,
-                  decoration: _inputDeco(
-                    isEdit ? 'PIN (dejar vacío para no cambiar)' : 'PIN (4 dígitos)',
-                    Icons.lock_outline,
+                // Contraseña
+                StatefulBuilder(builder: (_, setPw) => TextFormField(
+                  controller: pwCtrl,
+                  obscureText: pwObscure,
+                  keyboardType: TextInputType.visiblePassword,
+                  decoration: InputDecoration(
+                    labelText: isEdit ? 'Contraseña (vacío = sin cambio)' : 'Contraseña',
+                    prefixIcon: const Icon(Icons.lock_outline, size: 20, color: _green),
+                    suffixIcon: IconButton(
+                      icon: Icon(pwObscure ? Icons.visibility_off_outlined : Icons.visibility_outlined, size: 20),
+                      onPressed: () => setPw(() => pwObscure = !pwObscure),
+                    ),
+                    filled: true,
+                    fillColor: const Color(0xFFF5F5F5),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: const BorderSide(color: _green, width: 1.5)),
+                    errorBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: const BorderSide(color: Colors.red)),
+                    focusedErrorBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: const BorderSide(color: Colors.red, width: 1.5)),
                   ),
-                  keyboardType: TextInputType.number,
-                  obscureText: true,
-                  inputFormatters: [FilteringTextInputFormatter.digitsOnly, LengthLimitingTextInputFormatter(4)],
                   validator: (v) {
-                    if (!isEdit && (v == null || v.trim().length < 4)) return 'PIN de 4 dígitos requerido';
-                    if (v != null && v.isNotEmpty && v.trim().length < 4) return 'PIN debe tener 4 dígitos';
+                    if (!isEdit && (v == null || v.trim().isEmpty)) return 'Contraseña requerida';
                     return null;
                   },
+                )),
+                const SizedBox(height: 12),
+
+                // Dirección de entrega
+                TextFormField(
+                  controller: addressCtrl,
+                  decoration: _inputDeco('Dirección de entrega (opcional)', Icons.location_on_outlined),
+                  maxLines: 2,
+                  minLines: 1,
                 ),
                 const SizedBox(height: 12),
 
@@ -159,15 +184,17 @@ class _UsersScreenState extends State<UsersScreen> {
                             'display_name': displayCtrl.text.trim(),
                             'role':         role,
                             'active':       active ? 1 : 0,
+                            'address':      addressCtrl.text.trim(),
                           };
-                          if (pinCtrl.text.trim().isNotEmpty) data['pin'] = pinCtrl.text.trim();
+                          if (pwCtrl.text.trim().isNotEmpty) data['password'] = pwCtrl.text.trim();
                           await prov.updateUser(user['id'] as int, data);
                         } else {
                           await prov.createUser(
                             usernameCtrl.text.trim(),
-                            pinCtrl.text.trim(),
+                            pwCtrl.text.trim(),
                             displayCtrl.text.trim(),
                             role: role,
+                            address: addressCtrl.text.trim(),
                           );
                         }
                         if (mounted) _snack(isEdit ? 'Usuario actualizado' : 'Usuario creado', success: true);
@@ -384,7 +411,10 @@ class _UsersScreenState extends State<UsersScreen> {
                       title: Row(children: [
                         Expanded(child: Text(
                           name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                           style: TextStyle(
+                            fontSize: 13,
                             fontWeight: FontWeight.w600,
                             color: active ? Colors.black87 : Colors.grey,
                           ),
