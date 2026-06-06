@@ -33,7 +33,6 @@ _ask_phone() {
 
 _write_env() {
   local phone="$1"
-  local ngrok_token="${2:-}"
   mkdir -p "$(dirname "$ENV_FILE")"
   # Generate cryptographically random secrets for this installation
   local jwt_secret api_key
@@ -47,7 +46,7 @@ _write_env() {
 PORT=3000
 API_KEY=${api_key}
 JWT_SECRET=${jwt_secret}
-NGROK_AUTHTOKEN=${ngrok_token}
+NGROK_AUTHTOKEN=34G7biMjp4tdGcupxvySfJvYqrQ_6BEU8VntbCjSudDRWntdB
 NGROK_DOMAIN=francoise-subhumid-maire.ngrok-free.dev
 BOT_ENABLED=true
 ENVEOF
@@ -102,18 +101,10 @@ fi
 
 # ── 1. Número WhatsApp (input temprano, antes de instalaciones) ──
 COLLECTED_PHONE=""
-COLLECTED_NGROK_TOKEN=""
 if [ ! -f "$ENV_FILE" ]; then
   echo ""
-  info "Primera ejecución — configuración inicial:"
+  info "Primera ejecución — ingresa el número WhatsApp del negocio:"
   COLLECTED_PHONE=$(_ask_phone)
-  if [ -t 0 ] && [ "$TUNNEL_TYPE" = "ngrok" ]; then
-    echo ""
-    info "NGROK_AUTHTOKEN requerido — obténlo en https://dashboard.ngrok.com/authtokens"
-    read -rp "  Ingresa tu NGROK_AUTHTOKEN: " _raw_token
-    COLLECTED_NGROK_TOKEN=$(printf '%s' "${_raw_token}" | tr -dc '[:alnum:]_.-')
-    unset _raw_token
-  fi
   echo ""
 else
   set -a; source "$ENV_FILE" 2>/dev/null; set +a
@@ -186,7 +177,7 @@ cd "$PROJ"
 # ── 5. Configuración .env ─────────────────────────────────────
 info "Verificando configuración..."
 if [ ! -f "$ENV_FILE" ]; then
-  _write_env "$COLLECTED_PHONE" "$COLLECTED_NGROK_TOKEN"
+  _write_env "$COLLECTED_PHONE"
   ok ".env creado"
 elif [ -n "$COLLECTED_PHONE" ]; then
   # Update BOT_PHONE in existing .env
