@@ -61,10 +61,12 @@ function flagLastMessage(db, phone, reason) {
 
 // ── Ruta principal ────────────────────────────────────────────
 router.post('/message', apiKeyAuth, async (req, res) => {
-  const rawPhone   = req.body.phone;
-  const rawMessage = req.body.message;
-  const rawName    = req.body.name;
-  const rawTs      = req.body.timestamp;
+  const rawPhone     = req.body.phone;
+  const rawMessage   = req.body.message;
+  const rawName      = req.body.name;
+  const rawTs        = req.body.timestamp;
+  const rawMediaType = req.body.media_type;  // 'audio' | 'image' | undefined
+  const rawMediaUrl  = req.body.media_url;   // filename stored on disk
 
   if (!rawPhone || !/^\d{7,15}$/.test(String(rawPhone).trim()))
     return res.status(400).json({ error: 'phone inválido' });
@@ -78,11 +80,24 @@ router.post('/message', apiKeyAuth, async (req, res) => {
     ? new Date(rawTs).toISOString() : new Date().toISOString();
   const db = getDB();
 
-  // Guardar cliente y mensaje
-  db.prepare(`INSERT INTO customers (phone, name) VALUES (?, ?)
-    ON CONFLICT(phone) DO UPDATE SET name = COALESCE(excluded.name, name)`)
-    .run(phone, name);
-  const msgRow = db.prepare(`INSERT INTO messages (phone, customer_name, content, direction, sent)
+  // Guardar cliente y actualizar profile pic si viene
+  const picUrl = req.body.profile_pic_url || null;
+  db.prepare(`INSERT INTO customers (phone, name, profile_pic_url) VALUES (?, ?, ?)
+    ON CONFLICT(phone) DO UPDATE SET
+      name = COALESCE(excluded.name, name),
+      profile_pic_url = COALESCE(excluded.profile_pic_url, profile_pic_url)`)
+    .run(phone, name, picUrl);
+
+  // Mensaje de media — guardar directo, sin NLP
+  if (rawMediaType && rawMediaUrl) {
+    const caption = rawMediaType === 'audio' ? '🎵 Mensaje de voz' : '📷 Imagen';
+    db.prepare(`INSERT INTO messages (phone, customer_name, content, direction, sent, media_type, media_url)
+      VALUES (?, ?, ?, 'inbound', 1, ?, ?)`)
+      .run(phone, name, caption, rawMediaType, rawMediaUrl);
+    return res.json({ success: true, media: true });
+  }
+
+  db.prepare(`INSERT INTO messages (phone, customer_name, content, direction, sent)
     VALUES (?, ?, ?, 'inbound', 1)`)
     .run(phone, name, message);
 

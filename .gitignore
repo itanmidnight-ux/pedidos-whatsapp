@@ -20,4 +20,5 @@ installer/node_modules/
 .pids.json
 .wwebjs_auth/
 *.exe
+*.apk
 .claude/

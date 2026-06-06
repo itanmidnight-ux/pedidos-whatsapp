@@ -1,6 +1,7 @@
 'use strict';
 require('dotenv').config();
 const path   = require('path');
+const fs     = require('fs');
 const axios  = require('axios');
 const {
   default: makeWASocket,
@@ -8,38 +9,59 @@ const {
   DisconnectReason,
   fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
-  makeInMemoryStore,
+  downloadMediaMessage,
   Browsers
 } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 
 // ── Config ────────────────────────────────────────────────────
-const AUTH_DIR   = path.join(process.env.APPDATA || process.env.HOME, 'pedidos-bot', 'auth');
-const PHONE      = (process.env.BOT_PHONE || '').replace(/\D/g, '');
-const API_URL    = `http://localhost:${process.env.PORT || 3000}`;
-const API_KEY    = process.env.API_KEY;
-const logger     = pino({ level: 'silent' });
+const AUTH_DIR  = path.join(process.env.APPDATA || process.env.HOME, 'pedidos-bot', 'auth');
+const MEDIA_DIR = path.join(process.env.APPDATA || process.env.HOME, 'pedidos-bot', 'media');
+const PHONE     = (process.env.BOT_PHONE || '').replace(/\D/g, '');
+const API_URL   = `http://localhost:${process.env.PORT || 3000}`;
+const API_KEY   = process.env.API_KEY;
+const logger    = pino({ level: 'silent' });
 
-let sock            = null;
-let retryCount      = 0;
-let pairingDone     = false;
-let heartbeatTimer  = null;
-let pollTimer       = null;
-let isReady         = false;
+[AUTH_DIR, MEDIA_DIR].forEach(d => { if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true }); });
 
-const MAX_RETRIES   = 10;
-const HEARTBEAT_MS  = 25000;
-const POLL_MS       = 3000;
+let sock           = null;
+let retryCount     = 0;
+let pairingDone    = false;
+let heartbeatTimer = null;
+let pollTimer      = null;
+let isReady        = false;
 
-// ── Internal HTTP helpers (no auth for local calls) ──────────
-const http = axios.create({ baseURL: API_URL, timeout: 10000, headers: { 'X-API-Key': API_KEY } });
+const MAX_RETRIES  = 10;
+const HEARTBEAT_MS = 25000;
+const POLL_MS      = 3000;
 
-async function postInbound(phone, name, message) {
+const http = axios.create({ baseURL: API_URL, timeout: 15000, headers: { 'X-API-Key': API_KEY } });
+
+// ── Helpers ───────────────────────────────────────────────────
+function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+function clearTimers() {
+  if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
+  if (pollTimer)      { clearInterval(pollTimer);      pollTimer = null; }
+}
+
+async function postInbound(phone, name, message, mediaType, mediaUrl, profilePicUrl) {
   try {
-    await http.post('/api/webhook/message', { phone, name, message, timestamp: Date.now() });
+    await http.post('/api/webhook/message', {
+      phone, name, message,
+      media_type:      mediaType   || undefined,
+      media_url:       mediaUrl    || undefined,
+      profile_pic_url: profilePicUrl || undefined,
+      timestamp:       Date.now(),
+    });
   } catch (e) {
     if (e.response?.status !== 429) console.error('[bot] webhook err', e.message);
   }
+}
+
+async function getProfilePic(jid) {
+  try { return await sock.profilePictureUrl(jid, 'image'); }
+  catch { return null; }
 }
 
 async function pollOutbound() {
@@ -48,9 +70,26 @@ async function pollOutbound() {
     for (const msg of (data.messages || [])) {
       try {
         const jid = `${msg.phone.replace(/\D/g, '')}@s.whatsapp.net`;
-        await sock.sendMessage(jid, { text: msg.content });
+
+        if (msg.media_url) {
+          const filePath = path.join(MEDIA_DIR, msg.media_url);
+          if (fs.existsSync(filePath)) {
+            const buffer = fs.readFileSync(filePath);
+            if (msg.media_type === 'image') {
+              await sock.sendMessage(jid, { image: buffer, caption: '' });
+            } else if (msg.media_type === 'audio') {
+              await sock.sendMessage(jid, {
+                audio: buffer,
+                mimetype: 'audio/mp4',
+                ptt: true,
+              });
+            }
+          }
+        } else {
+          await sock.sendMessage(jid, { text: msg.content });
+        }
+
         await http.put(`/api/messages/${msg.id}/sent`);
-        // anti-ban: jitter 2-5s between messages
         await delay(2000 + Math.random() * 3000);
       } catch (e) {
         console.error('[bot] send err', msg.id, e.message);
@@ -59,14 +98,6 @@ async function pollOutbound() {
   } catch (_) {}
 }
 
-function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
-
-function clearTimers() {
-  if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
-  if (pollTimer)      { clearInterval(pollTimer);      pollTimer = null; }
-}
-
-// ── Product menu ──────────────────────────────────────────────
 async function getProductMenu() {
   try {
     const { data } = await http.get('/api/products');
@@ -77,7 +108,7 @@ async function getProductMenu() {
   } catch { return '🐾 *Concentrados Monserrath*\nEscríbenos tu pedido y te atendemos.'; }
 }
 
-// ── Core connect ─────────────────────────────────────────────
+// ── Connect ───────────────────────────────────────────────────
 async function connect() {
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
   const { version } = await fetchLatestBaileysVersion();
@@ -87,7 +118,7 @@ async function connect() {
     logger,
     auth: {
       creds: state.creds,
-      keys: makeCacheableSignalKeyStore(state.keys, logger)
+      keys: makeCacheableSignalKeyStore(state.keys, logger),
     },
     browser: Browsers.macOS('Safari'),
     generateHighQualityLinkPreview: false,
@@ -98,11 +129,9 @@ async function connect() {
     markOnlineOnConnect: true,
   });
 
-  // ── Auth save ─────────────────────────────────────────────
   sock.ev.on('creds.update', saveCreds);
 
-  // ── Connection lifecycle ──────────────────────────────────
-  sock.ev.on('connection.update', async ({ connection, lastDisconnect, qr }) => {
+  sock.ev.on('connection.update', async ({ connection, lastDisconnect }) => {
     const code = lastDisconnect?.error?.output?.statusCode;
 
     if (connection === 'connecting' && PHONE && !pairingDone && !state.creds.registered) {
@@ -116,7 +145,7 @@ async function connect() {
 
     if (connection === 'open') {
       console.log('[bot] ✅ Connected');
-      isReady = true;
+      isReady    = true;
       retryCount = 0;
       pairingDone = true;
       clearTimers();
@@ -127,22 +156,15 @@ async function connect() {
     if (connection === 'close') {
       isReady = false;
       clearTimers();
-
       const FATAL = [DisconnectReason.loggedOut, DisconnectReason.forbidden, DisconnectReason.badSession, 411];
       if (FATAL.includes(code)) {
         console.error(`[bot] ❌ Fatal disconnect (${code}). Delete ${AUTH_DIR} and restart.`);
         return;
       }
-
-      if (retryCount >= MAX_RETRIES) {
-        console.error('[bot] ❌ Max retries reached. Manual restart required.');
-        return;
-      }
-
-      const immediate = code === DisconnectReason.restartRequired;
-      const backoff   = immediate ? 500 : Math.min(1000 * 2 ** retryCount, 30000);
+      if (retryCount >= MAX_RETRIES) { console.error('[bot] ❌ Max retries.'); return; }
+      const backoff = code === DisconnectReason.restartRequired ? 500 : Math.min(1000 * 2 ** retryCount, 30000);
       retryCount++;
-      console.log(`[bot] Reconnecting in ${backoff}ms (attempt ${retryCount}/${MAX_RETRIES})…`);
+      console.log(`[bot] Reconnecting in ${backoff}ms (${retryCount}/${MAX_RETRIES})…`);
       setTimeout(connect, backoff);
     }
   });
@@ -157,10 +179,36 @@ async function connect() {
 
       const phone = jid.split('@')[0];
       const name  = msg.pushName || phone;
-      const text  = (
+
+      // Fetch profile pic (non-blocking, best-effort)
+      const picUrl = await getProfilePic(jid).catch(() => null);
+
+      // ── Audio message ──────────────────────────────────
+      if (msg.message.audioMessage) {
+        try {
+          const buffer   = await downloadMediaMessage(msg, 'buffer', {}, { logger, reuploadRequest: sock.updateMediaMessage });
+          const filename = `${phone}_${Date.now()}.ogg`;
+          fs.writeFileSync(path.join(MEDIA_DIR, filename), buffer);
+          await postInbound(phone, name, '[Audio]', 'audio', filename, picUrl);
+        } catch (e) { console.error('[bot] audio dl err', e.message); }
+        continue;
+      }
+
+      // ── Image message ──────────────────────────────────
+      if (msg.message.imageMessage) {
+        try {
+          const buffer   = await downloadMediaMessage(msg, 'buffer', {}, { logger, reuploadRequest: sock.updateMediaMessage });
+          const filename = `${phone}_${Date.now()}.jpg`;
+          fs.writeFileSync(path.join(MEDIA_DIR, filename), buffer);
+          await postInbound(phone, name, '[Imagen]', 'image', filename, picUrl);
+        } catch (e) { console.error('[bot] image dl err', e.message); }
+        continue;
+      }
+
+      // ── Text message ───────────────────────────────────
+      const text = (
         msg.message.conversation ||
-        msg.message.extendedTextMessage?.text ||
-        ''
+        msg.message.extendedTextMessage?.text || ''
       ).trim();
       if (!text) continue;
 
@@ -171,7 +219,7 @@ async function connect() {
         continue;
       }
 
-      await postInbound(phone, name, text);
+      await postInbound(phone, name, text, null, null, picUrl);
     }
   });
 }
@@ -183,6 +231,8 @@ async function initBot() {
   await connect();
 }
 
-function getStatus() { return { ready: isReady, retries: retryCount, phone: PHONE ? `***${PHONE.slice(-4)}` : null }; }
+function getStatus() {
+  return { ready: isReady, retries: retryCount, phone: PHONE ? `***${PHONE.slice(-4)}` : null };
+}
 
 module.exports = { initBot, getStatus };
