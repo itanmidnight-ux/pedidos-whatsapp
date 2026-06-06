@@ -215,7 +215,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
                     borderRadius: BorderRadius.circular(16)),
                   child: InkWell(
                     borderRadius: BorderRadius.circular(16),
-                    onTap: () => _showCardActions(p),
+                    onTap: provider.isAdmin ? () => _showCardActions(p) : null,
                     child: Padding(padding: const EdgeInsets.all(14),
                       child: Row(children: [
                         // Icono estado
@@ -268,13 +268,15 @@ class _ProductsScreenState extends State<ProductsScreen> {
                 ),
               );
             }),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _showAddProduct,
-        icon: const Icon(Icons.add),
-        label: const Text('Producto'),
-        backgroundColor: const Color(0xFF2D5016),
-        foregroundColor: Colors.white,
-      ),
+      floatingActionButton: provider.isAdmin
+        ? FloatingActionButton.extended(
+            onPressed: _showAddProduct,
+            icon: const Icon(Icons.add),
+            label: const Text('Producto'),
+            backgroundColor: const Color(0xFF2D5016),
+            foregroundColor: Colors.white,
+          )
+        : null,
     );
   }
 }

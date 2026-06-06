@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { jwtAuth } = require('../middleware/auth');
+const { jwtAuth, adminAuth } = require('../middleware/auth');
 const { getDB } = require('../db/database');
 
 function validateProduct({ name, price, aliases }) {
@@ -26,7 +26,7 @@ router.get('/', jwtAuth, (req, res) => {
   res.json(products.map(p => ({ ...p, aliases: JSON.parse(p.aliases || '[]') })));
 });
 
-router.post('/', jwtAuth, (req, res) => {
+router.post('/', adminAuth, (req, res) => {
   const { name, price, aliases } = req.body;
   if (!name || price == null) return res.status(400).json({ error: 'name y price requeridos' });
   const err = validateProduct({ name, price, aliases });
@@ -38,7 +38,7 @@ router.post('/', jwtAuth, (req, res) => {
   res.json({ ...product, aliases: JSON.parse(product.aliases || '[]') });
 });
 
-router.put('/:id', jwtAuth, (req, res) => {
+router.put('/:id', adminAuth, (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (!id || id <= 0) return res.status(400).json({ error: 'ID inválido' });
   const { name, price, aliases, available, favorite, no_fiado } = req.body;
@@ -67,7 +67,7 @@ router.put('/:id', jwtAuth, (req, res) => {
   res.json({ ...product, aliases: JSON.parse(product.aliases || '[]') });
 });
 
-router.delete('/:id', jwtAuth, (req, res) => {
+router.delete('/:id', adminAuth, (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (!id || id <= 0) return res.status(400).json({ error: 'ID inválido' });
   getDB().prepare('DELETE FROM products WHERE id = ?').run(id);

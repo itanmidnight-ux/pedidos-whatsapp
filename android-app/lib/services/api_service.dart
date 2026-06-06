@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -11,16 +12,15 @@ class ApiService {
     aOptions: AndroidOptions(encryptedSharedPreferences: true),
   );
 
-  // URL dinámica — editable desde ajustes, default al dominio ngrok configurado
   static const _defaultUrl = 'https://francoise-subhumid-maire.ngrok-free.dev';
-  static String _serverUrl = _defaultUrl;
-  static String _token     = '';
-  static String _username  = '';
-  static String _role      = '';
+  static String _serverUrl  = _defaultUrl;
+  static String _token      = '';
+  static String _username   = '';
+  static String _role       = '';
   static String _displayName = '';
 
   static Future<void> init() async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs  = await SharedPreferences.getInstance();
     _serverUrl   = prefs.getString('server_url') ?? _defaultUrl;
     _token       = await _secureStorage.read(key: 'jwt_token')    ?? '';
     _username    = await _secureStorage.read(key: 'username')     ?? '';
@@ -47,16 +47,21 @@ class ApiService {
     _token = ''; _username = ''; _role = ''; _displayName = '';
   }
 
-  static bool   get isConfigured  => _token.isNotEmpty;
-  static String get serverUrl     => _serverUrl;
-  static String get currentUser   => _username;
-  static String get currentRole   => _role;
-  static String get displayName   => _displayName;
-  static bool   get isAdmin       => _role == 'admin';
+  static bool   get isConfigured => _token.isNotEmpty;
+  static String get serverUrl    => _serverUrl;
+  static String get currentUser  => _username;
+  static String get currentRole  => _role;
+  static String get displayName  => _displayName;
+  static bool   get isAdmin      => _role == 'admin';
 
   static Map<String, String> get _headers => {
     'Authorization':              'Bearer $_token',
     'Content-Type':               'application/json',
+    'ngrok-skip-browser-warning': 'true',
+  };
+
+  static Map<String, String> get _headersNoContent => {
+    'Authorization':              'Bearer $_token',
     'ngrok-skip-browser-warning': 'true',
   };
 
@@ -105,11 +110,7 @@ class ApiService {
   }
 
   static Future<Order> cancelOrder(int id, String reason) async {
-    final res = await http.put(
-      Uri.parse('$_serverUrl/api/orders/$id/cancel'),
-      headers: _headers,
-      body: jsonEncode({'reason': reason}),
-    ).timeout(const Duration(seconds: 10));
+    final res = await http.put(Uri.parse('$_serverUrl/api/orders/$id/cancel'), headers: _headers, body: jsonEncode({'reason': reason})).timeout(const Duration(seconds: 10));
     if (res.statusCode == 200) return Order.fromJson(jsonDecode(res.body));
     throw Exception(jsonDecode(res.body)['error'] ?? 'Error cancelando pedido');
   }
@@ -120,11 +121,7 @@ class ApiService {
   }
 
   static Future<void> addComment(int id, String comment) async {
-    await http.put(
-      Uri.parse('$_serverUrl/api/orders/$id/comment'),
-      headers: _headers,
-      body: jsonEncode({'comment': comment}),
-    ).timeout(const Duration(seconds: 10));
+    await http.put(Uri.parse('$_serverUrl/api/orders/$id/comment'), headers: _headers, body: jsonEncode({'comment': comment})).timeout(const Duration(seconds: 10));
   }
 
   // ── Products ─────────────────────────────────────────────
@@ -156,11 +153,8 @@ class ApiService {
   }
 
   static Future<Map<String, dynamic>> createUser(String username, String pin, String displayName, {String role = 'worker'}) async {
-    final res = await http.post(
-      Uri.parse('$_serverUrl/api/users'),
-      headers: _headers,
-      body: jsonEncode({'username': username, 'pin': pin, 'display_name': displayName, 'role': role}),
-    ).timeout(const Duration(seconds: 10));
+    final res = await http.post(Uri.parse('$_serverUrl/api/users'), headers: _headers,
+      body: jsonEncode({'username': username, 'pin': pin, 'display_name': displayName, 'role': role})).timeout(const Duration(seconds: 10));
     if (res.statusCode == 201) return jsonDecode(res.body)['user'];
     throw Exception(jsonDecode(res.body)['error'] ?? 'Error creando usuario');
   }
@@ -172,8 +166,9 @@ class ApiService {
   }
 
   // ── Messages ─────────────────────────────────────────────
-  static Future<List<Conversation>> getConversations() async {
-    final res = await http.get(Uri.parse('$_serverUrl/api/messages'), headers: _headers).timeout(const Duration(seconds: 10));
+  static Future<List<Conversation>> getConversations({bool archived = false}) async {
+    final url = '$_serverUrl/api/messages${archived ? '?archived=true' : ''}';
+    final res = await http.get(Uri.parse(url), headers: _headers).timeout(const Duration(seconds: 10));
     if (res.statusCode == 200) return (jsonDecode(res.body) as List).map((j) => Conversation.fromJson(j)).toList();
     throw Exception('Error conversaciones');
   }
@@ -191,19 +186,57 @@ class ApiService {
   }
 
   static Future<void> sendWhatsAppMessage(String phone, String content) async {
-    final res = await http.post(
-      Uri.parse('$_serverUrl/api/messages/send'),
-      headers: _headers,
-      body: jsonEncode({'phone': phone, 'content': content}),
-    ).timeout(const Duration(seconds: 10));
+    final res = await http.post(Uri.parse('$_serverUrl/api/messages/send'), headers: _headers,
+      body: jsonEncode({'phone': phone, 'content': content})).timeout(const Duration(seconds: 10));
     if (res.statusCode != 200) throw Exception('Error enviando mensaje');
   }
 
-  static Future<void> flagMessage(int id, {bool flagged = false, String? reason}) async {
-    await http.put(
-      Uri.parse('$_serverUrl/api/messages/$id/flag'),
+  static Future<void> markConversationRead(String phone) async {
+    await http.put(Uri.parse('$_serverUrl/api/messages/${Uri.encodeComponent(phone)}/read'),
+      headers: _headers).timeout(const Duration(seconds: 5));
+  }
+
+  static Future<void> deleteConversation(String phone) async {
+    final res = await http.delete(
+      Uri.parse('$_serverUrl/api/messages/conversation/${Uri.encodeComponent(phone)}'),
       headers: _headers,
-      body: jsonEncode({'flagged': flagged, 'flag_reason': reason}),
     ).timeout(const Duration(seconds: 10));
+    if (res.statusCode != 200) throw Exception('Error borrando conversación');
+  }
+
+  static Future<void> archiveConversation(String phone, {required bool archived}) async {
+    final res = await http.put(
+      Uri.parse('$_serverUrl/api/messages/conversation/${Uri.encodeComponent(phone)}/archive'),
+      headers: _headers,
+      body: jsonEncode({'archived': archived}),
+    ).timeout(const Duration(seconds: 10));
+    if (res.statusCode != 200) throw Exception('Error archivando conversación');
+  }
+
+  static Future<void> sendMediaMessage(String phone, String filePath, String mediaType) async {
+    final uri     = Uri.parse('$_serverUrl/api/messages/send-media');
+    final request = http.MultipartRequest('POST', uri);
+    request.headers.addAll(_headersNoContent);
+    request.fields['phone']      = phone;
+    request.fields['media_type'] = mediaType;
+    request.files.add(await http.MultipartFile.fromPath('file', filePath));
+    final streamed = await request.send().timeout(const Duration(seconds: 60));
+    if (streamed.statusCode != 200) throw Exception('Error enviando media');
+  }
+
+  static Future<Uint8List?> downloadMedia(String filename) async {
+    try {
+      final res = await http.get(
+        Uri.parse('$_serverUrl/api/messages/media/${Uri.encodeComponent(filename)}'),
+        headers: _headers,
+      ).timeout(const Duration(seconds: 30));
+      if (res.statusCode == 200) return res.bodyBytes;
+      return null;
+    } catch (_) { return null; }
+  }
+
+  static Future<void> flagMessage(int id, {bool flagged = false, String? reason}) async {
+    await http.put(Uri.parse('$_serverUrl/api/messages/$id/flag'), headers: _headers,
+      body: jsonEncode({'flagged': flagged, 'flag_reason': reason})).timeout(const Duration(seconds: 10));
   }
 }

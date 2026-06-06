@@ -54,6 +54,11 @@ async function initDB() {
        created_by INTEGER REFERENCES users(id),
        created_at TEXT DEFAULT (datetime('now','localtime'))
      )`,
+    // Media + profile pic migrations
+    'ALTER TABLE messages   ADD COLUMN media_type TEXT',
+    'ALTER TABLE messages   ADD COLUMN media_url  TEXT',
+    'ALTER TABLE customers  ADD COLUMN profile_pic_url TEXT',
+    'ALTER TABLE customers  ADD COLUMN archived INTEGER DEFAULT 0',
   ];
   for (const sql of migrations) {
     try { db.exec(sql); } catch { /* already exists */ }
