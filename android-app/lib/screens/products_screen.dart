@@ -82,8 +82,21 @@ class _ProductsScreenState extends State<ProductsScreen> {
                 icon: const Icon(Icons.check_rounded),
                 label: const Text('Guardar Producto'),
                 onPressed: () async {
-                  final price = double.tryParse(
-                    priceCtrl.text.replaceAll(',', '').replaceAll('.', ''));
+                  String _np(String s) {
+                    s = s.trim();
+                    if (s.contains(',') && s.contains('.')) {
+                      return s.replaceAll('.', '').replaceAll(',', '.');
+                    } else if (s.contains(',')) {
+                      final p = s.split(',');
+                      return (p.length == 2 && p[1].length <= 2)
+                          ? s.replaceAll(',', '.') : s.replaceAll(',', '');
+                    } else if (s.contains('.')) {
+                      final p = s.split('.');
+                      if (p.length == 2 && p[1].length == 3) return s.replaceAll('.', '');
+                    }
+                    return s;
+                  }
+                  final price = double.tryParse(_np(priceCtrl.text));
                   if (nameCtrl.text.trim().isEmpty || price == null) return;
                   final capturedName  = nameCtrl.text.trim();
                   final capturedImage = pickedImage;
@@ -173,7 +186,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
             leading: Container(
               padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
-                color: Colors.blue.withOpacity(0.12),
+                color: Colors.blue.withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(10)),
               child: const Icon(Icons.photo_library_outlined, color: Colors.blue, size: 22),
             ),
@@ -300,7 +313,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
     leading: Container(
       padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
-        color: iconColor.withOpacity(0.12),
+        color: iconColor.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(10)),
       child: Icon(icon, color: iconColor, size: 22),
     ),
@@ -313,7 +326,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
     margin: const EdgeInsets.only(top: 4, right: 6),
     padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
     decoration: BoxDecoration(
-      color: color.withOpacity(0.12),
+      color: color.withValues(alpha: 0.12),
       borderRadius: BorderRadius.circular(8)),
     child: Text(text, style: TextStyle(
       fontSize: 10, color: color, fontWeight: FontWeight.bold)),
@@ -353,10 +366,10 @@ class _ProductsScreenState extends State<ProductsScreen> {
                           padding: const EdgeInsets.all(8),
                           decoration: BoxDecoration(
                             color: !p.available
-                              ? Colors.orange.withOpacity(0.12)
+                              ? Colors.orange.withValues(alpha: 0.12)
                               : p.favorite
-                                ? Colors.amber.withOpacity(0.12)
-                                : const Color(0xFF2D5016).withOpacity(0.08),
+                                ? Colors.amber.withValues(alpha: 0.12)
+                                : const Color(0xFF2D5016).withValues(alpha: 0.08),
                             borderRadius: BorderRadius.circular(10),
                           ),
                           child: Icon(

@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_provider.dart';
 import '../services/api_service.dart';
-import '../widgets/company_header.dart';
 
 class UsersScreen extends StatefulWidget {
   const UsersScreen({super.key});
@@ -13,8 +12,6 @@ class UsersScreen extends StatefulWidget {
 class _UsersScreenState extends State<UsersScreen> {
   static const _green  = Color(0xFF2D5016);
   static const _gold   = Color(0xFFD4800A);
-  static const _bg     = Color(0xFFF8F4EE);
-  static const _light  = Color(0xFFD4ECB8);
 
   bool _loading = false;
   final _searchCtrl = TextEditingController();
@@ -131,7 +128,7 @@ class _UsersScreenState extends State<UsersScreen> {
 
                 // Rol
                 DropdownButtonFormField<String>(
-                  value: role,
+                  initialValue: role,
                   decoration: _inputDeco('Rol', Icons.admin_panel_settings_outlined),
                   items: const [
                     DropdownMenuItem(value: 'worker', child: Text('Trabajador')),
@@ -159,7 +156,7 @@ class _UsersScreenState extends State<UsersScreen> {
                     value: active,
                     onChanged: (v) => setS(() => active = v),
                     title: const Text('Usuario activo'),
-                    activeColor: _green,
+                    activeThumbColor: _green,
                     contentPadding: EdgeInsets.zero,
                   ),
 
@@ -385,10 +382,10 @@ class _UsersScreenState extends State<UsersScreen> {
                 final badgeColor = isAdminUser ? _gold : isClientUser ? Colors.blue : _green;
                 final badgeText  = isAdminUser ? 'Admin' : isClientUser ? 'Cliente' : 'Trabajador';
                 final avatarColor = isAdminUser
-                    ? _gold.withOpacity(active ? 1 : 0.4)
+                    ? _gold.withValues(alpha: active ? 1 : 0.4)
                     : isClientUser
-                        ? Colors.blue.withOpacity(active ? 0.8 : 0.3)
-                        : _green.withOpacity(active ? 1 : 0.35);
+                        ? Colors.blue.withValues(alpha: active ? 0.8 : 0.3)
+                        : _green.withValues(alpha: active ? 1 : 0.35);
 
                 return Card(
                   elevation: 0,
@@ -423,7 +420,7 @@ class _UsersScreenState extends State<UsersScreen> {
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                           decoration: BoxDecoration(
-                            color: badgeColor.withOpacity(0.15),
+                            color: badgeColor.withValues(alpha: 0.15),
                             borderRadius: BorderRadius.circular(20),
                           ),
                           child: Text(

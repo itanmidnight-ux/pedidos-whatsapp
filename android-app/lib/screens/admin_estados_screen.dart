@@ -162,7 +162,7 @@ class _AdminEstadosScreenState extends State<AdminEstadosScreen> {
                               gradient: LinearGradient(
                                 begin: Alignment.topCenter,
                                 end: Alignment.bottomCenter,
-                                colors: [Colors.transparent, Colors.black.withOpacity(0.6)],
+                                colors: [Colors.transparent, Colors.black.withValues(alpha: 0.6)],
                               ),
                             ),
                           )),
@@ -177,7 +177,7 @@ class _AdminEstadosScreenState extends State<AdminEstadosScreen> {
                                   style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w500)),
                               const SizedBox(height: 2),
                               Text(_timeLeft(e),
-                                style: TextStyle(color: Colors.white.withOpacity(0.8), fontSize: 10)),
+                                style: TextStyle(color: Colors.white.withValues(alpha: 0.8), fontSize: 10)),
                             ],
                           )),
                           // Delete button

@@ -102,7 +102,7 @@ class _ClientProductDetailState extends State<ClientProductDetail> {
                         width: i == _imgIndex ? 12 : 6,
                         height: 6,
                         decoration: BoxDecoration(
-                          color: i == _imgIndex ? _green : Colors.white.withOpacity(0.7),
+                          color: i == _imgIndex ? _green : Colors.white.withValues(alpha: 0.7),
                           borderRadius: BorderRadius.circular(3)),
                       )),
                     ),

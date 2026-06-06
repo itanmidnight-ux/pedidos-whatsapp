@@ -187,7 +187,7 @@ class _MessagesScreenState extends State<MessagesScreen> with SingleTickerProvid
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
               decoration: BoxDecoration(
-                color: flagColor.withOpacity(0.15),
+                color: flagColor.withValues(alpha: 0.15),
                 borderRadius: BorderRadius.circular(8)),
               child: Text(c.flagLabel,
                 style: TextStyle(fontSize: 10, color: flagColor, fontWeight: FontWeight.bold)),
