@@ -14,7 +14,16 @@ const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, ESTADOS_DIR),
   filename:    (req, file, cb) => cb(null, `${Date.now()}-${file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_')}`),
 });
-const upload = multer({ storage, limits: { fileSize: 20 * 1024 * 1024 } });
+const ALLOWED_MEDIA_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'video/mp4', 'video/quicktime', 'video/webm'];
+const upload = multer({
+  storage,
+  limits: { fileSize: 20 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (!ALLOWED_MEDIA_TYPES.includes(file.mimetype))
+      return cb(Object.assign(new Error('Solo imágenes o videos (jpg, png, webp, gif, mp4, mov, webm)'), { status: 400 }));
+    cb(null, true);
+  },
+});
 
 // GET /api/estados — list active estados (not expired)
 router.get('/', clientAuth, (req, res) => {
@@ -29,7 +38,7 @@ router.get('/', clientAuth, (req, res) => {
 // POST /api/estados — create estado (admin only, 32h TTL)
 router.post('/', adminAuth, upload.single('media'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No se recibió archivo de media' });
-  const caption    = req.body.caption?.trim() || null;
+  const caption    = req.body.caption ? String(req.body.caption).trim().slice(0, 500) : null;
   const media_type = req.file.mimetype.startsWith('video') ? 'video' : 'image';
   const db = getDB();
   const result = db.prepare(`
@@ -42,11 +51,13 @@ router.post('/', adminAuth, upload.single('media'), (req, res) => {
 
 // DELETE /api/estados/:id — delete estado (admin only)
 router.delete('/:id', adminAuth, (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!id || id <= 0) return res.status(400).json({ error: 'ID inválido' });
   const db = getDB();
-  const estado = db.prepare('SELECT * FROM estados WHERE id=?').get(req.params.id);
+  const estado = db.prepare('SELECT * FROM estados WHERE id=?').get(id);
   if (!estado) return res.status(404).json({ error: 'Estado no encontrado' });
   try { fs.unlinkSync(path.join(ESTADOS_DIR, estado.filename)); } catch {}
-  db.prepare('DELETE FROM estados WHERE id=?').run(estado.id);
+  db.prepare('DELETE FROM estados WHERE id=?').run(id);
   // Also purge expired ones opportunistically
   const expired = db.prepare(`SELECT * FROM estados WHERE datetime('now','localtime') >= expires_at`).all();
   expired.forEach(e => {

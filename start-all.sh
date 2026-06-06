@@ -33,17 +33,25 @@ _ask_phone() {
 
 _write_env() {
   local phone="$1"
+  local ngrok_token="${2:-}"
   mkdir -p "$(dirname "$ENV_FILE")"
-  cat > "$ENV_FILE" <<'ENVEOF'
+  # Generate cryptographically random secrets for this installation
+  local jwt_secret api_key
+  jwt_secret=$(openssl rand -hex 32 2>/dev/null \
+    || od -A n -t x1 /dev/urandom 2>/dev/null | tr -dc 'a-f0-9' | head -c 64 \
+    || echo "CHANGE_ME_$(date +%s%N | sha256sum 2>/dev/null | head -c 48)")
+  api_key=$(openssl rand -hex 32 2>/dev/null \
+    || od -A n -t x1 /dev/urandom 2>/dev/null | tr -dc 'a-f0-9' | head -c 64 \
+    || echo "CHANGE_ME_$(date +%s%N | sha256sum 2>/dev/null | head -c 48)")
+  cat > "$ENV_FILE" <<ENVEOF
 PORT=3000
-API_KEY=80721f27d4b9e6b1250ccf94f5356f1d9368993ffd0e51d1d9470754e85b9171
-JWT_SECRET=a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2
-NGROK_AUTHTOKEN=34G7biMjp4tdGcupxvySfJvYqrQ_6BEU8VntbCjSudDRWntdB
+API_KEY=${api_key}
+JWT_SECRET=${jwt_secret}
+NGROK_AUTHTOKEN=${ngrok_token}
 NGROK_DOMAIN=francoise-subhumid-maire.ngrok-free.dev
-WORKER_PIN=1234
 BOT_ENABLED=true
 ENVEOF
-  echo "BOT_PHONE=${phone}" >> "$ENV_FILE"
+  printf 'BOT_PHONE=%s\n' "$phone" >> "$ENV_FILE"
   chmod 600 "$ENV_FILE"
 }
 
@@ -94,10 +102,18 @@ fi
 
 # ── 1. Número WhatsApp (input temprano, antes de instalaciones) ──
 COLLECTED_PHONE=""
+COLLECTED_NGROK_TOKEN=""
 if [ ! -f "$ENV_FILE" ]; then
   echo ""
-  info "Primera ejecución — ingresa el número WhatsApp del negocio:"
+  info "Primera ejecución — configuración inicial:"
   COLLECTED_PHONE=$(_ask_phone)
+  if [ -t 0 ] && [ "$TUNNEL_TYPE" = "ngrok" ]; then
+    echo ""
+    info "NGROK_AUTHTOKEN requerido — obténlo en https://dashboard.ngrok.com/authtokens"
+    read -rp "  Ingresa tu NGROK_AUTHTOKEN: " _raw_token
+    COLLECTED_NGROK_TOKEN=$(printf '%s' "${_raw_token}" | tr -dc '[:alnum:]_.-')
+    unset _raw_token
+  fi
   echo ""
 else
   set -a; source "$ENV_FILE" 2>/dev/null; set +a
@@ -170,7 +186,7 @@ cd "$PROJ"
 # ── 5. Configuración .env ─────────────────────────────────────
 info "Verificando configuración..."
 if [ ! -f "$ENV_FILE" ]; then
-  _write_env "$COLLECTED_PHONE"
+  _write_env "$COLLECTED_PHONE" "$COLLECTED_NGROK_TOKEN"
   ok ".env creado"
 elif [ -n "$COLLECTED_PHONE" ]; then
   # Update BOT_PHONE in existing .env
@@ -186,7 +202,9 @@ fi
 set -a; source "$ENV_FILE"; set +a
 
 # Validate required keys
-for key in NGROK_DOMAIN NGROK_AUTHTOKEN API_KEY JWT_SECRET PORT; do
+REQUIRED_KEYS="API_KEY JWT_SECRET PORT"
+[ "$TUNNEL_TYPE" = "ngrok" ] && REQUIRED_KEYS="$REQUIRED_KEYS NGROK_DOMAIN NGROK_AUTHTOKEN"
+for key in $REQUIRED_KEYS; do
   eval "val=\${${key}:-}"
   [ -z "$val" ] && err "$key no configurado en .env"
 done
@@ -259,7 +277,11 @@ ok "Parser NLP.js activo — entrenamiento automático con productos de DB"
 # ── 9. Limpiar procesos previos ───────────────────────────────
 info "Limpiando procesos previos..."
 pkill -f "node src/index.js" 2>/dev/null || true
-pkill -f "ngrok http"        2>/dev/null || true
+if [ "$TUNNEL_TYPE" = "cloudflared" ]; then
+  pkill -f "cloudflared tunnel" 2>/dev/null || true
+else
+  pkill -f "ngrok http" 2>/dev/null || true
+fi
 sleep 1
 PORT_PID=$(lsof -ti "tcp:${PORT_VAL}" 2>/dev/null || true)
 [ -n "$PORT_PID" ] && kill -9 $PORT_PID 2>/dev/null || true
@@ -521,11 +543,7 @@ fi
       TUNNEL_PID=$!
       echo "$TUNNEL_PID" > "$PROJ/tunnel.pid"
     fi
-    # WhatsApp health check
-    WA_STATUS=$(curl -sf -H "Authorization: Bearer __internal__" "http://localhost:${PORT_VAL}/api/bot/status" 2>/dev/null || echo '{"ready":false}')
-    if echo "$WA_STATUS" | grep -q '"ready":false'; then
-      echo "[watchdog] $(date '+%H:%M:%S') WhatsApp no conectado — esperando reconexión automática..." >> "$LOG/server.log"
-    fi
+    # WhatsApp reconnection is managed automatically by waBot.js — no watchdog intervention needed
   done
 ) &
 echo $! > "$PROJ/watchdog.pid"

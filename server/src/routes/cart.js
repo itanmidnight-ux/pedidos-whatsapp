@@ -54,8 +54,10 @@ router.post('/checkout', clientAuth, (req, res) => {
   const { payment_method, nequi_reference, delivery_date } = req.body;
   if (!['nequi', 'contra_entrega'].includes(payment_method))
     return res.status(400).json({ error: 'payment_method debe ser nequi o contra_entrega' });
-  if (payment_method === 'nequi' && !nequi_reference)
-    return res.status(400).json({ error: 'nequi_reference requerido para pago Nequi' });
+  if (payment_method === 'nequi') {
+    if (!nequi_reference || typeof nequi_reference !== 'string' || !nequi_reference.trim() || nequi_reference.length > 100)
+      return res.status(400).json({ error: 'nequi_reference inválido (máx 100 chars)' });
+  }
 
   const db = getDB();
   const items = db.prepare(`
@@ -67,51 +69,58 @@ router.post('/checkout', clientAuth, (req, res) => {
 
   if (!items.length) return res.status(400).json({ error: 'Carrito vacío' });
 
-  const total       = items.reduce((sum, i) => sum + i.price * i.quantity, 0);
-  const finalDate   = delivery_date || items[0]?.delivery_date || null;
+  const total        = items.reduce((sum, i) => sum + i.price * i.quantity, 0);
+  const finalDate    = delivery_date || items[0]?.delivery_date || null;
   const itemsSummary = items.map(i => `${i.quantity}x ${i.product_name}`).join(', ');
   const payLabel     = payment_method === 'nequi' ? 'Nequi' : 'Contra entrega';
+  const safeRef      = nequi_reference ? nequi_reference.trim() : null;
 
-  // Get or upsert customer record for this app user
   const clientUser = db.prepare('SELECT display_name, address FROM users WHERE username=?').get(req.user.username);
   const clientName = clientUser?.display_name || req.user.username;
   const clientAddr = clientUser?.address || '';
   const appPhone   = `app:${req.user.username}`;
-  const existingCust = db.prepare('SELECT id FROM customers WHERE phone=?').get(appPhone);
-  let customerId;
-  if (existingCust) {
-    db.prepare('UPDATE customers SET name=? WHERE id=?').run(clientName, existingCust.id);
-    customerId = existingCust.id;
-  } else {
-    customerId = db.prepare('INSERT INTO customers (phone, name) VALUES (?,?)').run(appPhone, clientName).lastInsertRowid;
+
+  const doCheckout = db.transaction(() => {
+    const existingCust = db.prepare('SELECT id FROM customers WHERE phone=?').get(appPhone);
+    let customerId;
+    if (existingCust) {
+      db.prepare('UPDATE customers SET name=? WHERE id=?').run(clientName, existingCust.id);
+      customerId = existingCust.id;
+    } else {
+      customerId = db.prepare('INSERT INTO customers (phone, name) VALUES (?,?)').run(appPhone, clientName).lastInsertRowid;
+    }
+
+    const orderResult = db.prepare(`
+      INSERT INTO orders (customer_id, product_name, delivery_address, wa_message, requested_at, status, is_fiado)
+      VALUES (?,?,?,?,datetime('now','localtime'),'pending',0)
+    `).run(customerId, itemsSummary, clientAddr,
+      `[App] ${clientName} • ${payLabel}${safeRef ? ' ref:' + safeRef : ''}`);
+    const mainOrderId = orderResult.lastInsertRowid;
+
+    for (const item of items) {
+      db.prepare('INSERT INTO order_items (order_id, product_id, product_name, product_price, quantity) VALUES (?,?,?,?,?)')
+        .run(mainOrderId, item.product_id, item.product_name, item.price, item.quantity);
+    }
+
+    const result = db.prepare(`
+      INSERT INTO client_orders (client_username, items_json, total, payment_method, nequi_reference, delivery_date)
+      VALUES (?,?,?,?,?,?)
+    `).run(
+      req.user.username,
+      JSON.stringify(items.map(i => ({ id: i.product_id, name: i.product_name, price: i.price, qty: i.quantity }))),
+      total, payment_method, safeRef, finalDate
+    );
+
+    db.prepare('DELETE FROM cart_items WHERE client_username=?').run(req.user.username);
+    return db.prepare('SELECT * FROM client_orders WHERE id=?').get(result.lastInsertRowid);
+  });
+
+  try {
+    const order = doCheckout();
+    res.status(201).json({ order });
+  } catch {
+    res.status(500).json({ error: 'Error procesando pedido — intenta de nuevo' });
   }
-
-  // Insert into main orders table so workers/admins see it
-  const orderResult = db.prepare(`
-    INSERT INTO orders (customer_id, product_name, delivery_address, wa_message, requested_at, status, is_fiado)
-    VALUES (?,?,?,?,datetime('now','localtime'),'pending',0)
-  `).run(customerId, itemsSummary, clientAddr,
-    `[App] ${clientName} • ${payLabel}${nequi_reference ? ' ref:' + nequi_reference : ''}`);
-  const mainOrderId = orderResult.lastInsertRowid;
-
-  for (const item of items) {
-    db.prepare('INSERT INTO order_items (order_id, product_id, product_name, product_price, quantity) VALUES (?,?,?,?,?)')
-      .run(mainOrderId, item.product_id, item.product_name, item.price, item.quantity);
-  }
-
-  // Also track in client_orders for client-side history
-  const result = db.prepare(`
-    INSERT INTO client_orders (client_username, items_json, total, payment_method, nequi_reference, delivery_date)
-    VALUES (?,?,?,?,?,?)
-  `).run(
-    req.user.username,
-    JSON.stringify(items.map(i => ({ id: i.product_id, name: i.product_name, price: i.price, qty: i.quantity }))),
-    total, payment_method, nequi_reference || null, finalDate
-  );
-
-  db.prepare('DELETE FROM cart_items WHERE client_username=?').run(req.user.username);
-  const order = db.prepare('SELECT * FROM client_orders WHERE id=?').get(result.lastInsertRowid);
-  res.status(201).json({ order });
 });
 
 // GET /api/cart/orders — admin list all client orders
