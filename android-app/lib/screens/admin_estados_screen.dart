@@ -34,15 +34,38 @@ class _AdminEstadosScreenState extends State<AdminEstadosScreen> {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['jpg', 'jpeg', 'png', 'mp4', 'mov'],
+      withData: true,
     );
     if (result == null || result.files.isEmpty) return;
 
+    final file     = result.files.first;
+    final filePath = file.path;
+    final bytes    = file.bytes;
+    if (filePath == null && bytes == null) {
+      _snack('No se pudo leer el archivo');
+      return;
+    }
+
+    final ext = (file.extension ?? 'jpg').toLowerCase();
+    const mimeMap = {
+      'jpg': 'image/jpeg', 'jpeg': 'image/jpeg',
+      'png': 'image/png',  'mp4': 'video/mp4',
+      'mov': 'video/quicktime',
+    };
+    final mime = mimeMap[ext] ?? 'image/jpeg';
+
     final caption = await _askCaption();
+    if (!mounted) return;
     setState(() => _uploading = true);
     try {
-      await ApiService.createEstado(result.files.first.path!, caption: caption);
+      await ApiService.createEstado(
+        filePath,
+        caption:  caption,
+        bytes:    bytes,
+        mimeType: mime,
+      );
       await _load();
-      if (mounted) _snack('Estado publicado (32h)', success: true);
+      if (mounted) _snack('Estado publicado (36h)', success: true);
     } catch (e) {
       if (mounted) _snack(e.toString().replaceAll('Exception: ', ''));
     } finally {
