@@ -240,19 +240,21 @@ if (-not $Clean -and (Test-Path $apkSrcPath)) {
 
 # -- 7. Build APK ---------------------------------------------
 step "Compilando APK release (arm64 optimizado)..."
-Write-Host "  >> minSdk 23 | targetSdk 36 | platform arm64-only | Gradle paralelo`n"
+Write-Host "  >> minSdk 23 | targetSdk 36 | arm64-only | Gradle paralelo`n"
 
-# Flutter may write KGP WARNINGs to stderr — suspend Stop to avoid false failure
+# Directorio debug-symbols relativo a $APPDIR (evita espacios en path absoluto)
+$debugSymDir = Join-Path $APPDIR "debug-symbols"
+New-Item -ItemType Directory -Force $debugSymDir | Out-Null
+
+# Flutter escribe WARNINGs en stderr — suspender Stop para no fallar en falsos positivos
+# Salida en tiempo real para ver progreso (build puede tardar 5-10 min)
 $ErrorActionPreference = 'Continue'
-$buildOut = & $FLUTTER build apk --release --no-pub --target-platform android-arm64 --obfuscate --split-debug-info="$APPDIR\debug-symbols" 2>&1
+& $FLUTTER build apk --release --no-pub --target-platform android-arm64 --obfuscate "--split-debug-info=debug-symbols"
 $buildExitCode = $LASTEXITCODE
 $ErrorActionPreference = 'Stop'
 
-$buildOut | Select-String "error:|Error:" -ErrorAction SilentlyContinue | ForEach-Object { warn $_ }
-
 if ($buildExitCode -ne 0) {
-    $buildOut | Select-Object -Last 20 | ForEach-Object { Write-Host $_ }
-    fail "flutter build apk fallo (ver arriba)"
+    fail "flutter build apk fallo con codigo $buildExitCode"
 }
 
 # -- 8. Copiar APK --------------------------------------------
