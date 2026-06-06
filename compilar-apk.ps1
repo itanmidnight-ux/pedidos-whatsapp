@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 # ================================================================
 #  compilar-apk.ps1 -- Compila APK de Concentrados Monserrath
 #  Instala automaticamente: Java 17, Android SDK, Flutter
@@ -249,7 +249,7 @@ New-Item -ItemType Directory -Force $debugSymDir | Out-Null
 # Flutter escribe WARNINGs en stderr — suspender Stop para no fallar en falsos positivos
 # Salida en tiempo real para ver progreso (build puede tardar 5-10 min)
 $ErrorActionPreference = 'Continue'
-& $FLUTTER build apk --release --no-pub --target-platform android-arm64 --obfuscate "--split-debug-info=debug-symbols"
+& $FLUTTER build apk --release --no-pub
 $buildExitCode = $LASTEXITCODE
 $ErrorActionPreference = 'Stop'
 
