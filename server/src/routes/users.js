@@ -55,8 +55,12 @@ router.put('/:id', adminAuth, async (req, res) => {
   const updates = [];
   const vals    = [];
 
-  if (req.body.display_name !== undefined) { updates.push('display_name=?'); vals.push(req.body.display_name.trim()); }
-  if (req.body.role         !== undefined) { updates.push('role=?');         vals.push(req.body.role); }
+  if (req.body.display_name !== undefined) { updates.push('display_name=?'); vals.push(String(req.body.display_name).trim().slice(0, 100)); }
+  if (req.body.role !== undefined) {
+    if (!['admin', 'worker', 'client'].includes(req.body.role))
+      return res.status(400).json({ error: 'role debe ser admin, worker o client' });
+    updates.push('role=?'); vals.push(req.body.role);
+  }
   if (req.body.active       !== undefined) { updates.push('active=?');       vals.push(req.body.active ? 1 : 0); }
   if (req.body.address      !== undefined) { updates.push('address=?');      vals.push(req.body.address?.trim() || null); }
   const newCredential = req.body.password !== undefined ? String(req.body.password)

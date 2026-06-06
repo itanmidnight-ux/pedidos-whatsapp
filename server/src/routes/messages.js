@@ -121,8 +121,9 @@ router.put('/:id/flag', jwtAuth, (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (!id || id <= 0) return res.status(400).json({ error: 'ID inválido' });
   const { flagged, flag_reason } = req.body;
+  const safeReason = flag_reason ? String(flag_reason).trim().slice(0, 200) : null;
   getDB().prepare('UPDATE messages SET flagged=?, flag_reason=? WHERE id=?')
-    .run(flagged ? 1 : 0, flag_reason || null, id);
+    .run(flagged ? 1 : 0, safeReason, id);
   res.json({ success: true });
 });
 

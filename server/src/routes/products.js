@@ -13,7 +13,16 @@ const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, PRODUCT_IMAGES_DIR),
   filename:    (req, file, cb) => cb(null, `${Date.now()}-${file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_')}`),
 });
-const upload = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 } });
+const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+const upload = multer({
+  storage,
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (!ALLOWED_IMAGE_TYPES.includes(file.mimetype))
+      return cb(Object.assign(new Error('Solo imágenes (jpg, png, webp, gif)'), { status: 400 }));
+    cb(null, true);
+  },
+});
 
 function validateProduct({ name, price, aliases }) {
   if (name !== undefined) {

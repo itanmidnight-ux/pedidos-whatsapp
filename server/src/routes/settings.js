@@ -23,14 +23,20 @@ router.get('/', clientAuth, (req, res) => {
   res.json({ settings });
 });
 
+const ALLOWED_SETTINGS_KEYS = ['nequi_phone', 'nequi_name', 'business_name', 'business_phone', 'delivery_message', 'greeting_message'];
+
 // PUT /api/settings — update setting (admin only)
 router.put('/', adminAuth, (req, res) => {
   const { key, value } = req.body;
   if (!key || value === undefined) return res.status(400).json({ error: 'key y value requeridos' });
+  if (!ALLOWED_SETTINGS_KEYS.includes(key))
+    return res.status(400).json({ error: `key inválido. Permitidos: ${ALLOWED_SETTINGS_KEYS.join(', ')}` });
+  const strVal = String(value).trim();
+  if (strVal.length > 500) return res.status(400).json({ error: 'value máximo 500 caracteres' });
   getDB().prepare(`
     INSERT INTO settings (key, value, updated_at) VALUES (?, ?, datetime('now','localtime'))
     ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
-  `).run(key, String(value));
+  `).run(key, strVal);
   res.json({ ok: true });
 });
 

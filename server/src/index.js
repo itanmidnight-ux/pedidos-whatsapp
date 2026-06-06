@@ -90,9 +90,9 @@ app.get('/preview', (req, res) => res.sendFile(path.join(__dirname, 'preview.htm
 // ── Error handler global ──────────────────────────────────────
 app.use((err, req, res, next) => {
   const status = err.status || 500;
-  if (status >= 500) console.error('[ERROR]', err.message);
+  if (status >= 500) console.error('[ERROR]', err.message, err.stack?.split('\n')[1]);
   res.status(status).json({
-    error: process.env.NODE_ENV === 'production' ? 'Error interno del servidor' : err.message,
+    error: status >= 500 ? 'Error interno del servidor' : (err.message || 'Error'),
   });
 });
 

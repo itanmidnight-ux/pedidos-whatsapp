@@ -27,24 +27,24 @@ function findOrder(db, id) {
 
 // GET /api/orders — active orders (pending + claimed + en_camino)
 router.get('/', jwtAuth, (req, res) => {
-  const db     = getDB();
-  const status = req.query.status || ACTIVE_STATUSES;
-  const rows   = db.prepare(`
+  const db   = getDB();
+  const rows = db.prepare(`
     SELECT o.*, c.phone, c.name AS customer_name,
            u.username AS claimed_by_name, u.display_name AS claimed_by_display
     FROM orders o
     LEFT JOIN customers c ON o.customer_id = c.id
     LEFT JOIN users     u ON o.claimed_by  = u.id
-    WHERE o.status IN (${status})
+    WHERE o.status IN (${ACTIVE_STATUSES})
     ORDER BY o.requested_at DESC
   `).all();
   res.json(ordersWithMeta(rows, db));
 });
 
-// GET /api/orders/history — delivered + cancelled last 7 days
+// GET /api/orders/history — delivered + cancelled last N days
 router.get('/history', jwtAuth, (req, res) => {
   const db   = getDB();
-  const days = parseInt(req.query.days) || 7;
+  const days = Math.min(Math.max(parseInt(req.query.days, 10) || 7, 1), 365);
+  const cutoff = new Date(Date.now() - days * 86400000).toISOString().slice(0, 19).replace('T', ' ');
   const rows = db.prepare(`
     SELECT o.*, c.phone, c.name AS customer_name,
            u.username AS claimed_by_name
@@ -52,10 +52,10 @@ router.get('/history', jwtAuth, (req, res) => {
     LEFT JOIN customers c ON o.customer_id = c.id
     LEFT JOIN users     u ON o.claimed_by  = u.id
     WHERE o.status IN ('entregado','delivered','cancelled')
-      AND datetime(o.requested_at) >= datetime('now', '-${days} days')
+      AND datetime(o.requested_at) >= ?
     ORDER BY o.requested_at DESC
     LIMIT 200
-  `).all();
+  `).all(cutoff);
   res.json(ordersWithMeta(rows, db));
 });
 
@@ -122,8 +122,10 @@ router.put('/:id/en_camino', jwtAuth, (req, res) => {
   res.json(findOrder(db, id));
 });
 
-// PUT /api/orders/:id/deliver — mark entregado (backward compatible with 'delivered')
+// PUT /api/orders/:id/deliver — mark entregado (worker/admin only)
 router.put('/:id/deliver', jwtAuth, (req, res) => {
+  if (!['admin', 'worker'].includes(req.user.role))
+    return res.status(403).json({ error: 'Solo empleados pueden marcar como entregado' });
   const id = parseInt(req.params.id, 10);
   if (!id || id <= 0) return res.status(400).json({ error: 'ID inválido' });
   const db = getDB();
