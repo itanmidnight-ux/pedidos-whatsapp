@@ -218,7 +218,7 @@ class OrderCard extends StatelessWidget {
             ])
           : ActionPane(motion: const DrawerMotion(), children: [
               SlidableAction(
-                onPressed: (_) => onTake?.call() ?? onClaim?.call(),
+                onPressed: (_) { if (onTake != null) onTake!(); else onClaim?.call(); },
                 backgroundColor: const Color(0xFF2D5016),
                 foregroundColor: Colors.white,
                 icon: Icons.directions_bike,
