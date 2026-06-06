@@ -74,6 +74,23 @@ if [ -n "$MISSING" ]; then
 fi
 ok "Herramientas del sistema OK"
 
+# ── 0b. Eliminar Ollama (reemplazado por NLP.js) ──────────────
+if command -v ollama &>/dev/null || [ -d "$HOME/.ollama" ]; then
+  warn "Ollama detectado — eliminando para liberar espacio (reemplazado por NLP.js)..."
+  pkill -f ollama 2>/dev/null || true
+  sleep 1
+  for _bin in /usr/local/bin/ollama /usr/bin/ollama "$HOME/bin/ollama" /snap/bin/ollama; do
+    [ -f "$_bin" ] && { rm -f "$_bin" 2>/dev/null || sudo rm -f "$_bin" 2>/dev/null || true; }
+  done
+  if [ -d "$HOME/.ollama" ]; then
+    OLLAMA_SIZE=$(du -sh "$HOME/.ollama" 2>/dev/null | cut -f1 || echo "?")
+    rm -rf "$HOME/.ollama"
+    ok "Ollama eliminado — espacio liberado: ${OLLAMA_SIZE}"
+  else
+    ok "Ollama eliminado del sistema"
+  fi
+fi
+
 # ── 1. Número WhatsApp (input temprano, antes de instalaciones) ──
 COLLECTED_PHONE=""
 if [ ! -f "$ENV_FILE" ]; then
