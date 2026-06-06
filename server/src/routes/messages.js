@@ -159,17 +159,20 @@ router.post('/send-media', jwtAuth, upload.single('file'), (req, res) => {
 
 // ── POST /send — Enviar mensaje texto ────────────────────────
 router.post('/send', jwtAuth, (req, res) => {
-  const { phone, content } = req.body;
+  const raw = String(req.body.phone || '').replace(/\D/g, '');
+  // Normalize Colombian 10-digit mobiles to full E.164
+  const phone = (raw.length === 10 && raw.startsWith('3')) ? '57' + raw : raw;
   if (!validPhone(phone)) return res.status(400).json({ error: 'phone inválido (7-15 dígitos)' });
+  const { content } = req.body;
   if (!content || typeof content !== 'string' || content.trim().length === 0 || content.length > 1000) {
     return res.status(400).json({ error: 'content requerido (máximo 1000 caracteres)' });
   }
   const db       = getDB();
-  const customer = db.prepare('SELECT name FROM customers WHERE phone=?').get(phone.trim());
+  const customer = db.prepare('SELECT name FROM customers WHERE phone=?').get(phone);
   const result   = db.prepare(
     `INSERT INTO messages (phone, customer_name, content, direction, sent, type)
      VALUES (?, ?, ?, 'outbound', 0, 'direct')`
-  ).run(phone.trim(), customer?.name || null, content.trim());
+  ).run(phone, customer?.name || null, content.trim());
   res.json({ success: true, id: result.lastInsertRowid });
 });
 
