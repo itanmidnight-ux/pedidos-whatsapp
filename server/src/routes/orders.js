@@ -35,7 +35,7 @@ router.get('/', jwtAuth, (req, res) => {
     LEFT JOIN customers c ON o.customer_id = c.id
     LEFT JOIN users     u ON o.claimed_by  = u.id
     WHERE o.status IN (${ACTIVE_STATUSES})
-    ORDER BY o.requested_at DESC
+    ORDER BY o.requested_at ASC
   `).all();
   res.json(ordersWithMeta(rows, db));
 });
@@ -57,6 +57,51 @@ router.get('/history', jwtAuth, (req, res) => {
     LIMIT 200
   `).all(cutoff);
   res.json(ordersWithMeta(rows, db));
+});
+
+// GET /api/orders/stats — inventory totals + daily deliveries (admin only)
+router.get('/stats', jwtAuth, (req, res) => {
+  const db = getDB();
+
+  // Product totals from active orders
+  const productRows = db.prepare(`
+    SELECT name, SUM(qty) AS total FROM (
+      SELECT oi.product_name AS name, oi.quantity AS qty
+      FROM order_items oi
+      JOIN orders o ON o.id = oi.order_id
+      WHERE o.status IN (${ACTIVE_STATUSES})
+      UNION ALL
+      SELECT o.product_name AS name, 1 AS qty
+      FROM orders o
+      WHERE o.status IN (${ACTIVE_STATUSES})
+        AND NOT EXISTS (SELECT 1 FROM order_items WHERE order_id = o.id)
+        AND o.product_name IS NOT NULL
+    )
+    GROUP BY name
+    ORDER BY total DESC
+  `).all();
+
+  // Delivered per day — last 7 days
+  const dailyRows = db.prepare(`
+    SELECT date(delivered_at) AS day, COUNT(*) AS count
+    FROM orders
+    WHERE status IN ('entregado','delivered')
+      AND date(delivered_at) >= date('now','-6 days')
+    GROUP BY date(delivered_at)
+    ORDER BY day ASC
+  `).all();
+
+  // Summary counts
+  const summary = db.prepare(`
+    SELECT
+      COUNT(*) FILTER (WHERE status='pending') AS pending,
+      COUNT(*) FILTER (WHERE status='claimed') AS claimed,
+      COUNT(*) FILTER (WHERE status='en_camino') AS en_camino,
+      COUNT(*) FILTER (WHERE status IN ('entregado','delivered') AND date(delivered_at)=date('now')) AS delivered_today
+    FROM orders
+  `).get();
+
+  res.json({ product_totals: productRows, daily_deliveries: dailyRows, summary });
 });
 
 // GET /api/orders/:id

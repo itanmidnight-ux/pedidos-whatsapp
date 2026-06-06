@@ -13,6 +13,7 @@ class Order {
   final String? customerPhone;
   final int? claimedBy;
   final String? claimedByName;
+  final String? claimedByUsername;
   final String? cancelReason;
   final List<Map<String, dynamic>> items;
   bool pendingSync;
@@ -32,6 +33,7 @@ class Order {
     this.customerPhone,
     this.claimedBy,
     this.claimedByName,
+    this.claimedByUsername,
     this.cancelReason,
     this.items = const [],
     this.pendingSync = false,
@@ -50,9 +52,10 @@ class Order {
     deliveredAt:     j['delivered_at'],
     customerName:    j['customer_name'],
     customerPhone:   j['phone'],
-    claimedBy:       j['claimed_by'],
-    claimedByName:   j['claimed_by_display'] ?? j['claimed_by_name'],
-    cancelReason:    j['cancel_reason'],
+    claimedBy:           j['claimed_by'],
+    claimedByName:       j['claimed_by_display'] ?? j['claimed_by_name'],
+    claimedByUsername:   j['claimed_by_name'],
+    cancelReason:        j['cancel_reason'],
     items:           (j['items'] as List?)?.cast<Map<String, dynamic>>() ?? [],
   );
 

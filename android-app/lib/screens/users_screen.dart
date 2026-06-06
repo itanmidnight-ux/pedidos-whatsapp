@@ -129,15 +129,6 @@ class _UsersScreenState extends State<UsersScreen> {
                 )),
                 const SizedBox(height: 12),
 
-                // Dirección de entrega
-                TextFormField(
-                  controller: addressCtrl,
-                  decoration: _inputDeco('Dirección de entrega (opcional)', Icons.location_on_outlined),
-                  maxLines: 2,
-                  minLines: 1,
-                ),
-                const SizedBox(height: 12),
-
                 // Rol
                 DropdownButtonFormField<String>(
                   value: role,
@@ -150,6 +141,17 @@ class _UsersScreenState extends State<UsersScreen> {
                   onChanged: (v) { if (v != null) setS(() => role = v); },
                 ),
                 const SizedBox(height: 12),
+
+                // Dirección de entrega (solo para clientes)
+                if (role == 'client') ...[
+                  TextFormField(
+                    controller: addressCtrl,
+                    decoration: _inputDeco('Dirección de entrega', Icons.location_on_outlined),
+                    maxLines: 2,
+                    minLines: 1,
+                  ),
+                  const SizedBox(height: 12),
+                ],
 
                 // Activo (solo en edición)
                 if (isEdit)

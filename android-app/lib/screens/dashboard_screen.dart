@@ -1,16 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_provider.dart';
+import '../services/api_service.dart';
 import '../widgets/order_card.dart';
 import '../widgets/company_header.dart';
 import 'products_screen.dart';
 import 'messages_screen.dart';
 import 'users_screen.dart';
 import 'admin_estados_screen.dart';
-import 'admin_settings_screen.dart';
+import 'inventario_screen.dart';
 
-// ── Filter state ──────────────────────────────────────────────
-const _allStatuses = {'pending', 'claimed', 'en_camino'};
+// Filter chips
+const _allStatuses = ['pending', 'claimed', 'en_camino'];
 final _statusLabels = {'pending': 'Pendientes', 'claimed': 'Reclamados', 'en_camino': 'En camino'};
 
 class DashboardScreen extends StatefulWidget {
@@ -31,7 +32,24 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   static const _titlesWorker = ['Pedidos Activos', 'Mensajes'];
-  static const _titlesAdmin  = ['Pedidos Activos', 'Productos', 'Mensajes', 'Usuarios', 'Estados', 'Ajustes'];
+  static const _titlesAdmin  = ['Pedidos Activos', 'Productos', 'Mensajes', 'Usuarios', 'Estados', 'Inventario'];
+
+  /// Filter + sort orders:
+  /// - No filter: show pending + current user's claimed/en_camino (other workers' orders hidden)
+  /// - Filter active: show only matching statuses
+  /// - Always pin current user's orders to top, then oldest first
+  List _sortedOrders(List orders) {
+    final me = ApiService.currentUser;
+
+    final filtered = _filter.isEmpty
+      ? orders.where((o) => o.status == 'pending' || o.claimedByUsername == me).toList()
+      : orders.where((o) => _filter.contains(o.status)).toList();
+
+    // Backend returns ASC already; just pin mine to top
+    final mine   = filtered.where((o) => o.claimedByUsername == me).toList();
+    final others = filtered.where((o) => o.claimedByUsername != me).toList();
+    return [...mine, ...others];
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -105,8 +123,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
             color: const Color(0xFF2D5016),
             child: () {
               if (provider.loading) return const Center(child: CircularProgressIndicator(color: Color(0xFF2D5016)));
-              final filtered = provider.orders.where((o) => _filter.contains(o.status)).toList();
-              if (filtered.isEmpty) return ListView(children: const [
+              final sorted = _sortedOrders(provider.orders);
+              if (sorted.isEmpty) return ListView(children: const [
                 SizedBox(height: 100),
                 Column(children: [
                   Text('📦', style: TextStyle(fontSize: 64)),
@@ -118,9 +136,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ]);
               return ListView.builder(
                 padding: const EdgeInsets.only(top: 4, bottom: 80),
-                itemCount: filtered.length,
+                itemCount: sorted.length,
                 itemBuilder: (ctx, i) {
-                  final order = filtered[i];
+                  final order = sorted[i];
                   return OrderCard(
                     key: ValueKey(order.id),
                     order: order,
@@ -129,6 +147,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     onClaim:    () => provider.claimOrder(order.id!),
                     onUnclaim:  () => provider.unclaimOrder(order.id!),
                     onEnCamino: () => provider.markEnCamino(order.id!),
+                    onTake:     order.status == 'pending' && !order.isClaimed
+                                  ? () => provider.takeOrder(order.id!)
+                                  : null,
                     onCancel:   provider.isAdmin ? (r) => provider.cancelOrder(order.id!, r) : null,
                   );
                 },
@@ -144,8 +165,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
         if (provider.isAdmin) const UsersScreen(),
         // ESTADOS (admin only)
         if (provider.isAdmin) const AdminEstadosScreen(),
-        // AJUSTES (admin only)
-        if (provider.isAdmin) const AdminSettingsScreen(),
+        // INVENTARIO (admin only)
+        if (provider.isAdmin) const InventarioScreen(),
       ]),
       bottomNavigationBar: NavigationBar(
         selectedIndex: safeTab,
@@ -194,9 +215,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
               label: 'Estados'),
           if (provider.isAdmin)
             const NavigationDestination(
-              icon: Icon(Icons.settings_outlined),
-              selectedIcon: Icon(Icons.settings_rounded, color: Color(0xFF1E6B2E)),
-              label: 'Ajustes'),
+              icon: Icon(Icons.bar_chart_rounded),
+              selectedIcon: Icon(Icons.bar_chart_rounded, color: Color(0xFF1E6B2E)),
+              label: 'Inventario'),
         ],
       ),
     );

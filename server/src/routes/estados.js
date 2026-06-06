@@ -14,12 +14,11 @@ const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, ESTADOS_DIR),
   filename:    (req, file, cb) => cb(null, `${Date.now()}-${file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_')}`),
 });
-const ALLOWED_MEDIA_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'video/mp4', 'video/quicktime', 'video/webm'];
 const upload = multer({
   storage,
   limits: { fileSize: 20 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
-    if (!ALLOWED_MEDIA_TYPES.includes(file.mimetype))
+    if (!file.mimetype.startsWith('image/') && !file.mimetype.startsWith('video/'))
       return cb(Object.assign(new Error('Solo imágenes o videos (jpg, png, webp, gif, mp4, mov, webm)'), { status: 400 }));
     cb(null, true);
   },

@@ -12,6 +12,7 @@ class OrderCard extends StatelessWidget {
   final VoidCallback? onClaim;
   final VoidCallback? onUnclaim;
   final VoidCallback? onEnCamino;
+  final VoidCallback? onTake;
   final ValueChanged<String>? onCancel;
 
   const OrderCard({
@@ -22,6 +23,7 @@ class OrderCard extends StatelessWidget {
     this.onClaim,
     this.onUnclaim,
     this.onEnCamino,
+    this.onTake,
     this.onCancel,
   });
 
@@ -32,7 +34,7 @@ class OrderCard extends StatelessWidget {
 
   String get _timeLabel {
     final d = DateTime.tryParse(order.requestedAt);
-    return d == null ? '' : DateFormat('dd/MM HH:mm').format(d.toLocal());
+    return d == null ? '' : DateFormat('dd/MM h:mm a').format(d.toLocal());
   }
 
   void _callClient() async {
@@ -40,6 +42,19 @@ class OrderCard extends StatelessWidget {
     if (phone == null) return;
     final uri = Uri.parse('tel:+$phone');
     if (await canLaunchUrl(uri)) launchUrl(uri);
+  }
+
+  void _sendWhatsApp(BuildContext ctx) async {
+    final phone = order.customerPhone;
+    if (phone == null) {
+      ScaffoldMessenger.of(ctx).showSnackBar(
+        const SnackBar(content: Text('Cliente sin número de teléfono')));
+      return;
+    }
+    final uri = Uri.parse('https://wa.me/$phone');
+    if (await canLaunchUrl(uri)) {
+      launchUrl(uri, mode: LaunchMode.externalApplication);
+    }
   }
 
   void _showDetail(BuildContext ctx) => showModalBottomSheet(
@@ -78,21 +93,94 @@ class OrderCard extends StatelessWidget {
 
   void _showMenu(BuildContext ctx) {
     final isClaimed = order.isClaimed;
-    showModalBottomSheet(context: ctx, builder: (_) => SafeArea(child: Column(mainAxisSize: MainAxisSize.min, children: [
-      if (!isClaimed && onClaim != null)
-        ListTile(leading: const Icon(Icons.person_pin_circle, color: Color(0xFF2D5016)), title: const Text('Reclamar pedido'), onTap: () { Navigator.pop(ctx); onClaim?.call(); }),
-      if (isClaimed && onUnclaim != null)
-        ListTile(leading: const Icon(Icons.person_remove, color: Colors.orange), title: const Text('Liberar pedido'), onTap: () { Navigator.pop(ctx); onUnclaim?.call(); }),
-      if (isClaimed && onEnCamino != null && order.status != 'en_camino')
-        ListTile(leading: const Icon(Icons.directions_bike, color: Color(0xFF2D5016)), title: const Text('Marcar en camino'), onTap: () { Navigator.pop(ctx); onEnCamino?.call(); }),
-      ListTile(leading: const Icon(Icons.check_circle, color: Color(0xFF2D5016)), title: const Text('Marcar entregado'), onTap: () { Navigator.pop(ctx); onDeliver(); }),
-      ListTile(leading: const Icon(Icons.comment), title: const Text('Comentario'), onTap: () { Navigator.pop(ctx); _showCommentDialog(ctx); }),
-      ListTile(leading: const Icon(Icons.info_outline), title: const Text('Ver detalle'), onTap: () { Navigator.pop(ctx); _showDetail(ctx); }),
-      if (order.customerPhone != null)
-        ListTile(leading: const Icon(Icons.phone, color: Colors.blue), title: Text('Llamar a ${order.customerName ?? order.customerPhone}'), onTap: () { Navigator.pop(ctx); _callClient(); }),
-      if (onCancel != null)
-        ListTile(leading: const Icon(Icons.cancel, color: Colors.red), title: const Text('Cancelar pedido'), textColor: Colors.red, onTap: () { Navigator.pop(ctx); _showCancelDialog(ctx); }),
-    ])));
+    showModalBottomSheet(
+      context: ctx,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (_) => SafeArea(child: Column(mainAxisSize: MainAxisSize.min, children: [
+        Container(
+          width: 40, height: 4, margin: const EdgeInsets.symmetric(vertical: 12),
+          decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)),
+        ),
+        // Customer name header
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20),
+          child: Text(
+            order.customerName ?? order.customerPhone ?? 'Cliente',
+            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+          ),
+        ),
+        const SizedBox(height: 4),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20),
+          child: Text(order.productName, style: TextStyle(color: Colors.grey.shade600, fontSize: 13)),
+        ),
+        const Divider(height: 20),
+        // Tomar pedido (claim + en_camino in one step)
+        if (!isClaimed && onTake != null)
+          ListTile(
+            leading: const CircleAvatar(
+              backgroundColor: Color(0xFF2D5016),
+              child: Icon(Icons.directions_bike, color: Colors.white, size: 18)),
+            title: const Text('Tomar pedido', style: TextStyle(fontWeight: FontWeight.bold)),
+            subtitle: const Text('Te asigna este pedido y lo pone en camino'),
+            onTap: () { Navigator.pop(ctx); onTake?.call(); }),
+        ListTile(
+          leading: const CircleAvatar(
+            backgroundColor: Color(0xFF1A6B2E),
+            child: Icon(Icons.check_circle, color: Colors.white, size: 18)),
+          title: const Text('Marcar entregado'),
+          onTap: () { Navigator.pop(ctx); onDeliver(); }),
+        if (order.customerPhone != null)
+          ListTile(
+            leading: const CircleAvatar(
+              backgroundColor: Color(0xFF25D366),
+              child: Icon(Icons.chat, color: Colors.white, size: 18)),
+            title: const Text('Enviar mensaje WhatsApp'),
+            subtitle: Text(order.customerPhone!),
+            onTap: () { Navigator.pop(ctx); _sendWhatsApp(ctx); }),
+        if (order.customerPhone != null)
+          ListTile(
+            leading: const CircleAvatar(
+              backgroundColor: Colors.blue,
+              child: Icon(Icons.phone, color: Colors.white, size: 18)),
+            title: Text('Llamar a ${order.customerName ?? order.customerPhone}'),
+            onTap: () { Navigator.pop(ctx); _callClient(); }),
+        if (isClaimed && onUnclaim != null)
+          ListTile(
+            leading: const CircleAvatar(
+              backgroundColor: Colors.orange,
+              child: Icon(Icons.person_remove, color: Colors.white, size: 18)),
+            title: const Text('Liberar pedido'),
+            onTap: () { Navigator.pop(ctx); onUnclaim?.call(); }),
+        if (isClaimed && onEnCamino != null && order.status != 'en_camino')
+          ListTile(
+            leading: const CircleAvatar(
+              backgroundColor: Color(0xFF2D5016),
+              child: Icon(Icons.directions_bike, color: Colors.white, size: 18)),
+            title: const Text('Marcar en camino'),
+            onTap: () { Navigator.pop(ctx); onEnCamino?.call(); }),
+        ListTile(
+          leading: const CircleAvatar(
+            backgroundColor: Colors.grey,
+            child: Icon(Icons.comment, color: Colors.white, size: 18)),
+          title: const Text('Agregar comentario'),
+          onTap: () { Navigator.pop(ctx); _showCommentDialog(ctx); }),
+        ListTile(
+          leading: const CircleAvatar(
+            backgroundColor: Colors.blueGrey,
+            child: Icon(Icons.info_outline, color: Colors.white, size: 18)),
+          title: const Text('Ver detalle'),
+          onTap: () { Navigator.pop(ctx); _showDetail(ctx); }),
+        if (onCancel != null)
+          ListTile(
+            leading: const CircleAvatar(
+              backgroundColor: Colors.red,
+              child: Icon(Icons.cancel, color: Colors.white, size: 18)),
+            title: const Text('Cancelar pedido', style: TextStyle(color: Colors.red)),
+            onTap: () { Navigator.pop(ctx); _showCancelDialog(ctx); }),
+        const SizedBox(height: 8),
+      ])),
+    );
   }
 
   @override
@@ -102,6 +190,7 @@ class OrderCard extends StatelessWidget {
       'en_camino' => const Color(0xFF2D5016),
       _           => Colors.grey,
     };
+    final showTakeButton = !order.isClaimed && onTake != null && order.status == 'pending';
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
@@ -129,78 +218,111 @@ class OrderCard extends StatelessWidget {
             ])
           : ActionPane(motion: const DrawerMotion(), children: [
               SlidableAction(
-                onPressed: (_) => onClaim?.call(),
+                onPressed: (_) => onTake?.call() ?? onClaim?.call(),
                 backgroundColor: const Color(0xFF2D5016),
                 foregroundColor: Colors.white,
-                icon: Icons.person_pin_circle,
-                label: 'RECLAMAR',
+                icon: Icons.directions_bike,
+                label: 'TOMAR',
                 borderRadius: BorderRadius.circular(16),
               ),
             ]),
         child: GestureDetector(
-          onLongPress: () => _showMenu(ctx),
-          onTap: () => _showDetail(ctx),
-          child: Card(child: Padding(
-            padding: const EdgeInsets.all(14),
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              // Header: nombre + badges
-              Row(children: [
-                Expanded(child: Text(
-                  order.customerName ?? order.customerPhone ?? 'Cliente',
-                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15))),
-                if (order.isFiado) _badge('FIADO', Colors.orange),
-                if (order.isClaimed) ...[
+          onTap: () => _showMenu(ctx),
+          child: Card(
+            elevation: order.isClaimed ? 3 : 1,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+              side: order.isClaimed
+                ? BorderSide(color: statusColor.withOpacity(0.5), width: 1.5)
+                : BorderSide.none,
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                // Header: nombre + badges
+                Row(children: [
+                  Expanded(child: Text(
+                    order.customerName ?? order.customerPhone ?? 'Cliente',
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15))),
+                  if (order.isFiado) _badge('FIADO', Colors.orange),
+                  if (order.isClaimed) ...[
+                    const SizedBox(width: 4),
+                    _badge(order.statusLabel, statusColor),
+                  ],
+                ]),
+                const SizedBox(height: 6),
+                // Producto
+                Row(children: [
+                  const Icon(Icons.inventory_2_outlined, size: 16, color: Colors.green),
                   const SizedBox(width: 4),
-                  _badge(order.statusLabel, statusColor),
-                ],
-              ]),
-              const SizedBox(height: 6),
-              // Producto
-              Row(children: [
-                const Icon(Icons.inventory_2_outlined, size: 16, color: Colors.green),
-                const SizedBox(width: 4),
-                Expanded(child: Text(order.productName, style: const TextStyle(fontSize: 14))),
-                if (order.productPrice != null)
-                  Text('\$${NumberFormat('#,###', 'es_CO').format(order.productPrice)}',
-                    style: const TextStyle(fontWeight: FontWeight.w600, color: Color(0xFF2D5016))),
-              ]),
-              const SizedBox(height: 4),
-              // Dirección
-              Row(children: [
-                const Icon(Icons.location_on_outlined, size: 16, color: Colors.grey),
-                const SizedBox(width: 4),
-                Expanded(child: Text(order.deliveryAddress,
-                  style: TextStyle(fontSize: 13, color: Colors.grey.shade700))),
-              ]),
-              const SizedBox(height: 6),
-              // Footer: hora + overdue + comentario + llamar
-              Row(children: [
-                Icon(Icons.access_time, size: 14, color: _isOverdue ? Colors.red : Colors.grey),
-                const SizedBox(width: 4),
-                Text(_timeLabel, style: TextStyle(
-                  fontSize: 12,
-                  color: _isOverdue ? Colors.red : Colors.grey.shade600,
-                  fontWeight: _isOverdue ? FontWeight.bold : FontWeight.normal)),
-                if (_isOverdue) ...[
-                  const SizedBox(width: 6),
-                  _badge('PENDIENTE', Colors.red),
-                ],
-                const Spacer(),
-                if (order.comment != null)
-                  const Icon(Icons.comment, size: 14, color: Colors.grey),
-                if (order.customerPhone != null) ...[
-                  const SizedBox(width: 8),
-                  InkWell(
-                    onTap: _callClient,
-                    borderRadius: BorderRadius.circular(12),
-                    child: const Padding(
-                      padding: EdgeInsets.all(2),
-                      child: Icon(Icons.phone, size: 16, color: Colors.blue)),
+                  Expanded(child: Text(order.productName, style: const TextStyle(fontSize: 14))),
+                  if (order.productPrice != null)
+                    Text('\$${NumberFormat('#,###', 'es_CO').format(order.productPrice)}',
+                      style: const TextStyle(fontWeight: FontWeight.w600, color: Color(0xFF2D5016))),
+                ]),
+                const SizedBox(height: 4),
+                // Dirección
+                Row(children: [
+                  const Icon(Icons.location_on_outlined, size: 16, color: Colors.grey),
+                  const SizedBox(width: 4),
+                  Expanded(child: Text(order.deliveryAddress,
+                    style: TextStyle(fontSize: 13, color: Colors.grey.shade700))),
+                ]),
+                // Footer: hora + overdue + comentario + llamar
+                const SizedBox(height: 6),
+                Row(children: [
+                  Icon(Icons.access_time, size: 14, color: _isOverdue ? Colors.red : Colors.grey),
+                  const SizedBox(width: 4),
+                  Text(_timeLabel, style: TextStyle(
+                    fontSize: 12,
+                    color: _isOverdue ? Colors.red : Colors.grey.shade600,
+                    fontWeight: _isOverdue ? FontWeight.bold : FontWeight.normal)),
+                  if (_isOverdue) ...[
+                    const SizedBox(width: 6),
+                    _badge('PENDIENTE', Colors.red),
+                  ],
+                  const Spacer(),
+                  if (order.comment != null)
+                    const Icon(Icons.comment, size: 14, color: Colors.grey),
+                  if (order.customerPhone != null) ...[
+                    const SizedBox(width: 8),
+                    InkWell(
+                      onTap: () => _sendWhatsApp(ctx),
+                      borderRadius: BorderRadius.circular(12),
+                      child: const Padding(
+                        padding: EdgeInsets.all(2),
+                        child: Icon(Icons.chat, size: 16, color: Color(0xFF25D366))),
+                    ),
+                    const SizedBox(width: 4),
+                    InkWell(
+                      onTap: _callClient,
+                      borderRadius: BorderRadius.circular(12),
+                      child: const Padding(
+                        padding: EdgeInsets.all(2),
+                        child: Icon(Icons.phone, size: 16, color: Colors.blue)),
+                    ),
+                  ],
+                ]),
+                // TOMAR PEDIDO button — visible for unclaimed orders
+                if (showTakeButton) ...[
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      style: FilledButton.styleFrom(
+                        backgroundColor: const Color(0xFF2D5016),
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      ),
+                      icon: const Icon(Icons.directions_bike, size: 16),
+                      label: const Text('TOMAR PEDIDO', style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 0.5)),
+                      onPressed: onTake,
+                    ),
                   ),
                 ],
               ]),
-            ]),
-          )),
+            ),
+          ),
         ),
       ),
     );
