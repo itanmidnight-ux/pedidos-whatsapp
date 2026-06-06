@@ -115,7 +115,7 @@ class _ProductCard extends StatelessWidget {
           Expanded(child: hasImage
               ? CachedNetworkImage(
                   imageUrl: ApiService.productImageUrl(product.images.first),
-                  httpHeaders: const {'ngrok-skip-browser-warning': 'true'},
+                  httpHeaders: ApiService.imageHeaders,
                   fit: BoxFit.cover,
                   width: double.infinity,
                   placeholder: (_, __) => Container(

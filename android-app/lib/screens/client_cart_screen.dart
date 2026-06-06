@@ -200,9 +200,6 @@ class _ClientCartScreenState extends State<ClientCartScreen> {
       backgroundColor: const Color(0xFFF5F5F0),
       appBar: AppBar(
         title: const Text('Mi carrito'),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_rounded),
-          onPressed: () => Navigator.pop(context)),
         actions: [
           if (_items.isNotEmpty)
             TextButton(
