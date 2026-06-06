@@ -18,6 +18,8 @@ class _UsersScreenState extends State<UsersScreen> {
   static const _light  = Color(0xFFD4ECB8);
 
   bool _loading = false;
+  final _searchCtrl = TextEditingController();
+  String _query = '';
 
   @override
   void initState() {
@@ -25,7 +27,11 @@ class _UsersScreenState extends State<UsersScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<AppProvider>().refreshUsers();
     });
+    _searchCtrl.addListener(() => setState(() => _query = _searchCtrl.text.toLowerCase()));
   }
+
+  @override
+  void dispose() { _searchCtrl.dispose(); super.dispose(); }
 
   // ── Dialogo crear / editar ─────────────────────────────────
   Future<void> _showUserDialog({Map<String, dynamic>? user}) async {
@@ -278,11 +284,45 @@ class _UsersScreenState extends State<UsersScreen> {
   );
 
   // ── Build ─────────────────────────────────────────────────
+  Widget _searchBar({required String hint}) => Container(
+    padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
+    color: Colors.white,
+    child: TextField(
+      controller: _searchCtrl,
+      textInputAction: TextInputAction.search,
+      decoration: InputDecoration(
+        hintText: hint,
+        hintStyle: TextStyle(color: Colors.grey.shade400, fontSize: 14),
+        prefixIcon: const Icon(Icons.search_rounded, color: Color(0xFF1E6B2E), size: 20),
+        suffixIcon: _query.isNotEmpty
+            ? IconButton(
+                icon: Icon(Icons.close_rounded, color: Colors.grey.shade400, size: 18),
+                onPressed: () { _searchCtrl.clear(); setState(() => _query = ''); })
+            : null,
+        filled: true,
+        fillColor: const Color(0xFFF5F5F5),
+        contentPadding: const EdgeInsets.symmetric(vertical: 10),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: Color(0xFF1E6B2E), width: 1.5)),
+      ),
+    ),
+  );
+
   @override
   Widget build(BuildContext context) {
-    final users = context.watch<AppProvider>().users;
+    final allUsers = context.watch<AppProvider>().users;
+    final users = _query.isEmpty ? allUsers : allUsers.where((u) {
+      final n  = (u['display_name'] ?? '').toString().toLowerCase();
+      final un = (u['username'] ?? '').toString().toLowerCase();
+      return n.contains(_query) || un.contains(_query);
+    }).toList();
 
-    return Stack(children: [
+    return Column(children: [
+      _searchBar(hint: 'Buscar usuarios...'),
+      Expanded(child: Stack(children: [
       RefreshIndicator(
         onRefresh: () => context.read<AppProvider>().refreshUsers(),
         color: _green,
@@ -290,12 +330,16 @@ class _UsersScreenState extends State<UsersScreen> {
           ? ListView(children: [
               const SizedBox(height: 120),
               Column(children: [
-                const Text('👥', style: TextStyle(fontSize: 56)),
+                Text(_query.isNotEmpty ? '🔍' : '👥',
+                  style: const TextStyle(fontSize: 56)),
                 const SizedBox(height: 12),
-                Text(_loading ? 'Cargando...' : 'No hay usuarios',
+                Text(_loading ? 'Cargando...'
+                    : _query.isNotEmpty ? 'Sin resultados'
+                    : 'No hay usuarios',
                   style: const TextStyle(fontSize: 16, color: Colors.grey, fontWeight: FontWeight.w500)),
                 const SizedBox(height: 4),
-                const Text('Desliza para actualizar', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                if (_query.isEmpty)
+                  const Text('Desliza para actualizar', style: TextStyle(fontSize: 12, color: Colors.grey)),
               ]),
             ])
           : ListView.separated(
@@ -420,6 +464,7 @@ class _UsersScreenState extends State<UsersScreen> {
           label: const Text('Nuevo usuario', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
         ),
       ),
+    ])),
     ]);
   }
 }
