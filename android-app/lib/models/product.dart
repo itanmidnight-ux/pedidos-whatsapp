@@ -6,11 +6,13 @@ class Product {
   final bool available;
   final bool favorite;
   final bool noFiado;
+  final List<String> images;
 
   Product({
     this.id, required this.name, required this.aliases,
     required this.price, this.available = true,
     this.favorite = false, this.noFiado = false,
+    this.images = const [],
   });
 
   factory Product.fromJson(Map<String, dynamic> j) => Product(
@@ -20,6 +22,7 @@ class Product {
     available: j['available'] == 1 || j['available'] == true,
     favorite: j['favorite'] == 1 || j['favorite'] == true,
     noFiado: j['no_fiado'] == 1 || j['no_fiado'] == true,
+    images: (j['images'] is List) ? List<String>.from(j['images']) : [],
   );
 
   Map<String, dynamic> toJson() => {

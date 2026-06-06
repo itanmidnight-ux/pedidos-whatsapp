@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_provider.dart';
+import '../services/api_service.dart';
 import '../widgets/company_header.dart';
 
 class UsersScreen extends StatefulWidget {
@@ -114,6 +115,7 @@ class _UsersScreenState extends State<UsersScreen> {
                   items: const [
                     DropdownMenuItem(value: 'worker', child: Text('Trabajador')),
                     DropdownMenuItem(value: 'admin',  child: Text('Administrador')),
+                    DropdownMenuItem(value: 'client', child: Text('Cliente')),
                   ],
                   onChanged: (v) { if (v != null) setS(() => role = v); },
                 ),
@@ -217,6 +219,36 @@ class _UsersScreenState extends State<UsersScreen> {
     }
   }
 
+  Future<void> _deleteUser(Map<String, dynamic> user) async {
+    final name = user['display_name'] ?? user['username'];
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Eliminar usuario'),
+        content: Text('¿Eliminar permanentemente a $name? Esta acción no se puede deshacer.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Eliminar'),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true || !mounted) return;
+    setState(() => _loading = true);
+    try {
+      await ApiService.deleteUser(user['id'] as int);
+      await context.read<AppProvider>().refreshUsers();
+      if (mounted) _snack('$name eliminado', success: true);
+    } catch (e) {
+      if (mounted) _snack(e.toString().replaceAll('Exception: ', ''));
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
   void _snack(String msg, {bool success = false}) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text(msg),
@@ -276,7 +308,15 @@ class _UsersScreenState extends State<UsersScreen> {
                 final uname = u['username'] ?? '';
                 final role  = u['role'] ?? 'worker';
                 final active = u['active'] == 1 || u['active'] == true;
-                final isAdminUser = role == 'admin';
+                final isAdminUser  = role == 'admin';
+                final isClientUser = role == 'client';
+                final badgeColor = isAdminUser ? _gold : isClientUser ? Colors.blue : _green;
+                final badgeText  = isAdminUser ? 'Admin' : isClientUser ? 'Cliente' : 'Trabajador';
+                final avatarColor = isAdminUser
+                    ? _gold.withOpacity(active ? 1 : 0.4)
+                    : isClientUser
+                        ? Colors.blue.withOpacity(active ? 0.8 : 0.3)
+                        : _green.withOpacity(active ? 1 : 0.35);
 
                 return Card(
                   elevation: 0,
@@ -291,9 +331,7 @@ class _UsersScreenState extends State<UsersScreen> {
                     padding: const EdgeInsets.symmetric(vertical: 4),
                     child: ListTile(
                       leading: CircleAvatar(
-                        backgroundColor: isAdminUser
-                          ? _gold.withOpacity(active ? 1 : 0.4)
-                          : _green.withOpacity(active ? 1 : 0.35),
+                        backgroundColor: avatarColor,
                         child: Text(
                           name.isNotEmpty ? name[0].toUpperCase() : '?',
                           style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
@@ -310,17 +348,15 @@ class _UsersScreenState extends State<UsersScreen> {
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                           decoration: BoxDecoration(
-                            color: isAdminUser
-                              ? _gold.withOpacity(0.15)
-                              : _light,
+                            color: badgeColor.withOpacity(0.15),
                             borderRadius: BorderRadius.circular(20),
                           ),
                           child: Text(
-                            isAdminUser ? 'Admin' : 'Trabajador',
+                            badgeText,
                             style: TextStyle(
                               fontSize: 11,
                               fontWeight: FontWeight.w600,
-                              color: isAdminUser ? _gold : _green,
+                              color: badgeColor,
                             ),
                           ),
                         ),
@@ -337,19 +373,25 @@ class _UsersScreenState extends State<UsersScreen> {
                       trailing: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          IconButton(
-                            icon: Icon(
-                              active ? Icons.toggle_on_rounded : Icons.toggle_off_rounded,
-                              color: active ? _green : Colors.grey,
-                              size: 28,
+                          if (!isClientUser)
+                            IconButton(
+                              icon: Icon(
+                                active ? Icons.toggle_on_rounded : Icons.toggle_off_rounded,
+                                color: active ? _green : Colors.grey,
+                                size: 28,
+                              ),
+                              tooltip: active ? 'Desactivar' : 'Activar',
+                              onPressed: () => _toggleActive(u),
                             ),
-                            tooltip: active ? 'Desactivar' : 'Activar',
-                            onPressed: () => _toggleActive(u),
-                          ),
                           IconButton(
                             icon: const Icon(Icons.edit_rounded, size: 20, color: Color(0xFF2D5016)),
                             tooltip: 'Editar',
                             onPressed: () => _showUserDialog(user: u),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.delete_outline_rounded, size: 20, color: Colors.red),
+                            tooltip: 'Eliminar',
+                            onPressed: () => _deleteUser(u),
                           ),
                         ],
                       ),

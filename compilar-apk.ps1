@@ -192,9 +192,55 @@ if ($Clean) {
     ok "Clean completado"
 }
 
+# -- 6b. Gradle parallel build config -------------------------
+step "Configurando Gradle para compilación rápida..."
+$gradlePropsDir = Join-Path $APPDIR "android"
+$gradlePropsFile = Join-Path $gradlePropsDir "gradle.properties"
+$gradleOptsBlock = @"
+
+# Performance — auto-agregado por compilar-apk.ps1
+org.gradle.parallel=true
+org.gradle.daemon=true
+org.gradle.caching=true
+org.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=512m -XX:+HeapDumpOnOutOfMemoryError -Dfile.encoding=UTF-8
+android.useAndroidX=true
+android.enableJetifier=true
+"@
+$currentContent = if (Test-Path $gradlePropsFile) { Get-Content $gradlePropsFile -Raw } else { "" }
+if ($currentContent -notmatch 'org\.gradle\.parallel') {
+    Add-Content -Path $gradlePropsFile -Value $gradleOptsBlock
+    ok "Gradle: parallel + daemon + cache habilitados"
+} else {
+    ok "Gradle: configuración de rendimiento ya presente"
+}
+
+# -- 6c. Skip build if APK is newer than all Dart sources -----
+$apkSrcPath = Join-Path $APPDIR "build\app\outputs\flutter-apk\app-release.apk"
+if (-not $Clean -and (Test-Path $apkSrcPath)) {
+    $apkTime = (Get-Item $apkSrcPath).LastWriteTime
+    $dartFiles = Get-ChildItem -Path (Join-Path $APPDIR "lib") -Recurse -Filter "*.dart"
+    $pubYamlTime = (Get-Item (Join-Path $APPDIR "pubspec.yaml")).LastWriteTime
+    $newerFiles = $dartFiles | Where-Object { $_.LastWriteTime -gt $apkTime }
+    if (-not $newerFiles -and $pubYamlTime -le $apkTime) {
+        ok "APK está actualizado — no se necesita recompilar"
+        $size = [math]::Round((Get-Item $apkSrcPath).Length / 1MB, 1)
+        Copy-Item $apkSrcPath $OUT -Force
+        Write-Host ""
+        Write-Host "${GREEN}${BOLD}+============================================+${NC}"
+        Write-Host "${GREEN}${BOLD}|    APK SIN CAMBIOS — COPIA DIRECTA         |${NC}"
+        Write-Host "${GREEN}${BOLD}+--------------------------------------------+${NC}"
+        Write-Host "${GREEN}${BOLD}|${NC} Archivo: app-release.apk (${size}MB)$((' ' * [Math]::Max(0, 19 - "$size".Length)))${GREEN}${BOLD}|${NC}"
+        Write-Host "${GREEN}${BOLD}+============================================+${NC}"
+        Write-Host ""
+        exit 0
+    }
+    $changedCount = ($newerFiles | Measure-Object).Count
+    ok "Cambios detectados ($changedCount archivos) — recompilando..."
+}
+
 # -- 7. Build APK ---------------------------------------------
 step "Compilando APK release (arm64 optimizado)..."
-Write-Host "  >> minSdk 23 | targetSdk 36 | platform arm64-only`n"
+Write-Host "  >> minSdk 23 | targetSdk 36 | platform arm64-only | Gradle paralelo`n"
 
 # Flutter may write KGP WARNINGs to stderr — suspend Stop to avoid false failure
 $ErrorActionPreference = 'Continue'

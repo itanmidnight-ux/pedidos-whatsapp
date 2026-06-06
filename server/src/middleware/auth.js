@@ -27,4 +27,12 @@ function adminAuth(req, res, next) {
   });
 }
 
-module.exports = { apiKeyAuth, jwtAuth, adminAuth };
+function clientAuth(req, res, next) {
+  jwtAuth(req, res, () => {
+    if (!['admin', 'worker', 'client'].includes(req.user?.role))
+      return res.status(403).json({ error: 'Acceso denegado' });
+    next();
+  });
+}
+
+module.exports = { apiKeyAuth, jwtAuth, adminAuth, clientAuth };

@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -6,6 +7,8 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../models/order.dart';
 import '../models/product.dart';
 import '../models/message.dart';
+import '../models/estado.dart';
+import '../models/cart_item.dart';
 
 class ApiService {
   static const _secureStorage = FlutterSecureStorage(
@@ -238,5 +241,136 @@ class ApiService {
   static Future<void> flagMessage(int id, {bool flagged = false, String? reason}) async {
     await http.put(Uri.parse('$_serverUrl/api/messages/$id/flag'), headers: _headers,
       body: jsonEncode({'flagged': flagged, 'flag_reason': reason})).timeout(const Duration(seconds: 10));
+  }
+
+  // ── Users: delete ────────────────────────────────────────
+  static Future<void> deleteUser(int id) async {
+    final res = await http.delete(Uri.parse('$_serverUrl/api/users/$id'), headers: _headers)
+      .timeout(const Duration(seconds: 10));
+    if (res.statusCode != 200) throw Exception(jsonDecode(res.body)['error'] ?? 'Error eliminando usuario');
+  }
+
+  // ── Product images ───────────────────────────────────────
+  static Future<String> uploadProductImage(int productId, String filePath) async {
+    final uri     = Uri.parse('$_serverUrl/api/products/$productId/images');
+    final request = http.MultipartRequest('POST', uri);
+    request.headers.addAll(_headersNoContent);
+    request.files.add(await http.MultipartFile.fromPath('image', filePath));
+    final streamed = await request.send().timeout(const Duration(seconds: 60));
+    final body = await streamed.stream.bytesToString();
+    if (streamed.statusCode != 201) throw Exception('Error subiendo imagen');
+    return jsonDecode(body)['filename'] as String;
+  }
+
+  static Future<void> deleteProductImage(int productId, String filename) async {
+    final res = await http.delete(
+      Uri.parse('$_serverUrl/api/products/$productId/images/${Uri.encodeComponent(filename)}'),
+      headers: _headers,
+    ).timeout(const Duration(seconds: 10));
+    if (res.statusCode != 200) throw Exception('Error eliminando imagen');
+  }
+
+  static String productImageUrl(String filename) =>
+    '$_serverUrl/api/products/images/${Uri.encodeComponent(filename)}';
+
+  // ── Estados ──────────────────────────────────────────────
+  static Future<List<Estado>> getEstados() async {
+    final res = await http.get(Uri.parse('$_serverUrl/api/estados'), headers: _headers)
+      .timeout(const Duration(seconds: 10));
+    if (res.statusCode == 200) {
+      final body = jsonDecode(res.body) as Map<String, dynamic>;
+      return (body['estados'] as List).map((j) => Estado.fromJson(j)).toList();
+    }
+    throw Exception('Error cargando estados');
+  }
+
+  static Future<Estado> createEstado(String filePath, {String? caption}) async {
+    final uri     = Uri.parse('$_serverUrl/api/estados');
+    final request = http.MultipartRequest('POST', uri);
+    request.headers.addAll(_headersNoContent);
+    if (caption != null) request.fields['caption'] = caption;
+    request.files.add(await http.MultipartFile.fromPath('media', filePath));
+    final streamed = await request.send().timeout(const Duration(seconds: 60));
+    final body = await streamed.stream.bytesToString();
+    if (streamed.statusCode != 201) throw Exception('Error creando estado');
+    return Estado.fromJson(jsonDecode(body)['estado']);
+  }
+
+  static Future<void> deleteEstado(int id) async {
+    final res = await http.delete(Uri.parse('$_serverUrl/api/estados/$id'), headers: _headers)
+      .timeout(const Duration(seconds: 10));
+    if (res.statusCode != 200) throw Exception('Error eliminando estado');
+  }
+
+  static String estadoMediaUrl(String filename) =>
+    '$_serverUrl/api/estados/media/${Uri.encodeComponent(filename)}';
+
+  // ── Cart ─────────────────────────────────────────────────
+  static Future<List<CartItem>> getCart() async {
+    final res = await http.get(Uri.parse('$_serverUrl/api/cart'), headers: _headers)
+      .timeout(const Duration(seconds: 10));
+    if (res.statusCode == 200) {
+      final body = jsonDecode(res.body) as Map<String, dynamic>;
+      return (body['items'] as List).map((j) => CartItem.fromJson(j)).toList();
+    }
+    throw Exception('Error cargando carrito');
+  }
+
+  static Future<void> addToCart(int productId, int quantity, {String? deliveryDate}) async {
+    final res = await http.post(
+      Uri.parse('$_serverUrl/api/cart'),
+      headers: _headers,
+      body: jsonEncode({'product_id': productId, 'quantity': quantity, 'delivery_date': deliveryDate}),
+    ).timeout(const Duration(seconds: 10));
+    if (res.statusCode != 200) throw Exception('Error agregando al carrito');
+  }
+
+  static Future<void> removeFromCart(int productId) async {
+    final res = await http.delete(Uri.parse('$_serverUrl/api/cart/$productId'), headers: _headers)
+      .timeout(const Duration(seconds: 10));
+    if (res.statusCode != 200) throw Exception('Error removiendo del carrito');
+  }
+
+  static Future<void> clearCart() async {
+    await http.delete(Uri.parse('$_serverUrl/api/cart'), headers: _headers)
+      .timeout(const Duration(seconds: 10));
+  }
+
+  static Future<Map<String, dynamic>> checkout({
+    required String paymentMethod,
+    String? nequiReference,
+    String? deliveryDate,
+  }) async {
+    final res = await http.post(
+      Uri.parse('$_serverUrl/api/cart/checkout'),
+      headers: _headers,
+      body: jsonEncode({
+        'payment_method':   paymentMethod,
+        'nequi_reference':  nequiReference,
+        'delivery_date':    deliveryDate,
+      }),
+    ).timeout(const Duration(seconds: 15));
+    if (res.statusCode == 201) return jsonDecode(res.body)['order'];
+    throw Exception(jsonDecode(res.body)['error'] ?? 'Error realizando pedido');
+  }
+
+  // ── Settings ─────────────────────────────────────────────
+  static Future<Map<String, String>> getSettings() async {
+    final res = await http.get(Uri.parse('$_serverUrl/api/settings'), headers: _headers)
+      .timeout(const Duration(seconds: 10));
+    if (res.statusCode == 200) {
+      final body = jsonDecode(res.body)['settings'] as Map<String, dynamic>;
+      return body.map((k, v) => MapEntry(k, v.toString()));
+    }
+    throw Exception('Error cargando configuración');
+  }
+
+  static Future<void> updateSetting(String key, String value) async {
+    final res = await http.put(
+      Uri.parse('$_serverUrl/api/settings'),
+      headers: _headers,
+      body: jsonEncode({'key': key, 'value': value}),
+    ).timeout(const Duration(seconds: 10));
+    if (res.statusCode != 200) throw Exception('Error actualizando configuración');
   }
 }
