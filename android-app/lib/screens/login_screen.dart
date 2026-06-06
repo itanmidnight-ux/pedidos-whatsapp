@@ -24,8 +24,8 @@ class _LoginScreenState extends State<LoginScreen> {
     setState(() { _loading = true; _error = null; });
     try {
       await context.read<AppProvider>().login(user, pin);
-    } catch (e) {
-      setState(() { _error = e.toString().replaceAll('Exception: ', ''); });
+    } catch (_) {
+      setState(() { _error = 'Error al iniciar sesión. Verifica tus credenciales.'; });
     } finally {
       if (mounted) setState(() { _loading = false; });
     }

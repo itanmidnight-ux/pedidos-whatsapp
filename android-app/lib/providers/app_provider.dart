@@ -9,6 +9,7 @@ class AppProvider extends ChangeNotifier {
   bool isLoggedIn    = ApiService.isConfigured;
   bool isOnline      = true;
   bool get isAdmin   => ApiService.isAdmin;
+  String get currentRole => ApiService.currentRole;
   List<Order>                   orders   = [];
   List<Product>                 products = [];
   List<Map<String, dynamic>>    users    = [];

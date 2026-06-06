@@ -207,7 +207,8 @@ class _ChatScreenState extends State<ChatScreen> {
         final bytes = await ApiService.downloadMedia(mediaUrl);
         if (bytes != null) {
           final dir  = await getTemporaryDirectory();
-          final file = File('${dir.path}/audio_$msgId.m4a');
+          final ext  = mediaUrl.contains('.') ? mediaUrl.split('.').last.split('?').first : 'ogg';
+          final file = File('${dir.path}/audio_$msgId.$ext');
           await file.writeAsBytes(bytes);
           localPath = file.path;
           _localAudioCache[msgId] = localPath;

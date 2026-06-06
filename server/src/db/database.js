@@ -59,6 +59,51 @@ async function initDB() {
     'ALTER TABLE messages   ADD COLUMN media_url  TEXT',
     'ALTER TABLE customers  ADD COLUMN profile_pic_url TEXT',
     'ALTER TABLE customers  ADD COLUMN archived INTEGER DEFAULT 0',
+    // Product images
+    `CREATE TABLE IF NOT EXISTS product_images (
+       id INTEGER PRIMARY KEY AUTOINCREMENT,
+       product_id INTEGER NOT NULL,
+       filename TEXT NOT NULL,
+       created_at DATETIME DEFAULT (datetime('now','localtime')),
+       FOREIGN KEY(product_id) REFERENCES products(id) ON DELETE CASCADE
+     )`,
+    // WhatsApp-style estados (stories) with 32h TTL
+    `CREATE TABLE IF NOT EXISTS estados (
+       id INTEGER PRIMARY KEY AUTOINCREMENT,
+       admin_username TEXT NOT NULL,
+       filename TEXT NOT NULL,
+       media_type TEXT NOT NULL DEFAULT 'image',
+       caption TEXT,
+       created_at DATETIME DEFAULT (datetime('now','localtime')),
+       expires_at DATETIME NOT NULL
+     )`,
+    // Client cart
+    `CREATE TABLE IF NOT EXISTS cart_items (
+       id INTEGER PRIMARY KEY AUTOINCREMENT,
+       client_username TEXT NOT NULL,
+       product_id INTEGER NOT NULL,
+       quantity INTEGER NOT NULL DEFAULT 1,
+       delivery_date TEXT,
+       created_at DATETIME DEFAULT (datetime('now','localtime'))
+     )`,
+    // App settings (key-value)
+    `CREATE TABLE IF NOT EXISTS settings (
+       key TEXT PRIMARY KEY,
+       value TEXT NOT NULL,
+       updated_at DATETIME DEFAULT (datetime('now','localtime'))
+     )`,
+    // Client orders
+    `CREATE TABLE IF NOT EXISTS client_orders (
+       id INTEGER PRIMARY KEY AUTOINCREMENT,
+       client_username TEXT NOT NULL,
+       items_json TEXT NOT NULL,
+       total REAL NOT NULL,
+       payment_method TEXT NOT NULL,
+       nequi_reference TEXT,
+       status TEXT DEFAULT 'pending',
+       delivery_date TEXT,
+       created_at DATETIME DEFAULT (datetime('now','localtime'))
+     )`,
   ];
   for (const sql of migrations) {
     try { db.exec(sql); } catch { /* already exists */ }
@@ -78,6 +123,10 @@ async function initDB() {
         .run(u.role, u.display_name, u.username);
     }
   }
+
+  // Default settings
+  db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES ('nequi_phone', '3001234567')`).run();
+  db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES ('nequi_name', 'Concentrados Monserrath')`).run();
 
   console.log('DB inicializada en', DB_PATH);
 }

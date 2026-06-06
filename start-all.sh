@@ -423,6 +423,38 @@ else
   warn "systemd no disponible — reiniciar con: bash start-all.sh"
 fi
 
+# ── 14. NLP health check ─────────────────────────────────────
+info "Verificando parser NLP..."
+NLP_OK=0
+for i in $(seq 1 10); do
+  HEALTH=$(curl -sf "http://localhost:${PORT_VAL}/health" 2>/dev/null)
+  if echo "$HEALTH" | grep -q '"status":"ok"'; then
+    NLP_OK=1; break
+  fi
+  sleep 1
+done
+if [ "$NLP_OK" = "1" ]; then
+  ok "NLP.js activo — parseador de pedidos en español listo"
+else
+  warn "NLP health check no respondió — revisar: tail -f $LOG/server.log"
+fi
+
+# ── 15. Watchdog — reinicio automático si servidor cae ────────
+(
+  while true; do
+    sleep 30
+    if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+      echo "[watchdog] Servidor caído — reiniciando..." >> "$LOG/server.log"
+      cd "$PROJ/server"
+      nohup node src/index.js >> "$LOG/server.log" 2>&1 &
+      SERVER_PID=$!
+      echo "$SERVER_PID" > "$PROJ/server.pid"
+    fi
+  done
+) &
+echo $! > "$PROJ/watchdog.pid"
+ok "Watchdog activo (PID $(cat "$PROJ/watchdog.pid"))"
+
 # ── Resumen ───────────────────────────────────────────────────
 echo ""
 echo -e "${GREEN}${BOLD}╔════════════════════════════════════════════╗${NC}"
@@ -434,6 +466,7 @@ printf "${GREEN}${BOLD}║${NC} Estado: https://%-27s${GREEN}${BOLD}║${NC}\n" 
 echo -e "${GREEN}${BOLD}╠════════════════════════════════════════════╣${NC}"
 echo -e "${GREEN}${BOLD}║${NC} Usuarios: jesus | johana | felipe | fabian  ${GREEN}${BOLD}║${NC}"
 echo -e "${GREEN}${BOLD}║${NC} PIN: 1234 para todos                       ${GREEN}${BOLD}║${NC}"
+echo -e "${GREEN}${BOLD}║${NC} NLP: @nlpjs/basic — español colombiano     ${GREEN}${BOLD}║${NC}"
 printf "${GREEN}${BOLD}║${NC} Logs: %-37s${GREEN}${BOLD}║${NC}\n" "$LOG/"
 echo -e "${GREEN}${BOLD}╚════════════════════════════════════════════╝${NC}"
 echo ""

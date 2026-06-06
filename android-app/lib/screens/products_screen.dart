@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import '../providers/app_provider.dart';
 import '../models/product.dart';
+import '../services/api_service.dart';
 
 class ProductsScreen extends StatefulWidget {
   const ProductsScreen({super.key});
@@ -131,6 +134,25 @@ class _ProductsScreenState extends State<ProductsScreen> {
             },
           ),
           const Divider(height: 1),
+          // Fotos
+          ListTile(
+            leading: Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.blue.withOpacity(0.12),
+                borderRadius: BorderRadius.circular(10)),
+              child: const Icon(Icons.photo_library_outlined, color: Colors.blue, size: 22),
+            ),
+            title: Text('Fotos (${p.images.length})',
+              style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+            subtitle: Text(p.images.isEmpty ? 'Sin fotos' : 'Ver y gestionar fotos',
+              style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
+            onTap: () async {
+              Navigator.pop(context);
+              await _showImageManager(p);
+            },
+          ),
+          const Divider(height: 1),
           // Eliminar
           ListTile(
             leading: const Icon(Icons.delete_outline, color: Colors.red),
@@ -158,6 +180,80 @@ class _ProductsScreenState extends State<ProductsScreen> {
           ),
           const SizedBox(height: 8),
         ]),
+      ),
+    );
+  }
+
+  Future<void> _showImageManager(Product p) async {
+    final picker = ImagePicker();
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setModal) {
+          final images = List<String>.from(p.images);
+          return Padding(
+            padding: EdgeInsets.only(
+              left: 16, right: 16, top: 20,
+              bottom: MediaQuery.of(ctx).viewInsets.bottom + 20),
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              Text('Fotos de ${p.name}',
+                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 12),
+              if (images.isNotEmpty)
+                SizedBox(height: 110, child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  itemCount: images.length,
+                  separatorBuilder: (_, __) => const SizedBox(width: 8),
+                  itemBuilder: (_, i) => Stack(children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(10),
+                      child: CachedNetworkImage(
+                        imageUrl: ApiService.productImageUrl(images[i]),
+                        httpHeaders: const {'ngrok-skip-browser-warning': 'true'},
+                        width: 100, height: 100, fit: BoxFit.cover,
+                        placeholder: (_, __) => Container(
+                          width: 100, height: 100, color: Colors.grey.shade100),
+                      ),
+                    ),
+                    Positioned(top: 2, right: 2,
+                      child: GestureDetector(
+                        onTap: () async {
+                          try {
+                            await ApiService.deleteProductImage(p.id!, images[i]);
+                            setModal(() => images.removeAt(i));
+                            await context.read<AppProvider>().refreshProducts();
+                          } catch (_) {}
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.all(3),
+                          decoration: const BoxDecoration(
+                            color: Colors.red, shape: BoxShape.circle),
+                          child: const Icon(Icons.close, color: Colors.white, size: 14),
+                        ),
+                      )),
+                  ]),
+                )),
+              const SizedBox(height: 12),
+              SizedBox(width: double.infinity,
+                child: OutlinedButton.icon(
+                  icon: const Icon(Icons.add_photo_alternate_rounded),
+                  label: const Text('Agregar foto'),
+                  onPressed: () async {
+                    final picked = await picker.pickImage(source: ImageSource.gallery, imageQuality: 80);
+                    if (picked == null) return;
+                    try {
+                      final filename = await ApiService.uploadProductImage(p.id!, picked.path);
+                      setModal(() => images.add(filename));
+                      await context.read<AppProvider>().refreshProducts();
+                    } catch (_) {}
+                  },
+                )),
+            ]),
+          );
+        },
       ),
     );
   }

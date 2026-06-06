@@ -22,8 +22,8 @@ router.post('/', adminAuth, async (req, res) => {
     return res.status(400).json({ error: 'username requerido (mín 2 chars)' });
   if (!pin || String(pin).length < 4)
     return res.status(400).json({ error: 'pin requerido (mín 4 dígitos)' });
-  if (!['admin', 'worker'].includes(role))
-    return res.status(400).json({ error: 'role debe ser admin o worker' });
+  if (!['admin', 'worker', 'client'].includes(role))
+    return res.status(400).json({ error: 'role debe ser admin, worker o client' });
 
   const db   = getDB();
   const name = username.trim().toLowerCase();
@@ -72,12 +72,12 @@ router.put('/:id', adminAuth, async (req, res) => {
   res.json({ user: updated });
 });
 
-// DELETE /api/users/:id — soft delete (admin only, cannot delete self)
+// DELETE /api/users/:id — hard delete (admin only, cannot delete self)
 router.delete('/:id', adminAuth, (req, res) => {
   const id = parseInt(req.params.id);
   if (req.user.id === id) return res.status(400).json({ error: 'No puedes eliminarte a ti mismo' });
   const db = getDB();
-  const r  = db.prepare('UPDATE users SET active=0 WHERE id=?').run(id);
+  const r  = db.prepare('DELETE FROM users WHERE id=?').run(id);
   if (!r.changes) return res.status(404).json({ error: 'Usuario no encontrado' });
   res.json({ ok: true });
 });

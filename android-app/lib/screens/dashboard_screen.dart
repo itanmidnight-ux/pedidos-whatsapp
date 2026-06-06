@@ -6,6 +6,8 @@ import '../widgets/company_header.dart';
 import 'products_screen.dart';
 import 'messages_screen.dart';
 import 'users_screen.dart';
+import 'admin_estados_screen.dart';
+import 'admin_settings_screen.dart';
 
 // ── Filter state ──────────────────────────────────────────────
 const _allStatuses = {'pending', 'claimed', 'en_camino'};
@@ -28,8 +30,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
     });
   }
 
-  static const _titlesWorker = ['Pedidos Activos', 'Productos', 'Mensajes'];
-  static const _titlesAdmin  = ['Pedidos Activos', 'Productos', 'Mensajes', 'Usuarios'];
+  static const _titlesWorker = ['Pedidos Activos', 'Mensajes'];
+  static const _titlesAdmin  = ['Pedidos Activos', 'Productos', 'Mensajes', 'Usuarios', 'Estados', 'Ajustes'];
 
   @override
   Widget build(BuildContext context) {
@@ -79,9 +81,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
         ],
       ),
       body: IndexedStack(index: safeTab, children: [
-        // PEDIDOS
+        // PEDIDOS (all roles)
         Column(children: [
-          // Filter chips
           SizedBox(
             height: 44,
             child: ListView(
@@ -135,18 +136,22 @@ class _DashboardScreenState extends State<DashboardScreen> {
             }(),
           )),
         ]),
-        // PRODUCTOS
-        const ProductsScreen(),
-        // MENSAJES
+        // PRODUCTOS (admin only)
+        if (provider.isAdmin) const ProductsScreen(),
+        // MENSAJES (all roles)
         const MessagesScreen(),
-        // USUARIOS (admin only — placeholder para workers para que IndexedStack no rompa)
+        // USUARIOS (admin only)
         if (provider.isAdmin) const UsersScreen(),
+        // ESTADOS (admin only)
+        if (provider.isAdmin) const AdminEstadosScreen(),
+        // AJUSTES (admin only)
+        if (provider.isAdmin) const AdminSettingsScreen(),
       ]),
       bottomNavigationBar: NavigationBar(
         selectedIndex: safeTab,
         onDestinationSelected: (i) => setState(() => _tab = i),
         backgroundColor: Colors.white,
-        indicatorColor: const Color(0xFFD4ECB8),
+        indicatorColor: const Color(0xFFC8E6C9),
         destinations: [
           NavigationDestination(
             icon: Badge(
@@ -154,14 +159,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
               label: Text('${provider.orders.length}'),
               backgroundColor: const Color(0xFFD4800A),
               child: const Icon(Icons.dashboard_rounded)),
-            selectedIcon: const Icon(Icons.dashboard_rounded,
-              color: Color(0xFF2D5016)),
+            selectedIcon: const Icon(Icons.dashboard_rounded, color: Color(0xFF1E6B2E)),
             label: 'Pedidos'),
-          const NavigationDestination(
-            icon: Icon(Icons.inventory_2_outlined),
-            selectedIcon: Icon(Icons.inventory_2_rounded,
-              color: Color(0xFF2D5016)),
-            label: 'Productos'),
+          if (provider.isAdmin)
+            const NavigationDestination(
+              icon: Icon(Icons.inventory_2_outlined),
+              selectedIcon: Icon(Icons.inventory_2_rounded, color: Color(0xFF1E6B2E)),
+              label: 'Productos'),
           NavigationDestination(
             icon: Badge(
               isLabelVisible: provider.flaggedCount > 0,
@@ -172,7 +176,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               isLabelVisible: provider.flaggedCount > 0,
               label: Text('${provider.flaggedCount}'),
               backgroundColor: Colors.red,
-              child: const Icon(Icons.chat_bubble_rounded, color: Color(0xFF2D5016))),
+              child: const Icon(Icons.chat_bubble_rounded, color: Color(0xFF1E6B2E))),
             label: 'Mensajes'),
           if (provider.isAdmin)
             NavigationDestination(
@@ -181,8 +185,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 label: Text('${provider.users.length}'),
                 backgroundColor: const Color(0xFFD4800A),
                 child: const Icon(Icons.group_outlined)),
-              selectedIcon: const Icon(Icons.group_rounded, color: Color(0xFF2D5016)),
+              selectedIcon: const Icon(Icons.group_rounded, color: Color(0xFF1E6B2E)),
               label: 'Usuarios'),
+          if (provider.isAdmin)
+            const NavigationDestination(
+              icon: Icon(Icons.auto_stories_outlined),
+              selectedIcon: Icon(Icons.auto_stories_rounded, color: Color(0xFF1E6B2E)),
+              label: 'Estados'),
+          if (provider.isAdmin)
+            const NavigationDestination(
+              icon: Icon(Icons.settings_outlined),
+              selectedIcon: Icon(Icons.settings_rounded, color: Color(0xFF1E6B2E)),
+              label: 'Ajustes'),
         ],
       ),
     );

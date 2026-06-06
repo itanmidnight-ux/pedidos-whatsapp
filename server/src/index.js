@@ -62,6 +62,7 @@ app.use(cors({
 }));
 
 app.use(express.json({ limit: '512kb' }));
+app.use(express.urlencoded({ extended: true }));
 
 // ── Rate limiting ─────────────────────────────────────────────
 app.use('/api/', rateLimit({ windowMs: 60_000, max: 120, standardHeaders: true, legacyHeaders: false }));
@@ -79,6 +80,9 @@ app.use('/api/auth',     require('./routes/auth'));
 app.use('/api/messages', require('./routes/messages'));
 app.use('/api/users',    require('./routes/users'));
 app.use('/api/bot',      require('./routes/bot'));
+app.use('/api/estados',  require('./routes/estados'));
+app.use('/api/cart',     require('./routes/cart'));
+app.use('/api/settings', require('./routes/settings'));
 
 app.get('/health',  (req, res) => res.json({ status: 'ok', time: new Date().toISOString() }));
 app.get('/preview', (req, res) => res.sendFile(path.join(__dirname, 'preview.html')));

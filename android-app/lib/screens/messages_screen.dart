@@ -99,17 +99,22 @@ class _MessagesScreenState extends State<MessagesScreen> with SingleTickerProvid
 
   Widget _buildAvatar(Conversation c) {
     final flagColor = _flagColor(c.flagReason);
+    final initials = Text(
+      c.displayName.isNotEmpty ? c.displayName[0].toUpperCase() : '?',
+      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18),
+    );
     return Stack(children: [
       CircleAvatar(
         radius: 24,
         backgroundColor: c.hasFlaggedMessages ? flagColor : const Color(0xFF2D5016),
-        backgroundImage: c.profilePicUrl != null && c.profilePicUrl!.isNotEmpty
-            ? CachedNetworkImageProvider(c.profilePicUrl!)
-            : null,
-        child: c.profilePicUrl == null || c.profilePicUrl!.isEmpty
-            ? Text(c.displayName.isNotEmpty ? c.displayName[0].toUpperCase() : '?',
-                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18))
-            : null,
+        child: c.profilePicUrl != null && c.profilePicUrl!.isNotEmpty
+            ? ClipOval(child: CachedNetworkImage(
+                imageUrl: c.profilePicUrl!,
+                width: 48, height: 48, fit: BoxFit.cover,
+                errorWidget: (_, __, ___) => initials,
+                placeholder: (_, __) => initials,
+              ))
+            : initials,
       ),
       if (c.hasFlaggedMessages)
         Positioned(right: 0, top: 0,
@@ -214,7 +219,52 @@ class _MessagesScreenState extends State<MessagesScreen> with SingleTickerProvid
             )));
           _load();
         },
+        onLongPress: () => _showConvOptions(c, isArchived: isArchived),
       ),
+    );
+  }
+
+  void _showConvOptions(Conversation c, {required bool isArchived}) {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+      builder: (_) => SafeArea(child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            margin: const EdgeInsets.symmetric(vertical: 8),
+            width: 36, height: 4,
+            decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+            child: Row(children: [
+              _buildAvatar(c),
+              const SizedBox(width: 12),
+              Text(c.displayName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+            ]),
+          ),
+          const Divider(),
+          ListTile(
+            leading: Icon(isArchived ? Icons.unarchive : Icons.archive, color: Colors.amber.shade700),
+            title: Text(isArchived ? 'Restaurar conversación' : 'Archivar conversación'),
+            onTap: () {
+              Navigator.pop(context);
+              _archive(c, archive: !isArchived);
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.delete_outline, color: Colors.red),
+            title: const Text('Borrar conversación', style: TextStyle(color: Colors.red)),
+            onTap: () {
+              Navigator.pop(context);
+              _delete(c);
+            },
+          ),
+          const SizedBox(height: 8),
+        ],
+      )),
     );
   }
 
