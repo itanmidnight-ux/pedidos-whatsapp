@@ -61,8 +61,8 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization', 'X-API-Key', 'ngrok-skip-browser-warning'],
 }));
 
-app.use(express.json({ limit: '512kb' }));
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '2mb' }));
+app.use(express.urlencoded({ extended: true, limit: '2mb' }));
 
 // ── Rate limiting ─────────────────────────────────────────────
 app.use('/api/', rateLimit({ windowMs: 60_000, max: 120, standardHeaders: true, legacyHeaders: false }));
@@ -89,7 +89,9 @@ app.get('/preview', (req, res) => res.sendFile(path.join(__dirname, 'preview.htm
 
 // ── Error handler global ──────────────────────────────────────
 app.use((err, req, res, next) => {
-  const status = err.status || 500;
+  // multer LIMIT_FILE_SIZE / LIMIT_UNEXPECTED_FILE → 400 not 500
+  const isMulterLimit = err.code && err.code.startsWith('LIMIT_');
+  const status = err.status || (isMulterLimit ? 400 : 500);
   if (status >= 500) console.error('[ERROR]', err.message, err.stack?.split('\n')[1]);
   res.status(status).json({
     error: status >= 500 ? 'Error interno del servidor' : (err.message || 'Error'),

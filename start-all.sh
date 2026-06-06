@@ -117,7 +117,7 @@ else
   fi
 fi
 
-# ── 2. Descarga repo si server/ no existe ─────────────────────
+# ── 2. Descarga o actualiza repositorio ──────────────────────
 if [ ! -d "$PROJ/server" ]; then
   warn "Directorio server/ no encontrado — descargando repositorio..."
   TMP=$(mktemp -d)
@@ -129,7 +129,21 @@ if [ ! -d "$PROJ/server" ]; then
   cp -r "$TMP/pedidos-whatsapp-main/server" "$PROJ/"
   rm -rf "$TMP"
   ok "Repositorio descargado"
+else
+  # Pull latest code so all bug fixes are applied automatically
+  if [ -d "$PROJ/.git" ] && command -v git &>/dev/null; then
+    git -C "$PROJ" pull --ff-only --quiet origin main 2>/dev/null \
+      && ok "Código actualizado desde GitHub" \
+      || warn "git pull omitido (sin conexión o cambios locales) — usando código actual"
+  fi
 fi
+
+# ── 2b. Directorios de media (se crean antes de arrancar servidor) ──
+mkdir -p "$HOME/pedidos-bot/media"
+mkdir -p "$HOME/pedidos-bot/product-images"
+mkdir -p "$HOME/pedidos-bot/estados"
+mkdir -p "$HOME/pedidos-bot/auth"
+ok "Directorios de media y auth listos"
 
 # ── 3. Node.js via nvm ────────────────────────────────────────
 info "Verificando Node.js..."
