@@ -42,7 +42,7 @@ router.post('/', adminAuth, upload.single('media'), (req, res) => {
   const db = getDB();
   const result = db.prepare(`
     INSERT INTO estados (admin_username, filename, media_type, caption, expires_at)
-    VALUES (?, ?, ?, ?, datetime('now','localtime','+32 hours'))
+    VALUES (?, ?, ?, ?, datetime('now','localtime','+36 hours'))
   `).run(req.user.username, req.file.filename, media_type, caption);
   const estado = db.prepare('SELECT * FROM estados WHERE id=?').get(result.lastInsertRowid);
   res.status(201).json({ estado });

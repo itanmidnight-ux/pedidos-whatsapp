@@ -3,6 +3,7 @@ import 'package:flutter_slidable/flutter_slidable.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../models/order.dart';
+import '../screens/chat_screen.dart';
 import 'order_detail_modal.dart';
 
 class OrderCard extends StatelessWidget {
@@ -50,23 +51,6 @@ class OrderCard extends StatelessWidget {
     return digits;
   }
 
-  void _sendWhatsApp(BuildContext ctx) async {
-    final phone = order.customerPhone;
-    if (phone == null) {
-      ScaffoldMessenger.of(ctx).showSnackBar(
-        const SnackBar(content: Text('Cliente sin número de teléfono')));
-      return;
-    }
-    final normalized = _normalizePhone(phone);
-    final uri = Uri.parse('https://wa.me/$normalized');
-    if (await canLaunchUrl(uri)) {
-      launchUrl(uri, mode: LaunchMode.externalApplication);
-    } else {
-      if (ctx.mounted) ScaffoldMessenger.of(ctx).showSnackBar(
-        const SnackBar(content: Text('No se pudo abrir WhatsApp')));
-    }
-  }
-
   void _showDetail(BuildContext ctx) => showModalBottomSheet(
     context: ctx, isScrollControlled: true,
     shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
@@ -101,95 +85,126 @@ class OrderCard extends StatelessWidget {
     ));
   }
 
+  void _openInAppChat(BuildContext ctx) {
+    final phone = order.customerPhone;
+    if (phone == null) return;
+    Navigator.of(ctx, rootNavigator: true).push(MaterialPageRoute(
+      builder: (_) => ChatScreen(
+        phone: phone,
+        name: order.customerName ?? phone,
+      ),
+    ));
+  }
+
   void _showMenu(BuildContext ctx) {
     final isClaimed = order.isClaimed;
     showModalBottomSheet(
       context: ctx,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (_) => SafeArea(child: Column(mainAxisSize: MainAxisSize.min, children: [
-        Container(
-          width: 40, height: 4, margin: const EdgeInsets.symmetric(vertical: 12),
-          decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)),
-        ),
-        // Customer name header
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 20),
-          child: Text(
-            order.customerName ?? order.customerPhone ?? 'Cliente',
-            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (_) => SafeArea(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(ctx).size.height * 0.82,
+          ),
+          child: SingleChildScrollView(
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Container(
+            width: 40, height: 4, margin: const EdgeInsets.symmetric(vertical: 12),
+            decoration: BoxDecoration(
+              color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)),
+          ),
+          // Customer name header
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Text(
+              order.customerName ?? order.customerPhone ?? 'Cliente',
+              maxLines: 1, overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+            ),
+          ),
+          const SizedBox(height: 4),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Text(order.productName,
+              maxLines: 1, overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: Colors.grey.shade600, fontSize: 13)),
+          ),
+          const Divider(height: 20),
+          // Tomar pedido (claim + en_camino in one step)
+          if (!isClaimed && onTake != null)
+            ListTile(
+              leading: const CircleAvatar(
+                backgroundColor: Color(0xFF2D5016),
+                child: Icon(Icons.directions_bike, color: Colors.white, size: 18)),
+              title: const Text('Tomar pedido',
+                style: TextStyle(fontWeight: FontWeight.bold)),
+              subtitle: const Text('Te asigna este pedido y lo pone en camino'),
+              onTap: () { Navigator.pop(ctx); onTake?.call(); }),
+          ListTile(
+            leading: const CircleAvatar(
+              backgroundColor: Color(0xFF1A6B2E),
+              child: Icon(Icons.check_circle, color: Colors.white, size: 18)),
+            title: const Text('Marcar entregado'),
+            onTap: () { Navigator.pop(ctx); onDeliver(); }),
+          if (order.customerPhone != null)
+            ListTile(
+              leading: const CircleAvatar(
+                backgroundColor: Color(0xFF25D366),
+                child: Icon(Icons.forum_rounded, color: Colors.white, size: 18)),
+              title: const Text('Abrir chat del cliente'),
+              subtitle: Text(order.customerName ?? order.customerPhone!,
+                maxLines: 1, overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 12)),
+              onTap: () { Navigator.pop(ctx); _openInAppChat(ctx); }),
+          if (order.customerPhone != null)
+            ListTile(
+              leading: const CircleAvatar(
+                backgroundColor: Colors.blue,
+                child: Icon(Icons.phone, color: Colors.white, size: 18)),
+              title: Text('Llamar a ${order.customerName ?? order.customerPhone}',
+                maxLines: 1, overflow: TextOverflow.ellipsis),
+              onTap: () { Navigator.pop(ctx); _callClient(); }),
+          if (isClaimed && onUnclaim != null)
+            ListTile(
+              leading: const CircleAvatar(
+                backgroundColor: Colors.orange,
+                child: Icon(Icons.person_remove, color: Colors.white, size: 18)),
+              title: const Text('Liberar pedido'),
+              onTap: () { Navigator.pop(ctx); onUnclaim?.call(); }),
+          if (isClaimed && onEnCamino != null && order.status != 'en_camino')
+            ListTile(
+              leading: const CircleAvatar(
+                backgroundColor: Color(0xFF2D5016),
+                child: Icon(Icons.directions_bike, color: Colors.white, size: 18)),
+              title: const Text('Marcar en camino'),
+              onTap: () { Navigator.pop(ctx); onEnCamino?.call(); }),
+          ListTile(
+            leading: const CircleAvatar(
+              backgroundColor: Colors.grey,
+              child: Icon(Icons.comment, color: Colors.white, size: 18)),
+            title: const Text('Agregar comentario'),
+            onTap: () { Navigator.pop(ctx); _showCommentDialog(ctx); }),
+          ListTile(
+            leading: const CircleAvatar(
+              backgroundColor: Colors.blueGrey,
+              child: Icon(Icons.info_outline, color: Colors.white, size: 18)),
+            title: const Text('Ver detalle'),
+            onTap: () { Navigator.pop(ctx); _showDetail(ctx); }),
+          if (onCancel != null)
+            ListTile(
+              leading: const CircleAvatar(
+                backgroundColor: Colors.red,
+                child: Icon(Icons.cancel, color: Colors.white, size: 18)),
+              title: const Text('Cancelar pedido',
+                style: TextStyle(color: Colors.red)),
+              onTap: () { Navigator.pop(ctx); _showCancelDialog(ctx); }),
+          const SizedBox(height: 12),
+        ]),
           ),
         ),
-        const SizedBox(height: 4),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 20),
-          child: Text(order.productName, style: TextStyle(color: Colors.grey.shade600, fontSize: 13)),
-        ),
-        const Divider(height: 20),
-        // Tomar pedido (claim + en_camino in one step)
-        if (!isClaimed && onTake != null)
-          ListTile(
-            leading: const CircleAvatar(
-              backgroundColor: Color(0xFF2D5016),
-              child: Icon(Icons.directions_bike, color: Colors.white, size: 18)),
-            title: const Text('Tomar pedido', style: TextStyle(fontWeight: FontWeight.bold)),
-            subtitle: const Text('Te asigna este pedido y lo pone en camino'),
-            onTap: () { Navigator.pop(ctx); onTake?.call(); }),
-        ListTile(
-          leading: const CircleAvatar(
-            backgroundColor: Color(0xFF1A6B2E),
-            child: Icon(Icons.check_circle, color: Colors.white, size: 18)),
-          title: const Text('Marcar entregado'),
-          onTap: () { Navigator.pop(ctx); onDeliver(); }),
-        if (order.customerPhone != null)
-          ListTile(
-            leading: const CircleAvatar(
-              backgroundColor: Color(0xFF25D366),
-              child: Icon(Icons.chat, color: Colors.white, size: 18)),
-            title: const Text('Enviar mensaje WhatsApp'),
-            subtitle: Text(order.customerPhone!),
-            onTap: () { Navigator.pop(ctx); _sendWhatsApp(ctx); }),
-        if (order.customerPhone != null)
-          ListTile(
-            leading: const CircleAvatar(
-              backgroundColor: Colors.blue,
-              child: Icon(Icons.phone, color: Colors.white, size: 18)),
-            title: Text('Llamar a ${order.customerName ?? order.customerPhone}'),
-            onTap: () { Navigator.pop(ctx); _callClient(); }),
-        if (isClaimed && onUnclaim != null)
-          ListTile(
-            leading: const CircleAvatar(
-              backgroundColor: Colors.orange,
-              child: Icon(Icons.person_remove, color: Colors.white, size: 18)),
-            title: const Text('Liberar pedido'),
-            onTap: () { Navigator.pop(ctx); onUnclaim?.call(); }),
-        if (isClaimed && onEnCamino != null && order.status != 'en_camino')
-          ListTile(
-            leading: const CircleAvatar(
-              backgroundColor: Color(0xFF2D5016),
-              child: Icon(Icons.directions_bike, color: Colors.white, size: 18)),
-            title: const Text('Marcar en camino'),
-            onTap: () { Navigator.pop(ctx); onEnCamino?.call(); }),
-        ListTile(
-          leading: const CircleAvatar(
-            backgroundColor: Colors.grey,
-            child: Icon(Icons.comment, color: Colors.white, size: 18)),
-          title: const Text('Agregar comentario'),
-          onTap: () { Navigator.pop(ctx); _showCommentDialog(ctx); }),
-        ListTile(
-          leading: const CircleAvatar(
-            backgroundColor: Colors.blueGrey,
-            child: Icon(Icons.info_outline, color: Colors.white, size: 18)),
-          title: const Text('Ver detalle'),
-          onTap: () { Navigator.pop(ctx); _showDetail(ctx); }),
-        if (onCancel != null)
-          ListTile(
-            leading: const CircleAvatar(
-              backgroundColor: Colors.red,
-              child: Icon(Icons.cancel, color: Colors.white, size: 18)),
-            title: const Text('Cancelar pedido', style: TextStyle(color: Colors.red)),
-            onTap: () { Navigator.pop(ctx); _showCancelDialog(ctx); }),
-        const SizedBox(height: 8),
-      ])),
+      ),
     );
   }
 
@@ -298,11 +313,11 @@ class OrderCard extends StatelessWidget {
                   if (order.customerPhone != null) ...[
                     const SizedBox(width: 8),
                     InkWell(
-                      onTap: () => _sendWhatsApp(ctx),
+                      onTap: () => _openInAppChat(ctx),
                       borderRadius: BorderRadius.circular(12),
                       child: const Padding(
                         padding: EdgeInsets.all(2),
-                        child: Icon(Icons.chat, size: 16, color: Color(0xFF25D366))),
+                        child: Icon(Icons.forum_rounded, size: 16, color: Color(0xFF25D366))),
                     ),
                     const SizedBox(width: 4),
                     InkWell(

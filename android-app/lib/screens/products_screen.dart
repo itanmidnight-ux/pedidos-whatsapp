@@ -131,13 +131,25 @@ class _ProductsScreenState extends State<ProductsScreen> {
 
     showModalBottomSheet(
       context: context,
+      isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (_) => SafeArea(
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(context).size.height * 0.82,
+          ),
+          child: SingleChildScrollView(
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+          // Handle bar
+          Center(child: Container(
+            width: 40, height: 4, margin: const EdgeInsets.symmetric(vertical: 10),
+            decoration: BoxDecoration(
+              color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)),
+          )),
           // Cabecera
           Container(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
             child: Row(children: [
               Expanded(child: Text(p.name,
                 style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16))),
@@ -225,8 +237,10 @@ class _ProductsScreenState extends State<ProductsScreen> {
               if (confirm == true) await provider.deleteProduct(p.id!);
             },
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 12),
         ]),
+          ),
+        ),
       ),
     );
   }

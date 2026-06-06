@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:typed_data';
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../models/order.dart';
@@ -72,6 +73,19 @@ class ApiService {
     'Authorization':              'Bearer $_token',
     'ngrok-skip-browser-warning': 'true',
   };
+
+  static MediaType _mimeOf(String path) {
+    final ext = path.split('.').last.toLowerCase();
+    const t = {
+      'jpg': 'image/jpeg', 'jpeg': 'image/jpeg',
+      'png': 'image/png',  'webp': 'image/webp',
+      'gif': 'image/gif',  'mp4': 'video/mp4',
+      'mov': 'video/quicktime', 'webm': 'video/webm',
+      'ogg': 'audio/ogg',  'mp3': 'audio/mpeg',
+      'm4a': 'audio/mp4',  'aac': 'audio/aac',
+    };
+    return MediaType.parse(t[ext] ?? 'image/jpeg');
+  }
 
   // ── Auth ────────────────────────────────────────────────
   static Future<Map<String, String>> login(String username, String pin) async {
@@ -235,7 +249,8 @@ class ApiService {
     request.headers.addAll(_headersNoContent);
     request.fields['phone']      = phone;
     request.fields['media_type'] = mediaType;
-    request.files.add(await http.MultipartFile.fromPath('file', filePath));
+    request.files.add(await http.MultipartFile.fromPath('file', filePath,
+      contentType: _mimeOf(filePath)));
     final streamed = await request.send().timeout(const Duration(seconds: 60));
     if (streamed.statusCode != 200) throw Exception('Error enviando media');
   }
@@ -268,11 +283,19 @@ class ApiService {
     final uri     = Uri.parse('$_serverUrl/api/products/$productId/images');
     final request = http.MultipartRequest('POST', uri);
     request.headers.addAll(_headersNoContent);
-    request.files.add(await http.MultipartFile.fromPath('image', filePath));
+    request.files.add(await http.MultipartFile.fromPath('image', filePath,
+      contentType: _mimeOf(filePath)));
     final streamed = await request.send().timeout(const Duration(seconds: 60));
     final body = await streamed.stream.bytesToString();
-    if (streamed.statusCode != 201) throw Exception('Error subiendo imagen');
+    if (streamed.statusCode != 201) {
+      final err = _tryParseError(body);
+      throw Exception(err ?? 'Error subiendo imagen (${streamed.statusCode})');
+    }
     return jsonDecode(body)['filename'] as String;
+  }
+
+  static String? _tryParseError(String body) {
+    try { return (jsonDecode(body) as Map)['error'] as String?; } catch (_) { return null; }
   }
 
   static Future<void> deleteProductImage(int productId, String filename) async {
@@ -297,15 +320,37 @@ class ApiService {
     throw Exception('Error cargando estados');
   }
 
-  static Future<Estado> createEstado(String filePath, {String? caption}) async {
+  static Future<Estado> createEstado(
+    String? filePath, {
+    String? caption,
+    Uint8List? bytes,
+    String? mimeType,
+  }) async {
     final uri     = Uri.parse('$_serverUrl/api/estados');
     final request = http.MultipartRequest('POST', uri);
     request.headers.addAll(_headersNoContent);
     if (caption != null) request.fields['caption'] = caption;
-    request.files.add(await http.MultipartFile.fromPath('media', filePath));
+
+    if (bytes != null) {
+      final mt = MediaType.parse(mimeType ?? 'image/jpeg');
+      final ext = mt.subtype == 'jpeg' ? 'jpg'
+                : mt.subtype == 'quicktime' ? 'mov'
+                : mt.subtype;
+      request.files.add(http.MultipartFile.fromBytes('media', bytes,
+        filename: 'media.$ext', contentType: mt));
+    } else if (filePath != null) {
+      request.files.add(await http.MultipartFile.fromPath('media', filePath,
+        contentType: _mimeOf(filePath)));
+    } else {
+      throw Exception('Se requiere filePath o bytes');
+    }
+
     final streamed = await request.send().timeout(const Duration(seconds: 60));
     final body = await streamed.stream.bytesToString();
-    if (streamed.statusCode != 201) throw Exception('Error creando estado');
+    if (streamed.statusCode != 201) {
+      final err = _tryParseError(body);
+      throw Exception(err ?? 'Error creando estado (${streamed.statusCode})');
+    }
     return Estado.fromJson(jsonDecode(body)['estado']);
   }
 
