@@ -44,6 +44,16 @@ async function initDB() {
     'CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items(order_id)',
     // Ensure jesus is admin
     "UPDATE users SET role='admin' WHERE username='jesus'",
+    // NLP.js migration: message type column + promotional campaigns
+    "ALTER TABLE messages ADD COLUMN type TEXT DEFAULT 'direct'",
+    `CREATE TABLE IF NOT EXISTS promotional_campaigns (
+       id INTEGER PRIMARY KEY AUTOINCREMENT,
+       message TEXT NOT NULL,
+       target_type TEXT DEFAULT 'all',
+       sent_count INTEGER DEFAULT 0,
+       created_by INTEGER REFERENCES users(id),
+       created_at TEXT DEFAULT (datetime('now','localtime'))
+     )`,
   ];
   for (const sql of migrations) {
     try { db.exec(sql); } catch { /* already exists */ }

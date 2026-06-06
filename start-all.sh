@@ -39,7 +39,6 @@ API_KEY=80721f27d4b9e6b1250ccf94f5356f1d9368993ffd0e51d1d9470754e85b9171
 JWT_SECRET=a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2
 NGROK_AUTHTOKEN=34G7biMjp4tdGcupxvySfJvYqrQ_6BEU8VntbCjSudDRWntdB
 NGROK_DOMAIN=francoise-subhumid-maire.ngrok-free.dev
-OLLAMA_MODEL=llama3.2:1b
 WORKER_PIN=1234
 BOT_ENABLED=true
 ENVEOF
@@ -128,7 +127,7 @@ ok "Node.js: $(node --version)"
 
 # ── 4. Dependencias npm ───────────────────────────────────────
 info "Verificando dependencias npm..."
-CRITICAL_DEPS="express better-sqlite3 @whiskeysockets/baileys dotenv jsonwebtoken axios pdfkit node-cron bcrypt helmet cors"
+CRITICAL_DEPS="express better-sqlite3 @whiskeysockets/baileys dotenv jsonwebtoken axios pdfkit node-cron bcrypt helmet cors @nlpjs/basic"
 NEEDS_INSTALL=0
 for dep in $CRITICAL_DEPS; do
   [ ! -d "$PROJ/server/node_modules/$dep" ] && { NEEDS_INSTALL=1; break; }
@@ -215,34 +214,8 @@ ngrok config add-authtoken "$NGROK_AUTHTOKEN" &>/dev/null \
   || err "ngrok authtoken inválido — verifica NGROK_AUTHTOKEN en .env"
 ok "ngrok: $(ngrok version 2>/dev/null | head -1)"
 
-# ── 8. Ollama (LLM, opcional) ─────────────────────────────────
-info "Verificando Ollama..."
-if command -v ollama &>/dev/null; then
-  pgrep -x ollama &>/dev/null || ollama serve >> "$LOG/ollama.log" 2>&1 &
-  sleep 2
-  MODEL="${OLLAMA_MODEL:-llama3.2:1b}"
-  ollama list 2>/dev/null | grep -q "$MODEL" || {
-    warn "Descargando modelo $MODEL..."
-    ollama pull "$MODEL" >> "$LOG/ollama.log" 2>&1 \
-      && ok "Modelo $MODEL listo" \
-      || warn "Pull falló — parser usará modo reglas"
-  }
-  ok "Ollama activo ($MODEL)"
-else
-  RAM_GB=$(free -g 2>/dev/null | awk '/^Mem:/{print $2}' || echo 0)
-  if [ "$RAM_GB" -ge 2 ]; then
-    warn "Instalando Ollama (RAM: ${RAM_GB}GB)..."
-    curl -fsSL https://ollama.com/install.sh | sh >> "$LOG/ollama.log" 2>&1 && {
-      ollama serve >> "$LOG/ollama.log" 2>&1 &
-      sleep 8
-      ollama pull "${OLLAMA_MODEL:-llama3.2:1b}" >> "$LOG/ollama.log" 2>&1 \
-        && ok "Ollama instalado" \
-        || warn "Modelo pendiente: ollama pull ${OLLAMA_MODEL:-llama3.2:1b}"
-    } || warn "Ollama no instalado — modo reglas activo"
-  else
-    warn "Ollama no instalado — RAM insuficiente, modo reglas activo"
-  fi
-fi
+# ── 8. Parser NLP (NLP.js — entrenado automáticamente al iniciar servidor) ──
+ok "Parser NLP.js activo — entrenamiento automático con productos de DB"
 
 # ── 9. Limpiar procesos previos ───────────────────────────────
 info "Limpiando procesos previos..."
