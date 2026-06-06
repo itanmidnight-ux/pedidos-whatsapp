@@ -16,16 +16,19 @@ class _MessagesScreenState extends State<MessagesScreen> with SingleTickerProvid
   List<Conversation> _chats    = [];
   List<Conversation> _archived = [];
   bool _loading = true;
+  final _searchCtrl = TextEditingController();
+  String _query = '';
 
   @override
   void initState() {
     super.initState();
     _tabs = TabController(length: 2, vsync: this);
     _load();
+    _searchCtrl.addListener(() => setState(() => _query = _searchCtrl.text.toLowerCase()));
   }
 
   @override
-  void dispose() { _tabs.dispose(); super.dispose(); }
+  void dispose() { _tabs.dispose(); _searchCtrl.dispose(); super.dispose(); }
 
   Future<void> _load() async {
     setState(() => _loading = true);
@@ -268,6 +271,41 @@ class _MessagesScreenState extends State<MessagesScreen> with SingleTickerProvid
     );
   }
 
+  List<Conversation> _filterConvs(List<Conversation> list) {
+    if (_query.isEmpty) return list;
+    return list.where((c) =>
+      c.displayName.toLowerCase().contains(_query) ||
+      c.phone.toLowerCase().contains(_query)
+    ).toList();
+  }
+
+  Widget _searchBar() => Container(
+    padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+    color: Colors.white,
+    child: TextField(
+      controller: _searchCtrl,
+      textInputAction: TextInputAction.search,
+      decoration: InputDecoration(
+        hintText: 'Buscar chats...',
+        hintStyle: TextStyle(color: Colors.grey.shade400, fontSize: 14),
+        prefixIcon: const Icon(Icons.search_rounded, color: Color(0xFF2D5016), size: 20),
+        suffixIcon: _query.isNotEmpty
+            ? IconButton(
+                icon: Icon(Icons.close_rounded, color: Colors.grey.shade400, size: 18),
+                onPressed: () { _searchCtrl.clear(); setState(() => _query = ''); })
+            : null,
+        filled: true,
+        fillColor: const Color(0xFFF5F5F5),
+        contentPadding: const EdgeInsets.symmetric(vertical: 10),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: Color(0xFF2D5016), width: 1.5)),
+      ),
+    ),
+  );
+
   Widget _buildList(List<Conversation> convs, {bool archived = false}) {
     final alertCount = convs.where((c) => c.hasFlaggedMessages).length;
     return Column(children: [
@@ -286,9 +324,11 @@ class _MessagesScreenState extends State<MessagesScreen> with SingleTickerProvid
         ? const Center(child: CircularProgressIndicator(color: Color(0xFF2D5016)))
         : convs.isEmpty
           ? Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-              Text(archived ? '📦' : '💬', style: const TextStyle(fontSize: 56)),
+              Text(_query.isNotEmpty ? '🔍' : archived ? '📦' : '💬',
+                style: const TextStyle(fontSize: 56)),
               const SizedBox(height: 12),
-              Text(archived ? 'Sin conversaciones archivadas' : 'Sin conversaciones aún',
+              Text(_query.isNotEmpty ? 'Sin resultados'
+                  : archived ? 'Sin conversaciones archivadas' : 'Sin conversaciones aún',
                 style: const TextStyle(color: Colors.grey, fontSize: 15)),
             ]))
           : RefreshIndicator(
@@ -306,27 +346,32 @@ class _MessagesScreenState extends State<MessagesScreen> with SingleTickerProvid
 
   @override
   Widget build(BuildContext context) {
+    final filteredChats    = _filterConvs(_chats);
+    final filteredArchived = _filterConvs(_archived);
     return Scaffold(
       backgroundColor: const Color(0xFFF8F4EE),
       body: Column(children: [
         Container(
           color: Colors.white,
-          child: TabBar(
-            controller: _tabs,
-            labelColor: const Color(0xFF2D5016),
-            unselectedLabelColor: Colors.grey,
-            indicatorColor: const Color(0xFF2D5016),
-            tabs: [
-              Tab(text: _chats.isNotEmpty ? 'Chats (${_chats.length})' : 'Chats'),
-              Tab(text: _archived.isNotEmpty ? 'Archivadas (${_archived.length})' : 'Archivadas'),
-            ],
-          ),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            TabBar(
+              controller: _tabs,
+              labelColor: const Color(0xFF2D5016),
+              unselectedLabelColor: Colors.grey,
+              indicatorColor: const Color(0xFF2D5016),
+              tabs: [
+                Tab(text: filteredChats.isNotEmpty ? 'Chats (${filteredChats.length})' : 'Chats'),
+                Tab(text: filteredArchived.isNotEmpty ? 'Archivadas (${filteredArchived.length})' : 'Archivadas'),
+              ],
+            ),
+            _searchBar(),
+          ]),
         ),
         Expanded(child: TabBarView(
           controller: _tabs,
           children: [
-            _buildList(_chats),
-            _buildList(_archived, archived: true),
+            _buildList(filteredChats),
+            _buildList(filteredArchived, archived: true),
           ],
         )),
       ]),
