@@ -144,7 +144,7 @@ ok "Node.js: $(node --version)"
 
 # ── 4. Dependencias npm ───────────────────────────────────────
 info "Verificando dependencias npm..."
-CRITICAL_DEPS="express better-sqlite3 @whiskeysockets/baileys dotenv jsonwebtoken axios pdfkit node-cron bcrypt helmet cors @nlpjs/basic"
+CRITICAL_DEPS="express better-sqlite3 @whiskeysockets/baileys dotenv jsonwebtoken axios pdfkit node-cron bcrypt helmet cors @nlpjs/basic multer express-rate-limit"
 NEEDS_INSTALL=0
 for dep in $CRITICAL_DEPS; do
   [ ! -d "$PROJ/server/node_modules/$dep" ] && { NEEDS_INSTALL=1; break; }
@@ -464,9 +464,9 @@ printf "${GREEN}${BOLD}║${NC} App:    https://%-27s${GREEN}${BOLD}║${NC}\n" 
 printf "${GREEN}${BOLD}║${NC} API:    https://%-27s${GREEN}${BOLD}║${NC}\n" "$NGROK_DOMAIN/api/"
 printf "${GREEN}${BOLD}║${NC} Estado: https://%-27s${GREEN}${BOLD}║${NC}\n" "$NGROK_DOMAIN/health"
 echo -e "${GREEN}${BOLD}╠════════════════════════════════════════════╣${NC}"
-echo -e "${GREEN}${BOLD}║${NC} Usuarios: jesus | johana | felipe | fabian  ${GREEN}${BOLD}║${NC}"
-echo -e "${GREEN}${BOLD}║${NC} PIN: 1234 para todos                       ${GREEN}${BOLD}║${NC}"
-echo -e "${GREEN}${BOLD}║${NC} NLP: @nlpjs/basic — español colombiano     ${GREEN}${BOLD}║${NC}"
+echo -e "${GREEN}${BOLD}║${NC} Roles: admin | worker | client             ${GREEN}${BOLD}║${NC}"
+echo -e "${GREEN}${BOLD}║${NC} PIN admin (jesus/johana): 1234             ${GREEN}${BOLD}║${NC}"
+echo -e "${GREEN}${BOLD}║${NC} Rutas: /api/estados /api/cart /api/settings${GREEN}${BOLD}║${NC}"
 printf "${GREEN}${BOLD}║${NC} Logs: %-37s${GREEN}${BOLD}║${NC}\n" "$LOG/"
 echo -e "${GREEN}${BOLD}╚════════════════════════════════════════════╝${NC}"
 echo ""
