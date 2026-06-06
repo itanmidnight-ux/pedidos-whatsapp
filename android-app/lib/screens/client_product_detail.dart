@@ -73,7 +73,7 @@ class _ClientProductDetailState extends State<ClientProductDetail> {
           onPressed: () => Navigator.pop(context)),
       ),
       body: Column(children: [
-        Expanded(child: SingleChildScrollView(children: [
+        Expanded(child: SingleChildScrollView(child: Column(children: [
           // Image carousel
           if (p.images.isNotEmpty)
             SizedBox(
@@ -169,7 +169,7 @@ class _ClientProductDetailState extends State<ClientProductDetail> {
               ),
             ]),
           ),
-        ])),
+        ]))),
 
         // Add to cart button
         SafeArea(
