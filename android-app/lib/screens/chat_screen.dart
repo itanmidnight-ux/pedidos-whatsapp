@@ -370,19 +370,22 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget _buildImageContent(Message msg) {
     final msgId = msg.id ?? 0;
     final cached = _imageCache[msgId];
+    final screenW = MediaQuery.of(context).size.width;
+    final imgW = (screenW * 0.65).clamp(160.0, 260.0);
+    final imgH = imgW * 0.75;
     return GestureDetector(
       onTap: () => _viewImage(msg),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(10),
         child: cached != null
-          ? Image.memory(cached, width: 200, height: 150, fit: BoxFit.cover)
+          ? Image.memory(cached, width: imgW, height: imgH, fit: BoxFit.cover)
           : FutureBuilder<Uint8List?>(
               future: _loadImage(msg),
               builder: (ctx, snap) {
                 if (snap.hasData && snap.data != null)
-                  return Image.memory(snap.data!, width: 200, height: 150, fit: BoxFit.cover);
+                  return Image.memory(snap.data!, width: imgW, height: imgH, fit: BoxFit.cover);
                 return Container(
-                  width: 200, height: 150,
+                  width: imgW, height: imgH,
                   color: Colors.grey.shade200,
                   child: const Center(child: CircularProgressIndicator(color: Color(0xFF2D5016))),
                 );

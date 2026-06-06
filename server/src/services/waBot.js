@@ -64,12 +64,20 @@ async function getProfilePic(jid) {
   catch { return null; }
 }
 
+function normalizePhone(phone) {
+  const digits = String(phone).replace(/\D/g, '');
+  // Colombian mobile: 10 digits starting with 3 → add country code 57
+  if (digits.length === 10 && digits.startsWith('3')) return '57' + digits;
+  return digits;
+}
+
 async function pollOutbound() {
+  if (!isReady || !sock) return;
   try {
     const { data } = await http.get('/api/messages/outbound/pending');
     for (const msg of (data.messages || [])) {
       try {
-        const jid = `${msg.phone.replace(/\D/g, '')}@s.whatsapp.net`;
+        const jid = `${normalizePhone(msg.phone)}@s.whatsapp.net`;
 
         if (msg.media_url) {
           const filePath = path.join(MEDIA_DIR, msg.media_url);
@@ -78,11 +86,11 @@ async function pollOutbound() {
             if (msg.media_type === 'image') {
               await sock.sendMessage(jid, { image: buffer, caption: '' });
             } else if (msg.media_type === 'audio') {
-              await sock.sendMessage(jid, {
-                audio: buffer,
-                mimetype: 'audio/mp4',
-                ptt: true,
-              });
+              const ext  = path.extname(msg.media_url || '').slice(1).toLowerCase();
+              const mime = ext === 'ogg' ? 'audio/ogg; codecs=opus'
+                         : ext === 'mp3' ? 'audio/mpeg'
+                         : 'audio/mp4';
+              await sock.sendMessage(jid, { audio: buffer, mimetype: mime, ptt: true });
             }
           }
         } else {
@@ -228,13 +236,6 @@ async function connect() {
         msg.message.extendedTextMessage?.text || ''
       ).trim();
       if (!text) continue;
-
-      const lower = text.toLowerCase();
-      if (/^(hola|menu|productos|cat[aá]logo|buenos|buenas)/.test(lower)) {
-        const menu = await getProductMenu();
-        await sock.sendMessage(jid, { text: menu });
-        continue;
-      }
 
       await postInbound(phone, name, text, null, null, picUrl);
     }

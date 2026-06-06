@@ -18,20 +18,27 @@ function getPending(db, phone) {
   return db.prepare('SELECT * FROM pending_orders WHERE phone=?').get(phone);
 }
 function savePending(db, phone, data) {
+  const itemsJson = Array.isArray(data.items) && data.items.length ? JSON.stringify(data.items) : '[]';
   db.prepare(`
-    INSERT INTO pending_orders (phone,product_id,product_name,delivery_address,is_fiado,customer_name,wa_message,missing_field)
-    VALUES (?,?,?,?,?,?,?,?)
+    INSERT INTO pending_orders (phone,product_id,product_name,delivery_address,is_fiado,customer_name,wa_message,missing_field,pending_items)
+    VALUES (?,?,?,?,?,?,?,?,?)
     ON CONFLICT(phone) DO UPDATE SET
       product_id=excluded.product_id, product_name=excluded.product_name,
       delivery_address=excluded.delivery_address, is_fiado=excluded.is_fiado,
       customer_name=excluded.customer_name, wa_message=excluded.wa_message,
       missing_field=excluded.missing_field,
+      pending_items=excluded.pending_items,
       created_at=datetime('now','localtime')
   `).run(
     phone, data.product_id ?? null, data.product_name ?? null,
     data.delivery_address ?? null, data.is_fiado ? 1 : 0,
-    data.customer_name ?? null, data.wa_message ?? null, data.missing_field ?? null
+    data.customer_name ?? null, data.wa_message ?? null, data.missing_field ?? null,
+    itemsJson
   );
+}
+
+function getPendingItems(pending) {
+  try { return JSON.parse(pending.pending_items || '[]'); } catch { return []; }
 }
 function clearPending(db, phone) {
   db.prepare('DELETE FROM pending_orders WHERE phone=?').run(phone);
@@ -48,6 +55,17 @@ function confirmationText(order) {
   const precio = order.product_price
     ? `$${Number(order.product_price).toLocaleString('es-CO')}` : 'A confirmar';
   return `✅ *Pedido confirmado*\n\n📦 ${order.product_name}\n📍 ${order.delivery_address}\n💰 ${precio}${fiado}\n\nPronto te confirmamos el envío. 🚚`;
+}
+
+// ── Encolar respuesta del bot como mensaje outbound ──────────
+function queueBotReply(db, phone, content) {
+  if (!content || !phone) return;
+  try {
+    const cust = db.prepare('SELECT name FROM customers WHERE phone=?').get(phone);
+    db.prepare(`INSERT INTO messages (phone, customer_name, content, direction, sent, type)
+      VALUES (?, ?, ?, 'outbound', 0, 'bot')`)
+      .run(phone, cust?.name ?? null, String(content).slice(0, 2000));
+  } catch (_) {}
 }
 
 // ── Marcar mensaje como alerta ────────────────────────────────
@@ -94,6 +112,10 @@ router.post('/message', apiKeyAuth, async (req, res) => {
     db.prepare(`INSERT INTO messages (phone, customer_name, content, direction, sent, media_type, media_url)
       VALUES (?, ?, ?, 'inbound', 1, ?, ?)`)
       .run(phone, name, caption, rawMediaType, rawMediaUrl);
+    const ackMsg = rawMediaType === 'audio'
+      ? '✅ Tu mensaje de voz fue recibido. Un colaborador te responderá pronto.'
+      : '✅ Imagen recibida. Un colaborador la revisará pronto.';
+    queueBotReply(db, phone, ackMsg);
     return res.json({ success: true, media: true });
   }
 
@@ -107,49 +129,42 @@ router.post('/message', apiKeyAuth, async (req, res) => {
   // ── Detectar queja / reclamo ──────────────────────────────
   if (isComplaint(message)) {
     flagLastMessage(db, phone, 'reclamo');
-    return res.json({
-      success: false,
-      flagged: true,
-      reply: '📋 Hemos registrado tu mensaje como importante. Un colaborador lo revisará pronto. ¡Gracias por avisarnos!',
-    });
+    const reply = '📋 Hemos registrado tu mensaje como importante. Un colaborador lo revisará pronto. ¡Gracias por avisarnos!';
+    queueBotReply(db, phone, reply);
+    return res.json({ success: false, flagged: true });
   }
 
   // ── Saludo sin pedido (solo si el mensaje NO contiene una orden) ────
   if (isGreeting(message) && !pending && !hasOrderContent(message)) {
     const products = db.prepare('SELECT * FROM products WHERE available=1').all();
     const menuLines = products.map((p, i) => `  ${i+1}. ${p.name} — $${Number(p.price).toLocaleString('es-CO')}`).join('\n');
-    return res.json({
-      success: false,
-      reply: `¡Hola! 👋 Bienvenido a *Concentrados Monserrath*.\n\n📦 *Productos disponibles:*\n${menuLines || '  (sin productos)'}\n\nEscríbenos tu pedido con la dirección de entrega.`,
-    });
+    const reply = `¡Hola! 👋 Bienvenido a *Concentrados Monserrath*.\n\n📦 *Productos disponibles:*\n${menuLines || '  (sin productos)'}\n\nEscríbenos tu pedido con la dirección de entrega.`;
+    queueBotReply(db, phone, reply);
+    return res.json({ success: false });
   }
 
   // ── Manejo de pending: confirmación de producto ───────────
   if (pending?.missing_field === 'confirm_product') {
     if (isConfirmation(message)) {
-      // Usuario confirmó el producto sugerido
       const updatedPending = {
         ...pending,
         missing_field: pending.delivery_address ? null : 'address',
       };
       if (!pending.delivery_address) {
         savePending(db, phone, updatedPending);
-        return res.json({
-          success: false, pending: true,
-          reply: `Perfecto, anotamos *${pending.product_name}* 📦\n\n¿A qué dirección enviamos? 🏠`,
-        });
+        const reply = `Perfecto, anotamos *${pending.product_name}* 📦\n\n¿A qué dirección enviamos? 🏠`;
+        queueBotReply(db, phone, reply);
+        return res.json({ success: false, pending: true });
       }
-      // Tiene todo — crear pedido
       clearPending(db, phone);
       return createOrder(db, customer, pending, message, timestamp, res);
     }
 
     if (isDenial(message)) {
       clearPending(db, phone);
-      return res.json({
-        success: false, pending: true,
-        reply: `Entendido. Por favor elige el producto de esta lista:\n${productListText(db)}`,
-      });
+      const reply = `Entendido. Por favor elige el producto de esta lista:\n${productListText(db)}`;
+      queueBotReply(db, phone, reply);
+      return res.json({ success: false, pending: true });
     }
 
     // Cliente respondió otra cosa — intentar extraer producto de la respuesta
@@ -162,19 +177,17 @@ router.post('/message', apiKeyAuth, async (req, res) => {
       };
       if (!pending.delivery_address) {
         savePending(db, phone, updatedPending);
-        return res.json({
-          success: false, pending: true,
-          reply: `Anotamos *${match.product.name}* 📦\n\n¿A qué dirección enviamos? 🏠`,
-        });
+        const reply = `Anotamos *${match.product.name}* 📦\n\n¿A qué dirección enviamos? 🏠`;
+        queueBotReply(db, phone, reply);
+        return res.json({ success: false, pending: true });
       }
       clearPending(db, phone);
       return createOrder(db, customer, updatedPending, message, timestamp, res);
     }
 
-    return res.json({
-      success: false, pending: true,
-      reply: `Por favor elige un producto de esta lista:\n${productListText(db)}`,
-    });
+    const replyFallback = `Por favor elige un producto de esta lista:\n${productListText(db)}`;
+    queueBotReply(db, phone, replyFallback);
+    return res.json({ success: false, pending: true });
   }
 
   // ── Manejo de pending: falta producto ────────────────────
@@ -187,27 +200,23 @@ router.post('/message', apiKeyAuth, async (req, res) => {
       const data    = { ...pending, product_id: match.product.id, product_name: match.product.name, delivery_address: addr };
 
       if (match.score > 0) {
-        // Match difuso — confirmar con el cliente
         savePending(db, phone, { ...data, missing_field: 'confirm_product' });
-        return res.json({
-          success: false, pending: true,
-          reply: `¿Te refieres a *${match.product.name}*? Responde *sí* o *no*.`,
-        });
+        const reply = `¿Te refieres a *${match.product.name}*? Responde *sí* o *no*.`;
+        queueBotReply(db, phone, reply);
+        return res.json({ success: false, pending: true });
       }
       if (!hasAddr) {
         savePending(db, phone, { ...data, missing_field: 'address' });
-        return res.json({
-          success: false, pending: true,
-          reply: `Anotamos *${match.product.name}* 📦\n\n¿A qué dirección enviamos? 🏠`,
-        });
+        const reply = `Anotamos *${match.product.name}* 📦\n\n¿A qué dirección enviamos? 🏠`;
+        queueBotReply(db, phone, reply);
+        return res.json({ success: false, pending: true });
       }
       clearPending(db, phone);
       return createOrder(db, customer, data, message, timestamp, res);
     }
-    return res.json({
-      success: false, pending: true,
-      reply: `No reconocí ese producto. Elige uno:\n${productListText(db)}`,
-    });
+    const reply = `No reconocí ese producto. Elige uno:\n${productListText(db)}`;
+    queueBotReply(db, phone, reply);
+    return res.json({ success: false, pending: true });
   }
 
   // ── Manejo de pending: falta dirección ───────────────────
@@ -215,20 +224,29 @@ router.post('/message', apiKeyAuth, async (req, res) => {
     const addr = extractAddress(message) || (message.trim().length >= 3 ? message.trim() : null);
     if (addr) {
       clearPending(db, phone);
+      const pendingItems = getPendingItems(pending);
+      if (pendingItems.length >= 2) {
+        return createMultiOrder(db, customer, pendingItems, addr, pending.wa_message || message, timestamp, res);
+      }
       return createOrder(db, customer, { ...pending, delivery_address: addr }, message, timestamp, res);
     }
-    return res.json({
-      success: false, pending: true,
-      reply: '¿A qué dirección enviamos el pedido? Escribe la dirección completa.',
-    });
+    const reply = '¿A qué dirección enviamos el pedido? Escribe la dirección completa.';
+    queueBotReply(db, phone, reply);
+    return res.json({ success: false, pending: true });
   }
 
   // ── Primer turno: intentar multi-producto ────────────────
   const dbProducts = db.prepare('SELECT * FROM products WHERE available=1').all();
   const multiItems = parseMultiItems(message, dbProducts);
-  if (multiItems && extractAddress(message)) {
+  if (multiItems) {
     const addr = extractAddress(message);
-    return createMultiOrder(db, customer, multiItems, addr, message, timestamp, res);
+    if (addr) return createMultiOrder(db, customer, multiItems, addr, message, timestamp, res);
+    // Multi-items detected but no address — save and ask
+    savePending(db, phone, { items: multiItems, missing_field: 'address', wa_message: message });
+    const itemLines = multiItems.map(i => `📦 ${i.quantity}x ${i.product_name}`).join('\n');
+    const reply = `Anotamos tu pedido:\n${itemLines}\n\n¿A qué dirección enviamos? 🏠`;
+    queueBotReply(db, phone, reply);
+    return res.json({ success: false, pending: true });
   }
 
   // ── Parsear mensaje único ─────────────────────────────────
@@ -240,10 +258,9 @@ router.post('/message', apiKeyAuth, async (req, res) => {
     const prod = db.prepare('SELECT no_fiado FROM products WHERE id=?').get(parsed.product_id);
     if (prod?.no_fiado) {
       flagLastMessage(db, phone, 'fiado_bloqueado');
-      return res.json({
-        success: false, flagged: true,
-        reply: `⚠️ El producto *${parsed.product_name}* no se fía. Si tienes alguna consulta, comunícate con nosotros directamente.`,
-      });
+      const reply = `⚠️ El producto *${parsed.product_name}* no se fía. Si tienes alguna consulta, comunícate con nosotros directamente.`;
+      queueBotReply(db, phone, reply);
+      return res.json({ success: false, flagged: true });
     }
   }
 
@@ -256,10 +273,9 @@ router.post('/message', apiKeyAuth, async (req, res) => {
       ...parsed, wa_message: message,
       missing_field: 'confirm_product',
     });
-    return res.json({
-      success: false, pending: true,
-      reply: `¿Te refieres a *${parsed.product_name}*? Responde *sí* o *no*.`,
-    });
+    const reply = `¿Te refieres a *${parsed.product_name}*? Responde *sí* o *no*.`;
+    queueBotReply(db, phone, reply);
+    return res.json({ success: false, pending: true });
   }
 
   if (!hasProduct) {
@@ -269,24 +285,21 @@ router.post('/message', apiKeyAuth, async (req, res) => {
       const kwCap    = kw.charAt(0).toUpperCase() + kw.slice(1);
       const optLines = parsed.ambiguous_candidates.map((p, i) => `  ${i+1}. ${p.name}`).join('\n');
       savePending(db, phone, { ...parsed, wa_message: message, missing_field: 'product' });
-      return res.json({
-        success: false, pending: true,
-        reply: `¿${kwCap} de qué?\n${optLines}\n\n¿Cuál deseas?`,
-      });
+      const reply = `¿${kwCap} de qué?\n${optLines}\n\n¿Cuál deseas?`;
+      queueBotReply(db, phone, reply);
+      return res.json({ success: false, pending: true });
     }
     savePending(db, phone, { ...parsed, wa_message: message, missing_field: 'product' });
-    return res.json({
-      success: false, pending: true,
-      reply: `Hola! 👋 No identifiqué el producto.\n\nProductos disponibles:\n${productListText(db)}\n\n¿Cuál deseas pedir?`,
-    });
+    const reply = `Hola! 👋 No identifiqué el producto.\n\nProductos disponibles:\n${productListText(db)}\n\n¿Cuál deseas pedir?`;
+    queueBotReply(db, phone, reply);
+    return res.json({ success: false, pending: true });
   }
 
   if (!hasAddress) {
     savePending(db, phone, { ...parsed, wa_message: message, missing_field: 'address' });
-    return res.json({
-      success: false, pending: true,
-      reply: `Anotamos *${parsed.product_name}* 📦\n\n¿A qué dirección enviamos? 🏠`,
-    });
+    const reply = `Anotamos *${parsed.product_name}* 📦\n\n¿A qué dirección enviamos? 🏠`;
+    queueBotReply(db, phone, reply);
+    return res.json({ success: false, pending: true });
   }
 
   return createOrder(db, customer, parsed, message, timestamp, res);
@@ -323,7 +336,8 @@ function createOrder(db, customer, data, message, timestamp, res) {
       WHERE phone=? AND direction='inbound' ORDER BY created_at DESC LIMIT 1`)
       .run(customer.phone);
   }
-  res.json({ success: true, order, reply: confirmationText(order) });
+  queueBotReply(db, customer.phone, confirmationText(order));
+  res.json({ success: true, order });
 }
 
 function createMultiOrder(db, customer, items, address, message, timestamp, res) {
@@ -339,10 +353,9 @@ function createMultiOrder(db, customer, items, address, message, timestamp, res)
   for (const it of items) itemIns.run(orderId, it.product_id, it.product_name, it.product_price, it.quantity);
 
   const order = db.prepare('SELECT * FROM orders WHERE id=?').get(orderId);
-  res.json({
-    success: true, order,
-    reply: `✅ *Pedido recibido:*\n${items.map(i => `📦 ${i.quantity}x ${i.product_name}`).join('\n')}\n📍 ${address}\n\nPronto confirmamos el envío.`,
-  });
+  const reply = `✅ *Pedido recibido:*\n${items.map(i => `📦 ${i.quantity}x ${i.product_name}`).join('\n')}\n📍 ${address}\n\nPronto confirmamos el envío.`;
+  queueBotReply(db, customer.phone, reply);
+  res.json({ success: true, order });
 }
 
 module.exports = router;
