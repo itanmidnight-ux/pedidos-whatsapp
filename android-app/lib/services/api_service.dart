@@ -132,6 +132,12 @@ class ApiService {
     await http.put(Uri.parse('$_serverUrl/api/orders/$id/comment'), headers: _headers, body: jsonEncode({'comment': comment})).timeout(const Duration(seconds: 10));
   }
 
+  static Future<Map<String, dynamic>> getInventoryStats() async {
+    final res = await http.get(Uri.parse('$_serverUrl/api/orders/stats'), headers: _headers).timeout(const Duration(seconds: 10));
+    if (res.statusCode == 200) return jsonDecode(res.body) as Map<String, dynamic>;
+    throw Exception('Error stats: ${res.statusCode}');
+  }
+
   // ── Products ─────────────────────────────────────────────
   static Future<List<Product>> getProducts() async {
     final res = await http.get(Uri.parse('$_serverUrl/api/products'), headers: _headers).timeout(const Duration(seconds: 10));

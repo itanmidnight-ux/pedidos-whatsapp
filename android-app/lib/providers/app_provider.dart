@@ -104,6 +104,15 @@ class AppProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> takeOrder(int id) async {
+    if (isOnline) {
+      await ApiService.claimOrder(id);
+      final updated = await ApiService.markEnCamino(id);
+      _updateOrderInList(updated);
+    } else { await LocalDB.markEnCamino(id); }
+    notifyListeners();
+  }
+
   Future<void> cancelOrder(int id, String reason) async {
     if (isOnline) { await ApiService.cancelOrder(id, reason); }
     else { await LocalDB.cancelOrder(id, reason); }
