@@ -329,13 +329,51 @@ if [ "${BOT_ENABLED:-false}" = "true" ] && [ "${#BOT_PHONE_CLEAN}" -ge 10 ]; the
 
   if [ "$SESSION_VALID" = "1" ]; then
     ok "Bot WhatsApp: sesión guardada — reconectando..."
-    for i in $(seq 1 20); do
-      grep -q '\[bot\] ✅ Connected' "$LOG/server.log" 2>/dev/null && break
+    # Wait for Connected OR pairing code (session may have been revoked manually)
+    WA_CONNECTED=0
+    PAIR_CODE=""
+    for i in $(seq 1 50); do
+      if grep -q '\[bot\] ✅ Connected' "$LOG/server.log" 2>/dev/null; then
+        WA_CONNECTED=1; break
+      fi
+      PAIR_CODE=$(grep -o 'Pairing code: [A-Z0-9-]*' "$LOG/server.log" 2>/dev/null \
+        | tail -1 | sed 's/Pairing code: //')
+      [ -n "$PAIR_CODE" ] && break
       sleep 2
     done
-    grep -q '\[bot\] ✅ Connected' "$LOG/server.log" 2>/dev/null \
-      && ok "Bot WhatsApp CONECTADO ✓" \
-      || warn "Reconexión en progreso — revisar: tail -f $LOG/server.log"
+
+    if [ "$WA_CONNECTED" = "1" ]; then
+      ok "Bot WhatsApp CONECTADO ✓"
+    elif [ -n "$PAIR_CODE" ]; then
+      # Session was revoked — show pairing code
+      warn "Sesión revocada — se requiere nueva vinculación"
+      echo ""
+      echo -e "${GREEN}${BOLD}╔══════════════════════════════════════════════╗${NC}"
+      echo -e "${GREEN}${BOLD}║   CÓDIGO DE VINCULACIÓN WHATSAPP             ║${NC}"
+      echo -e "${GREEN}${BOLD}╠══════════════════════════════════════════════╣${NC}"
+      echo -e "${GREEN}${BOLD}║${NC}   ${BOLD}${PAIR_CODE}${NC}$(printf '%*s' $((38 - ${#PAIR_CODE})) '')${GREEN}${BOLD}║${NC}"
+      echo -e "${GREEN}${BOLD}╠══════════════════════════════════════════════╣${NC}"
+      echo -e "${GREEN}${BOLD}║${NC} 1. Abre WhatsApp en tu teléfono              ${GREEN}${BOLD}║${NC}"
+      echo -e "${GREEN}${BOLD}║${NC} 2. Menú (⋮) → Dispositivos vinculados        ${GREEN}${BOLD}║${NC}"
+      echo -e "${GREEN}${BOLD}║${NC} 3. Vincular un dispositivo                   ${GREEN}${BOLD}║${NC}"
+      echo -e "${GREEN}${BOLD}║${NC} 4. Vincular con número de teléfono           ${GREEN}${BOLD}║${NC}"
+      echo -e "${GREEN}${BOLD}║${NC} 5. Ingresa el código de arriba               ${GREEN}${BOLD}║${NC}"
+      echo -e "${GREEN}${BOLD}╚══════════════════════════════════════════════╝${NC}"
+      echo ""
+      info "Esperando confirmación de conexión (máx 120s)..."
+      for i in $(seq 1 60); do
+        grep -q '\[bot\] ✅ Connected' "$LOG/server.log" 2>/dev/null && break
+        sleep 2
+      done
+      if grep -q '\[bot\] ✅ Connected' "$LOG/server.log" 2>/dev/null; then
+        ok "Bot WhatsApp CONECTADO ✓"
+      else
+        warn "Sin confirmación en 120s — verifica el código en WhatsApp"
+        warn "El sistema continúa — bot reintenta automáticamente"
+      fi
+    else
+      warn "Reconexión en progreso — revisar: tail -f $LOG/server.log"
+    fi
   else
     # Remove corrupted session if present
     [ -n "$(ls -A "$AUTH_DIR" 2>/dev/null)" ] && {
