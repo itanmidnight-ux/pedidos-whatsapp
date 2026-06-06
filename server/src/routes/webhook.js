@@ -250,7 +250,16 @@ router.post('/message', apiKeyAuth, async (req, res) => {
   }
 
   // ── Parsear mensaje único ─────────────────────────────────
-  const parsed    = await parseOrderMessage(message);
+  let parsed;
+  try {
+    parsed = await parseOrderMessage(message);
+  } catch (_) {
+    parsed = { product_id: null, product_name: null, delivery_address: extractAddress(message),
+      is_fiado: false, customer_name: null, confidence: 'low',
+      needs_confirmation: false, needs_clarification: false,
+      ambiguous_keyword: null, ambiguous_candidates: null,
+      source: 'fallback', intent: null, quantity: null, unit: null };
+  }
   parsed.wa_message = message;
 
   // Detectar pedido con producto de no_fiado + fiado solicitado

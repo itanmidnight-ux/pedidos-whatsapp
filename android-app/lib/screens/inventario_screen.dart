@@ -105,7 +105,7 @@ class _InventarioScreenState extends State<InventarioScreen> {
     child: Padding(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
       child: Row(children: [
-        CircleAvatar(radius: 22, backgroundColor: color.withOpacity(0.12),
+        CircleAvatar(radius: 22, backgroundColor: color.withValues(alpha: 0.12),
           child: Icon(icon, color: color, size: 22)),
         const SizedBox(width: 12),
         Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -221,7 +221,7 @@ class _InventarioScreenState extends State<InventarioScreen> {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
               decoration: BoxDecoration(
-                color: _green.withOpacity(0.1),
+                color: _green.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(10)),
               child: Text('${_productTotals.length} productos',
                 style: const TextStyle(fontSize: 11, color: _green, fontWeight: FontWeight.w600)),
@@ -246,9 +246,9 @@ class _InventarioScreenState extends State<InventarioScreen> {
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
                     decoration: BoxDecoration(
-                      color: _gold.withOpacity(0.12),
+                      color: _gold.withValues(alpha: 0.12),
                       borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: _gold.withOpacity(0.4))),
+                      border: Border.all(color: _gold.withValues(alpha: 0.4))),
                     child: Text(
                       NumberFormat('#,###', 'es_CO').format(total),
                       style: const TextStyle(fontWeight: FontWeight.bold, color: _gold, fontSize: 13)),

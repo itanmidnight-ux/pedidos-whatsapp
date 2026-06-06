@@ -47,7 +47,7 @@ router.get('/history', jwtAuth, (req, res) => {
   const cutoff = new Date(Date.now() - days * 86400000).toISOString().slice(0, 19).replace('T', ' ');
   const rows = db.prepare(`
     SELECT o.*, c.phone, c.name AS customer_name,
-           u.username AS claimed_by_name
+           u.username AS claimed_by_name, u.display_name AS claimed_by_display
     FROM orders o
     LEFT JOIN customers c ON o.customer_id = c.id
     LEFT JOIN users     u ON o.claimed_by  = u.id

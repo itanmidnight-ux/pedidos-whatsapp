@@ -243,7 +243,7 @@ class OrderCard extends StatelessWidget {
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(14),
               side: order.isClaimed
-                ? BorderSide(color: statusColor.withOpacity(0.5), width: 1.5)
+                ? BorderSide(color: statusColor.withValues(alpha: 0.5), width: 1.5)
                 : BorderSide.none,
             ),
             child: Padding(
@@ -253,6 +253,7 @@ class OrderCard extends StatelessWidget {
                 Row(children: [
                   Expanded(child: Text(
                     order.customerName ?? order.customerPhone ?? 'Cliente',
+                    maxLines: 1, overflow: TextOverflow.ellipsis,
                     style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15))),
                   if (order.isFiado) _badge('FIADO', Colors.orange),
                   if (order.isClaimed) ...[
@@ -341,8 +342,8 @@ class OrderCard extends StatelessWidget {
   Widget _badge(String text, Color color) => Container(
     padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
     decoration: BoxDecoration(
-      color: color.withOpacity(0.12),
-      border: Border.all(color: color.withOpacity(0.4)),
+      color: color.withValues(alpha: 0.12),
+      border: Border.all(color: color.withValues(alpha: 0.4)),
       borderRadius: BorderRadius.circular(12)),
     child: Text(text,
       style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.bold)),
