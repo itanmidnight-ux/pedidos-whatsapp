@@ -89,25 +89,22 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> {
       ),
       body: IndexedStack(index: _tab, children: const [
         ClientProductsScreen(),
+        ClientCartScreen(),
       ]),
-      floatingActionButton: _tab == 0
-          ? FloatingActionButton(
-              backgroundColor: _green,
-              onPressed: () => Navigator.push(context,
-                MaterialPageRoute(builder: (_) => const ClientCartScreen())),
-              child: const Icon(Icons.shopping_cart_rounded, color: Colors.white),
-            )
-          : null,
       bottomNavigationBar: NavigationBar(
         selectedIndex: _tab,
         onDestinationSelected: (i) => setState(() => _tab = i),
         backgroundColor: Colors.white,
         indicatorColor: const Color(0xFFC8E6C9),
-        destinations: [
+        destinations: const [
           NavigationDestination(
-            icon: const Icon(Icons.storefront_outlined),
-            selectedIcon: const Icon(Icons.storefront_rounded, color: _green),
+            icon: Icon(Icons.storefront_outlined),
+            selectedIcon: Icon(Icons.storefront_rounded, color: _green),
             label: 'Productos'),
+          NavigationDestination(
+            icon: Icon(Icons.shopping_cart_outlined),
+            selectedIcon: Icon(Icons.shopping_cart_rounded, color: _green),
+            label: 'Carrito'),
         ],
       ),
     );

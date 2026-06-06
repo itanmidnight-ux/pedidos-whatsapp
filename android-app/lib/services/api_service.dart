@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:io';
 import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -64,6 +63,12 @@ class ApiService {
   };
 
   static Map<String, String> get _headersNoContent => {
+    'Authorization':              'Bearer $_token',
+    'ngrok-skip-browser-warning': 'true',
+  };
+
+  // Public getter for use in CachedNetworkImage httpHeaders
+  static Map<String, String> get imageHeaders => {
     'Authorization':              'Bearer $_token',
     'ngrok-skip-browser-warning': 'true',
   };

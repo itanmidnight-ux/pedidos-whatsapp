@@ -212,7 +212,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
                       borderRadius: BorderRadius.circular(10),
                       child: CachedNetworkImage(
                         imageUrl: ApiService.productImageUrl(images[i]),
-                        httpHeaders: const {'ngrok-skip-browser-warning': 'true'},
+                        httpHeaders: ApiService.imageHeaders,
                         width: 100, height: 100, fit: BoxFit.cover,
                         placeholder: (_, __) => Container(
                           width: 100, height: 100, color: Colors.grey.shade100),

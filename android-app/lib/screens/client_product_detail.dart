@@ -84,7 +84,7 @@ class _ClientProductDetailState extends State<ClientProductDetail> {
                   onPageChanged: (i) => setState(() => _imgIndex = i),
                   itemBuilder: (_, i) => CachedNetworkImage(
                     imageUrl: ApiService.productImageUrl(p.images[i]),
-                    httpHeaders: const {'ngrok-skip-browser-warning': 'true'},
+                    httpHeaders: ApiService.imageHeaders,
                     fit: BoxFit.cover,
                     width: double.infinity,
                     placeholder: (_, __) => Container(color: Colors.grey.shade100,

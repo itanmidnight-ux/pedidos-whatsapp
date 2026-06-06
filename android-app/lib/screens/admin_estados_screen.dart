@@ -146,7 +146,7 @@ class _AdminEstadosScreenState extends State<AdminEstadosScreen> {
                             child: e.mediaType == 'image'
                                 ? CachedNetworkImage(
                                     imageUrl: ApiService.estadoMediaUrl(e.filename),
-                                    httpHeaders: const {'ngrok-skip-browser-warning': 'true'},
+                                    httpHeaders: ApiService.imageHeaders,
                                     fit: BoxFit.cover,
                                     errorWidget: (_, __, ___) => Container(
                                       color: Colors.grey.shade200,
