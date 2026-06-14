@@ -57,7 +57,15 @@ class Conversation {
     this.profilePicUrl, this.archived = false,
   });
 
-  String get displayName => customerName ?? phone;
+  String get displayName {
+    if (customerName != null && customerName!.isNotEmpty) return customerName!;
+    final p = phone.replaceAll(RegExp(r'\D'), '');
+    if (p.length == 12 && p.startsWith('57')) {
+      return '+57 ${p.substring(2, 5)} ${p.substring(5, 8)} ${p.substring(8)}';
+    }
+    if (p.length >= 7) return '+$p';
+    return phone;
+  }
   bool   get hasFlaggedMessages => flaggedCount > 0;
 
   String get lastMsgPreview {

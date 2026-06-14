@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 import 'package:http/http.dart' as http;
@@ -15,12 +16,15 @@ class ApiService {
     aOptions: AndroidOptions(encryptedSharedPreferences: true),
   );
 
-  static const _defaultUrl = 'https://francoise-subhumid-maire.ngrok-free.dev';
-  static String _serverUrl  = _defaultUrl;
-  static String _token      = '';
-  static String _username   = '';
-  static String _role       = '';
+  static const _defaultUrl = 'https://tu-dominio.duckdns.org';
+  static String _serverUrl   = _defaultUrl;
+  static String _token       = '';
+  static String _username    = '';
+  static String _role        = '';
   static String _displayName = '';
+
+  // Called by app-level provider when 401 is detected → forces re-login
+  static Function()? onUnauthorized;
 
   static Future<void> init() async {
     final prefs  = await SharedPreferences.getInstance();
@@ -29,6 +33,60 @@ class ApiService {
     _username    = await _secureStorage.read(key: 'username')     ?? '';
     _role        = await _secureStorage.read(key: 'role')         ?? '';
     _displayName = await _secureStorage.read(key: 'display_name') ?? '';
+
+    // Validate stored token is not expired; silently refresh if possible
+    if (_token.isNotEmpty && _isTokenExpired(_token)) {
+      try {
+        await _refreshToken();
+      } catch (_) {
+        await logout();
+      }
+    }
+  }
+
+  // Decode JWT exp claim without verifying signature (verification done server-side)
+  static bool _isTokenExpired(String token) {
+    try {
+      final parts = token.split('.');
+      if (parts.length != 3) return true;
+      final payload = json.decode(
+        utf8.decode(base64Url.decode(base64Url.normalize(parts[1]))));
+      final exp = payload['exp'] as int?;
+      if (exp == null) return false;
+      return DateTime.now().millisecondsSinceEpoch / 1000 > exp;
+    } catch (_) { return false; }
+  }
+
+  static Future<void> _refreshToken() async {
+    final res = await http.post(
+      Uri.parse('$_serverUrl/api/auth/refresh'),
+      headers: {
+        'Authorization':              'Bearer $_token',
+        'Content-Type':               'application/json',
+        'ngrok-skip-browser-warning': 'true',
+      },
+    ).timeout(const Duration(seconds: 10));
+    if (res.statusCode == 200) {
+      final body = jsonDecode(res.body) as Map<String, dynamic>;
+      await saveConfig(
+        body['token'] as String,
+        body['username'] as String,
+        role:        body['role'] as String? ?? _role,
+        displayName: body['display_name'] as String? ?? _displayName,
+      );
+    } else {
+      throw Exception('refresh_failed');
+    }
+  }
+
+  // Central HTTP response handler — detects 401 and triggers re-login
+  static dynamic _handleResponse(http.Response res) {
+    if (res.statusCode == 401) {
+      logout();
+      onUnauthorized?.call();
+      throw Exception('session_expired');
+    }
+    return res;
   }
 
   static Future<void> saveConfig(String token, String username, {String role = 'worker', String displayName = ''}) async {
@@ -89,11 +147,19 @@ class ApiService {
 
   // ── Auth ────────────────────────────────────────────────
   static Future<Map<String, String>> login(String username, String pin) async {
-    final res = await http.post(
-      Uri.parse('$_serverUrl/api/auth/token'),
-      headers: {'Content-Type': 'application/json', 'ngrok-skip-browser-warning': 'true'},
-      body: jsonEncode({'username': username.toLowerCase().trim(), 'password': pin}),
-    ).timeout(const Duration(seconds: 10));
+    http.Response res;
+    try {
+      res = await http.post(
+        Uri.parse('$_serverUrl/api/auth/token'),
+        headers: {'Content-Type': 'application/json', 'ngrok-skip-browser-warning': 'true'},
+        body: jsonEncode({'username': username.toLowerCase().trim(), 'password': pin}),
+      ).timeout(const Duration(seconds: 12));
+    } on TimeoutException {
+      throw Exception('Servidor no responde. Verifica tu conexión.');
+    } catch (e) {
+      throw Exception('No se pudo conectar al servidor.');
+    }
+
     if (res.statusCode == 200) {
       final body = jsonDecode(res.body) as Map<String, dynamic>;
       return {
@@ -103,12 +169,28 @@ class ApiService {
         'display_name': body['display_name'] as String? ?? body['username'] as String,
       };
     }
-    throw Exception(jsonDecode(res.body)['error'] ?? 'Credenciales incorrectas');
+
+    final body = _tryDecodeBody(res.body);
+    if (res.statusCode == 429) {
+      final secs = body['retry_in'] as int? ?? 900;
+      final mins = (secs / 60).ceil();
+      throw Exception('Demasiados intentos fallidos. Intenta en $mins minutos.');
+    }
+    final attLeft = body['attempts_left'] as int?;
+    final msg     = body['error'] as String? ?? 'Credenciales incorrectas';
+    throw Exception(attLeft != null && attLeft > 0
+      ? '$msg ($attLeft intentos restantes)'
+      : msg);
+  }
+
+  static Map<String, dynamic> _tryDecodeBody(String body) {
+    try { return jsonDecode(body) as Map<String, dynamic>; } catch (_) { return {}; }
   }
 
   // ── Orders ──────────────────────────────────────────────
   static Future<List<Order>> getOrders() async {
-    final res = await http.get(Uri.parse('$_serverUrl/api/orders'), headers: _headers).timeout(const Duration(seconds: 10));
+    final res = _handleResponse(
+      await http.get(Uri.parse('$_serverUrl/api/orders'), headers: _headers).timeout(const Duration(seconds: 10)));
     if (res.statusCode == 200) return (jsonDecode(res.body) as List).map((j) => Order.fromJson(j)).toList();
     throw Exception('Error pedidos: ${res.statusCode}');
   }
@@ -154,7 +236,8 @@ class ApiService {
 
   // ── Products ─────────────────────────────────────────────
   static Future<List<Product>> getProducts() async {
-    final res = await http.get(Uri.parse('$_serverUrl/api/products'), headers: _headers).timeout(const Duration(seconds: 10));
+    final res = _handleResponse(
+      await http.get(Uri.parse('$_serverUrl/api/products'), headers: _headers).timeout(const Duration(seconds: 10)));
     if (res.statusCode == 200) return (jsonDecode(res.body) as List).map((j) => Product.fromJson(j)).toList();
     throw Exception('Error productos');
   }
@@ -198,7 +281,8 @@ class ApiService {
   // ── Messages ─────────────────────────────────────────────
   static Future<List<Conversation>> getConversations({bool archived = false}) async {
     final url = '$_serverUrl/api/messages${archived ? '?archived=true' : ''}';
-    final res = await http.get(Uri.parse(url), headers: _headers).timeout(const Duration(seconds: 10));
+    final res = _handleResponse(
+      await http.get(Uri.parse(url), headers: _headers).timeout(const Duration(seconds: 10)));
     if (res.statusCode == 200) return (jsonDecode(res.body) as List).map((j) => Conversation.fromJson(j)).toList();
     throw Exception('Error conversaciones');
   }
@@ -311,8 +395,9 @@ class ApiService {
 
   // ── Estados ──────────────────────────────────────────────
   static Future<List<Estado>> getEstados() async {
-    final res = await http.get(Uri.parse('$_serverUrl/api/estados'), headers: _headers)
-      .timeout(const Duration(seconds: 10));
+    final res = _handleResponse(
+      await http.get(Uri.parse('$_serverUrl/api/estados'), headers: _headers)
+        .timeout(const Duration(seconds: 10)));
     if (res.statusCode == 200) {
       final body = jsonDecode(res.body) as Map<String, dynamic>;
       return (body['estados'] as List).map((j) => Estado.fromJson(j)).toList();
@@ -362,6 +447,27 @@ class ApiService {
 
   static String estadoMediaUrl(String filename) =>
     '$_serverUrl/api/estados/media/${Uri.encodeComponent(filename)}';
+
+  static Future<Map<String, dynamic>> reactToEstado(int id) async {
+    final res = await http.post(Uri.parse('$_serverUrl/api/estados/$id/react'),
+      headers: _headers).timeout(const Duration(seconds: 10));
+    if (res.statusCode == 200) return jsonDecode(res.body) as Map<String, dynamic>;
+    throw Exception('Error al reaccionar');
+  }
+
+  static Future<List<Map<String, dynamic>>> getEstadoComments(int id) async {
+    final res = await http.get(Uri.parse('$_serverUrl/api/estados/$id/comments'),
+      headers: _headers).timeout(const Duration(seconds: 10));
+    if (res.statusCode == 200) return List<Map<String, dynamic>>.from(jsonDecode(res.body)['comments']);
+    throw Exception('Error cargando comentarios');
+  }
+
+  static Future<void> addEstadoComment(int id, String comment) async {
+    final res = await http.post(Uri.parse('$_serverUrl/api/estados/$id/comments'),
+      headers: _headers,
+      body: jsonEncode({'comment': comment})).timeout(const Duration(seconds: 10));
+    if (res.statusCode != 201) throw Exception(jsonDecode(res.body)['error'] ?? 'Error agregando comentario');
+  }
 
   // ── Cart ─────────────────────────────────────────────────
   static Future<List<CartItem>> getCart() async {

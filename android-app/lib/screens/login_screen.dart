@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_provider.dart';
+import '../services/api_service.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -14,6 +15,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
   bool    _loading = false;
   bool    _obscure = true;
   String? _error;
+  String  _serverUrl = ApiService.serverUrl;
 
   late final AnimationController _animCtrl;
   late final Animation<double>   _fadeAnim;
@@ -27,6 +29,48 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
     _slideAnim = Tween<Offset>(begin: const Offset(0, 0.25), end: Offset.zero)
         .animate(CurvedAnimation(parent: _animCtrl, curve: Curves.easeOutCubic));
     _animCtrl.forward();
+    _serverUrl = ApiService.serverUrl;
+  }
+
+  Future<void> _showServerDialog() async {
+    final ctrl = TextEditingController(text: _serverUrl);
+    final result = await showDialog<String>(
+      context: context,
+      builder: (_) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Row(children: [
+          Icon(Icons.dns_rounded, color: Color(0xFF2D5016)),
+          SizedBox(width: 8),
+          Text('Servidor', style: TextStyle(fontSize: 18)),
+        ]),
+        content: TextField(
+          controller: ctrl,
+          keyboardType: TextInputType.url,
+          autocorrect: false,
+          decoration: InputDecoration(
+            labelText: 'URL del servidor',
+            hintText: 'https://tu-dominio.duckdns.org',
+            filled: true,
+            fillColor: const Color(0xFFF6F6F6),
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+            focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(color: Color(0xFF2D5016))),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancelar')),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, ctrl.text.trim()),
+            style: FilledButton.styleFrom(backgroundColor: const Color(0xFF2D5016)),
+            child: const Text('Guardar'),
+          ),
+        ],
+      ),
+    );
+    if (result != null && result.isNotEmpty) {
+      await ApiService.setServerUrl(result);
+      if (mounted) setState(() => _serverUrl = result);
+    }
   }
 
   @override
@@ -196,10 +240,33 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
                   ),
                 ),
 
-                const SizedBox(height: 32),
-                Text('v1.0 — Monserrath © 2025',
+                const SizedBox(height: 20),
+                GestureDetector(
+                  onTap: _showServerDialog,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.07),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
+                    ),
+                    child: Row(mainAxisSize: MainAxisSize.min, children: [
+                      Icon(Icons.dns_rounded, size: 13, color: Colors.white.withValues(alpha: 0.4)),
+                      const SizedBox(width: 6),
+                      Text(
+                        _serverUrl.replaceFirst('https://', '').replaceFirst('http://', ''),
+                        style: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 11),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(width: 4),
+                      Icon(Icons.edit_rounded, size: 11, color: Colors.white.withValues(alpha: 0.3)),
+                    ]),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Text('v2.0 — Monserrath © 2025',
                   style: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.25),
+                    color: Colors.white.withValues(alpha: 0.2),
                     fontSize: 11)),
               ]),
             ),

@@ -27,7 +27,7 @@ class _MessagesScreenState extends State<MessagesScreen> with SingleTickerProvid
     _tabs = TabController(length: 2, vsync: this);
     _load();
     _searchCtrl.addListener(() => setState(() => _query = _searchCtrl.text.toLowerCase()));
-    _pollTimer = Timer.periodic(const Duration(seconds: 15), (_) => _silentRefresh());
+    _pollTimer = Timer.periodic(const Duration(seconds: 4), (_) => _silentRefresh());
   }
 
   Future<void> _silentRefresh() async {

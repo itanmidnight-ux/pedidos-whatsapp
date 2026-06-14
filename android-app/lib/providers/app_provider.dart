@@ -19,6 +19,13 @@ class AppProvider extends ChangeNotifier {
 
   Timer? _refreshTimer;
 
+  AppProvider() {
+    // Wire up auto-logout when server responds 401
+    ApiService.onUnauthorized = () {
+      if (isLoggedIn) logout();
+    };
+  }
+
   void startAutoRefresh() {
     _refreshTimer?.cancel();
     _refreshTimer = Timer.periodic(const Duration(seconds: 20), (_) async {

@@ -11,11 +11,21 @@ const { getDB } = require('../db/database');
 const MEDIA_DIR = path.join(process.env.APPDATA || process.env.HOME, 'pedidos-bot', 'media');
 if (!fs.existsSync(MEDIA_DIR)) fs.mkdirSync(MEDIA_DIR, { recursive: true });
 
+const DOCS_DIR = path.join(process.env.APPDATA || process.env.HOME, 'pedidos-bot', 'docs');
+if (!fs.existsSync(DOCS_DIR)) fs.mkdirSync(DOCS_DIR, { recursive: true });
+
 const upload = multer({
   dest: MEDIA_DIR,
-  limits: { fileSize: 20 * 1024 * 1024 },
+  limits: { fileSize: 64 * 1024 * 1024 },
   fileFilter: (_, file, cb) => {
-    cb(null, file.mimetype.startsWith('audio/') || file.mimetype.startsWith('image/'));
+    const ok = file.mimetype.startsWith('audio/')
+      || file.mimetype.startsWith('image/')
+      || file.mimetype.startsWith('video/')
+      || file.mimetype === 'application/pdf'
+      || file.mimetype === 'application/msword'
+      || file.mimetype === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+      || file.mimetype === 'application/octet-stream';
+    cb(null, ok);
   },
 });
 
@@ -67,11 +77,15 @@ router.get('/promotional', jwtAuth, (req, res) => {
   ).all());
 });
 
-// ── GET /media/:filename — Servir archivos de media ───────────
+// ── GET /media/:filename — Servir archivos de media y docs ───
 router.get('/media/:filename', jwtAuth, (req, res) => {
-  const filename = path.basename(req.params.filename);
-  const filepath = path.join(MEDIA_DIR, filename);
-  if (!fs.existsSync(filepath)) return res.status(404).json({ error: 'Media no encontrada' });
+  const filename  = path.basename(req.params.filename);
+  const inMedia   = path.join(MEDIA_DIR, filename);
+  const inDocs    = path.join(DOCS_DIR,  filename);
+  const filepath  = fs.existsSync(inMedia) ? inMedia
+                  : fs.existsSync(inDocs)  ? inDocs
+                  : null;
+  if (!filepath) return res.status(404).json({ error: 'Media no encontrada' });
   res.sendFile(filepath);
 });
 
@@ -132,13 +146,23 @@ router.post('/send-media', jwtAuth, upload.single('file'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'Archivo requerido' });
   const { phone, media_type } = req.body;
   if (!validPhone(phone)) return res.status(400).json({ error: 'phone inválido' });
-  if (!['audio', 'image'].includes(media_type)) return res.status(400).json({ error: 'media_type inválido' });
+  const validTypes = ['audio', 'image', 'video', 'document'];
+  if (!validTypes.includes(media_type)) return res.status(400).json({ error: 'media_type inválido' });
 
-  const mimeExt = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif',
-    'audio/mp4': 'm4a', 'audio/aac': 'aac', 'audio/ogg': 'ogg', 'audio/mpeg': 'mp3' };
-  const ext = mimeExt[req.file.mimetype] || (media_type === 'audio' ? 'm4a' : 'jpg');
-  const newFilename = `${phone}_${Date.now()}.${ext}`;
-  const destPath    = path.join(MEDIA_DIR, newFilename);
+  const mimeExt = {
+    'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif',
+    'audio/mp4': 'm4a', 'audio/aac': 'aac', 'audio/ogg': 'ogg', 'audio/mpeg': 'mp3',
+    'video/mp4': 'mp4', 'video/quicktime': 'mov', 'video/webm': 'webm',
+    'application/pdf': 'pdf',
+  };
+  const ext = mimeExt[req.file.mimetype]
+    || (media_type === 'audio'    ? 'm4a'
+      : media_type === 'video'    ? 'mp4'
+      : media_type === 'document' ? 'bin'
+      : 'jpg');
+  const newFilename = `${phone.trim()}_${Date.now()}.${ext}`;
+  const isDoc       = media_type === 'document';
+  const destPath    = path.join(isDoc ? DOCS_DIR : MEDIA_DIR, newFilename);
 
   try {
     fs.renameSync(req.file.path, destPath);
@@ -148,7 +172,8 @@ router.post('/send-media', jwtAuth, upload.single('file'), (req, res) => {
 
   const db = getDB();
   const customer = db.prepare('SELECT name FROM customers WHERE phone=?').get(phone.trim());
-  const caption  = media_type === 'audio' ? '🎵 Audio' : '📷 Imagen';
+  const captions = { audio: '🎵 Audio', image: '📷 Imagen', video: '🎬 Video', document: '📄 Documento' };
+  const caption  = captions[media_type] || media_type;
   const result   = db.prepare(
     `INSERT INTO messages (phone, customer_name, content, direction, sent, type, media_type, media_url)
      VALUES (?, ?, ?, 'outbound', 0, 'direct', ?, ?)`

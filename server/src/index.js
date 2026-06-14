@@ -44,9 +44,15 @@ app.use(helmet({
 // ── CORS restrictivo ─────────────────────────────────────────
 const allowedOrigins = [
   process.env.NGROK_URL,
-  process.env.NGROK_DOMAIN ? `https://${process.env.NGROK_DOMAIN}` : null,
+  process.env.NGROK_DOMAIN   ? `https://${process.env.NGROK_DOMAIN}`   : null,
+  process.env.SERVER_DOMAIN  ? `https://${process.env.SERVER_DOMAIN}`  : null,
+  process.env.SERVER_DOMAIN  ? `http://${process.env.SERVER_DOMAIN}`   : null,
+  'https://tu-dominio.duckdns.org',
+  'http://tu-dominio.duckdns.org',
   'http://localhost:3000',
   'http://127.0.0.1:3000',
+  'http://localhost:80',
+  'http://127.0.0.1:80',
 ].filter(Boolean);
 
 app.use(cors({
@@ -54,6 +60,7 @@ app.use(cors({
     if (!origin) return cb(null, true);
     if (allowedOrigins.some(o => origin.startsWith(o))) return cb(null, true);
     if (origin.endsWith('.ngrok-free.dev') || origin.endsWith('.ngrok.io')) return cb(null, true);
+    if (origin.endsWith('.duckdns.org') || origin.endsWith('.trycloudflare.com')) return cb(null, true);
     cb(new Error('Origen no permitido por CORS'));
   },
   credentials: true,
