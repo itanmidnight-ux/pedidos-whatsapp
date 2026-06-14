@@ -297,8 +297,6 @@ BOT_ENABLED=true
 BOT_PHONE=$BOT_PHONE
 SERVER_DOMAIN=$DOMAIN
 DUCKDNS_TOKEN=$DUCK_TOKEN
-NGROK_AUTHTOKEN=34G7biMjp4tdGcupxvySfJvYqrQ_6BEU8VntbCjSudDRWntdB
-NGROK_DOMAIN=francoise-subhumid-maire.ngrok-free.dev
 "@ | Set-Content $ENV_FILE -Encoding UTF8
     Write-Ok ".env creado"
 } else {
@@ -391,7 +389,7 @@ netsh int tcp set global maxsynretransmissions=2  2>$null | Out-Null
 Write-Ok "TCP: parametros de rendimiento aplicados"
 
 # -------------------------------------------------------------
-# PASO 9 -- Apache: reverse proxy + SSL
+# PASO 9 -- Apache: instalar + reverse proxy
 # -------------------------------------------------------------
 Write-Info "PASO 9/10 -- Configurando Apache..."
 
@@ -411,6 +409,44 @@ foreach ($pat in $apachePatterns) {
     if ($res -and (Test-Path "$($res.Path)\httpd.conf")) {
         $apacheConfDir = $res.Path
         break
+    }
+}
+
+# Instalar Apache via choco si no existe
+if (-not $apacheConfDir) {
+    Write-Warn "Apache no encontrado -- instalando via Chocolatey..."
+    $null = Invoke-Cmd 'choco' @('install','apache-httpd','-y','--no-progress','--force')
+    Update-Path
+    Start-Sleep 3
+    # Re-detectar tras instalacion
+    foreach ($pat in $apachePatterns) {
+        $res = Resolve-Path $pat -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($res -and (Test-Path "$($res.Path)\httpd.conf")) {
+            $apacheConfDir = $res.Path
+            break
+        }
+    }
+    if ($apacheConfDir) {
+        # Instalar Apache como servicio de Windows
+        $apacheBin = Split-Path $apacheConfDir -Parent | Join-Path -ChildPath 'bin\httpd.exe'
+        if (Test-Path $apacheBin) {
+            & $apacheBin -k install 2>$null | Out-Null
+            Write-Ok "Apache instalado en $apacheConfDir"
+        }
+    } else {
+        Write-Warn "Apache choco fallo -- intentando descarga directa Apache Lounge..."
+        $apacheZip = "$env:TEMP\apache24.zip"
+        $apacheUrl = "https://www.apachelounge.com/download/VS17/binaries/httpd-2.4.63-250207-win64-VS17.zip"
+        try {
+            (New-Object Net.WebClient).DownloadFile($apacheUrl, $apacheZip)
+            Expand-Archive $apacheZip -DestinationPath "$env:TEMP\apache-extract" -Force
+            Copy-Item "$env:TEMP\apache-extract\Apache24" "C:\Apache24" -Recurse -Force
+            $apacheConfDir = "C:\Apache24\conf"
+            & "C:\Apache24\bin\httpd.exe" -k install 2>$null | Out-Null
+            Write-Ok "Apache instalado desde Apache Lounge"
+        } catch {
+            Write-Warn "No se pudo instalar Apache: $_"
+        }
     }
 }
 
@@ -593,6 +629,15 @@ if (-not (Test-Path $serverScript)) { Write-Die "No se encontro $serverScript" }
 # Cargar variables del .env para NSSM (cada par KEY=VALUE como argumento separado)
 $envVars = @(Get-Content $ENV_FILE | Where-Object { $_ -match '^[A-Za-z_][A-Za-z0-9_]*=' })
 
+# Limpiar sesion WhatsApp para forzar re-autenticacion
+Write-Info "  Limpiando sesion WhatsApp para re-autenticacion..."
+$authDir = "$APPDATA_BOT\auth"
+if (Test-Path $authDir) {
+    Remove-Item $authDir -Recurse -Force -ErrorAction SilentlyContinue
+    Write-Ok "Sesion WhatsApp borrada -- se generara nuevo codigo de vinculacion"
+}
+New-Item -ItemType Directory -Force -Path $authDir | Out-Null
+
 # Detener y eliminar servicio previo si existe
 $existingSvc = Get-Service -Name $SVC_NAME -ErrorAction SilentlyContinue
 if ($existingSvc) {
@@ -666,34 +711,40 @@ if (-not $serverOk) {
 }
 Write-Ok "Servicio $SVC_NAME activo en puerto $PORT (auto-inicio habilitado)"
 
-# -- Cloudflared como servicio de respaldo (si no hay Apache o no hay SSL) -----
+# -- Cloudflared como tunel HTTPS publico (trycloudflare.com, sin cuenta) -----
 if ($cfExe -and (Test-Path $cfExe)) {
-    $cfSvcExists = Get-Service -Name $CF_SVC_NAME -ErrorAction SilentlyContinue
-    # Solo instalar tunel si Apache no tiene SSL
-    $needsTunnel = -not ($apacheConfDir -and (Test-Path "C:\Certbot\live\$DOMAIN\fullchain.pem"))
-    if ($needsTunnel -and -not $cfSvcExists) {
-        Write-Info "  Instalando cloudflared como servicio de respaldo..."
-        Stop-Service $CF_SVC_NAME -Force -ErrorAction SilentlyContinue
-        & $nssmExe remove $CF_SVC_NAME confirm 2>$null | Out-Null
-        & $nssmExe install $CF_SVC_NAME $cfExe "tunnel --url http://localhost:$PORT --no-autoupdate" 2>$null | Out-Null
-        & $nssmExe set $CF_SVC_NAME AppStdout "$LOG\tunnel.log" 2>$null | Out-Null
-        & $nssmExe set $CF_SVC_NAME AppStderr "$LOG\tunnel.log" 2>$null | Out-Null
-        & $nssmExe set $CF_SVC_NAME AppRestartDelay 10000 2>$null | Out-Null
-        Set-Service -Name $CF_SVC_NAME -StartupType Automatic -ErrorAction SilentlyContinue
-        Start-Service $CF_SVC_NAME -ErrorAction SilentlyContinue
-        Start-Sleep 5
-        # Extraer URL del tunel del log
-        $tunnelUrl = ''
+    Write-Info "  Instalando cloudflared como tunel HTTPS publico..."
+    Stop-Service $CF_SVC_NAME -Force -ErrorAction SilentlyContinue
+    & $nssmExe remove $CF_SVC_NAME confirm 2>$null | Out-Null
+    Start-Sleep 2
+    # Apuntar al puerto de Apache (80) si Apache esta activo, sino directo a Node
+    $tunnelPort = if ($apacheConfDir -and $apacheSvc) { 80 } else { $PORT }
+    & $nssmExe install $CF_SVC_NAME $cfExe "tunnel --url http://localhost:$tunnelPort --no-autoupdate" 2>$null | Out-Null
+    & $nssmExe set $CF_SVC_NAME AppStdout "$LOG\tunnel.log" 2>$null | Out-Null
+    & $nssmExe set $CF_SVC_NAME AppStderr "$LOG\tunnel.log" 2>$null | Out-Null
+    & $nssmExe set $CF_SVC_NAME AppStdoutCreationDisposition 2 2>$null | Out-Null
+    & $nssmExe set $CF_SVC_NAME AppStderrCreationDisposition 2 2>$null | Out-Null
+    & $nssmExe set $CF_SVC_NAME AppRestartDelay 10000 2>$null | Out-Null
+    Set-Service -Name $CF_SVC_NAME -StartupType Automatic -ErrorAction SilentlyContinue
+    "" | Set-Content "$LOG\tunnel.log" -Encoding UTF8
+    Start-Service $CF_SVC_NAME -ErrorAction SilentlyContinue
+    # Esperar URL del tunel (max 30s)
+    $tunnelUrl = ''
+    for ($i = 0; $i -lt 15; $i++) {
+        Start-Sleep 2
         $tlog = Get-Content "$LOG\tunnel.log" -Raw -ErrorAction SilentlyContinue
         if ($tlog -match 'https://[a-z0-9-]+\.trycloudflare\.com') {
-            $tunnelUrl = $Matches[0]
-            Write-Ok "Tunel cloudflare activo: $tunnelUrl"
-        } else {
-            Write-Ok "Servicio $CF_SVC_NAME registrado (tunel de respaldo)"
+            $tunnelUrl = $Matches[0]; break
         }
-    } elseif ($needsTunnel) {
-        Write-Ok "Servicio $CF_SVC_NAME ya existe"
     }
+    if ($tunnelUrl) {
+        Write-Ok "Cloudflare tunnel activo: $tunnelUrl"
+    } else {
+        Write-Ok "Servicio $CF_SVC_NAME registrado (URL aparece en $LOG\tunnel.log)"
+    }
+} else {
+    Write-Warn "cloudflared no disponible -- acceso via DuckDNS: http://$DOMAIN"
+    $tunnelUrl = ''
 }
 
 # -- Codigo de vinculacion WhatsApp ----------------------------
@@ -740,22 +791,21 @@ Write-Host ""
 Write-Host "  +======================================================+" -ForegroundColor Green
 Write-Host "  |        SISTEMA ACTIVO Y FUNCIONANDO                  |" -ForegroundColor Green
 Write-Host "  +======================================================+" -ForegroundColor Green
-Write-Host "  | App    : https://$DOMAIN/app/  |" -ForegroundColor White
-Write-Host "  | API    : https://$DOMAIN/api/  |" -ForegroundColor White
-Write-Host "  | Health : https://$DOMAIN/health|" -ForegroundColor White
+Write-Host "  | DuckDNS: http://$DOMAIN  |" -ForegroundColor White
+if ($tunnelUrl) {
+    Write-Host "  | Tunnel : $tunnelUrl" -ForegroundColor Green
+    Write-Host "  |   App  : $tunnelUrl/app/" -ForegroundColor Green
+    Write-Host "  |   API  : $tunnelUrl/api/" -ForegroundColor Green
+}
 Write-Host "  | Local  : http://localhost:$PORT                |" -ForegroundColor Cyan
 Write-Host "  +------------------------------------------------------+" -ForegroundColor Green
-Write-Host "  | Servicio Node : sc query $SVC_NAME             |" -ForegroundColor Green
 Write-Host "  | Logs          : $LOG\            |" -ForegroundColor Green
 Write-Host "  +======================================================+" -ForegroundColor Green
 Write-Host ""
-Write-Host "  Servicios instalados como Windows Services (sobreviven reinicios):" -ForegroundColor Yellow
-Write-Host "    - $SVC_NAME  (Node.js server, NSSM)"    -ForegroundColor Yellow
+Write-Host "  Servicios activos (sobreviven reinicios):" -ForegroundColor Yellow
+Write-Host "    - $SVC_NAME  (Node.js, NSSM)"            -ForegroundColor Yellow
+Write-Host "    - $CF_SVC_NAME  (cloudflared tunnel)"     -ForegroundColor Yellow
 if ($apacheSvc) { Write-Host "    - $($apacheSvc.Name)  (Apache reverse proxy)" -ForegroundColor Yellow }
-Write-Host "    - DuckDNS-Monserrath  (tarea programada cada 10 min)"           -ForegroundColor Yellow
-Write-Host ""
-Write-Host "  IMPORTANTE -- Verifica que estos puertos esten abiertos en el VPS:" -ForegroundColor Cyan
-Write-Host "    Puerto 80  (HTTP / Let's Encrypt challenge)"                     -ForegroundColor Cyan
-Write-Host "    Puerto 443 (HTTPS)"                                              -ForegroundColor Cyan
+Write-Host "    - DuckDNS-Monserrath  (tarea programada cada 10 min)" -ForegroundColor Yellow
 Write-Host ""
 Write-Host "  Deploy completado." -ForegroundColor Green
