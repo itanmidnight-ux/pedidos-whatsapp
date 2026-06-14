@@ -10,9 +10,8 @@
 #>
 
 # -- Auto-elevacion a Administrador ---------------------------
-if (-NOT ([Security.Principal.WindowsPrincipal]
-    [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
-    [Security.Principal.WindowsBuiltInRole]::Administrator)) {
+$currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+if (-NOT $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     Start-Process PowerShell.exe `
         -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`"" `
         -Verb RunAs
@@ -535,7 +534,7 @@ if ($apacheConfDir) {
     if ($apacheSvc) {
         Restart-Service $apacheSvc.Name -ErrorAction SilentlyContinue
         Start-Sleep 2
-        $svcState = (Get-Service $apacheSvc.Name -ErrorAction SilentlyContinue)?.Status
+        $svcState = if ($s = Get-Service $apacheSvc.Name -ErrorAction SilentlyContinue) { $s.Status } else { $null }
         if ($svcState -eq 'Running') { Write-Ok "Apache: servicio activo" }
         else { Write-Warn "Apache: el servicio no arranco. Revisa la config manualmente." }
     }
@@ -551,10 +550,10 @@ if ($apacheConfDir) {
 Write-Info "PASO 10/10 -- Registrando Node.js como servicio de Windows..."
 
 # Ruta absoluta al ejecutable de Node
-$nodeExe = (Get-Command node -ErrorAction SilentlyContinue)?.Source
+$nodeExe = if ($c = Get-Command node -ErrorAction SilentlyContinue) { $c.Source } else { $null }
 if (-not $nodeExe) {
     Update-Path
-    $nodeExe = (Get-Command node -ErrorAction SilentlyContinue)?.Source
+    $nodeExe = if ($c = Get-Command node -ErrorAction SilentlyContinue) { $c.Source } else { $null }
 }
 if (-not $nodeExe) { Write-Die "node.exe no encontrado en PATH. Reinstala Node.js." }
 $serverScript = "$PROJ\server\src\index.js"
@@ -606,13 +605,13 @@ Write-Ok "Servicio $SVC_NAME registrado con NSSM"
 # Iniciar el servicio
 Start-Service $SVC_NAME -ErrorAction SilentlyContinue
 Start-Sleep 3
-$svcStatus = (Get-Service $SVC_NAME -ErrorAction SilentlyContinue)?.Status
+$svcStatus = if ($s = Get-Service $SVC_NAME -ErrorAction SilentlyContinue) { $s.Status } else { $null }
 if ($svcStatus -ne 'Running') {
     Write-Warn "Reintentando inicio del servicio..."
     Start-Sleep 3
     Start-Service $SVC_NAME -ErrorAction SilentlyContinue
     Start-Sleep 3
-    $svcStatus = (Get-Service $SVC_NAME -ErrorAction SilentlyContinue)?.Status
+    $svcStatus = if ($s = Get-Service $SVC_NAME -ErrorAction SilentlyContinue) { $s.Status } else { $null }
 }
 
 # Verificar que el servidor responde
