@@ -216,33 +216,9 @@ if (-not $cfExe) {
     Write-Ok "cloudflared OK ($cfExe)"
 }
 
-# -------------------------------------------------------------
-# PASO 5 -- Certbot (SSL / Let's Encrypt)
-# -------------------------------------------------------------
-Write-Info "PASO 5/10 -- Verificando Certbot (SSL)..."
-$certbotExe = ''
-$certbotPaths = @(
-    "$env:ProgramFiles\Certbot\bin\certbot.exe",
-    "C:\ProgramData\chocolatey\bin\certbot.exe",
-    (Get-Command certbot -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -ErrorAction SilentlyContinue)
-)
-foreach ($p in $certbotPaths) {
-    if ($p -and (Test-Path $p)) { $certbotExe = $p; break }
-}
-if (-not $certbotExe) {
-    Write-Warn "Instalando Certbot..."
-    $null = Invoke-Cmd 'choco' @('install','certbot','-y','--no-progress')
-    Update-Path
-    foreach ($p in $certbotPaths) {
-        if ($p -and (Test-Path $p)) { $certbotExe = $p; break }
-    }
-    $cbCmd = Get-Command certbot -ErrorAction SilentlyContinue
-    if ($cbCmd) { $certbotExe = $cbCmd.Source }
-    if ($certbotExe) { Write-Ok "Certbot instalado" }
-    else { Write-Warn "Certbot no encontrado -- se configurara SSL manualmente" }
-} else {
-    Write-Ok "Certbot OK"
-}
+# PASO 5 -- HTTPS via cloudflared (reemplaza Certbot)
+Write-Info "PASO 5/10 -- HTTPS: cloudflared maneja SSL (sin Certbot necesario)"
+Write-Ok "SSL: cloudflared tunnel provee HTTPS automatico"
 
 # -------------------------------------------------------------
 # PASO 6 -- Dependencias npm
@@ -393,260 +369,116 @@ netsh int tcp set global maxsynretransmissions=2  2>$null | Out-Null
 Write-Ok "TCP: parametros de rendimiento aplicados"
 
 # -------------------------------------------------------------
-# PASO 9 -- Apache: instalar + reverse proxy
+# PASO 9 -- nginx: instalar + reverse proxy en puerto 80/443
 # -------------------------------------------------------------
-Write-Info "PASO 9/10 -- Configurando Apache..."
+Write-Info "PASO 9/10 -- Configurando nginx reverse proxy..."
 
-# Buscar Apache en rutas comunes
-$apacheConfDir = $null
-$apachePatterns = @(
-    'C:\Apache24\conf',
-    'C:\Apache2\conf',
-    'C:\Apache2.4\conf',
-    'C:\xampp\apache\conf',
-    'C:\wamp64\bin\apache\apache2.4.*\conf',
-    'C:\wamp\bin\apache\apache2.4.*\conf',
-    'C:\laragon\bin\apache\apache-*\conf'
-)
-foreach ($pat in $apachePatterns) {
-    $res = Resolve-Path $pat -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($res -and (Test-Path "$($res.Path)\httpd.conf")) {
-        $apacheConfDir = $res.Path
-        break
-    }
+# Detectar nginx en rutas comunes
+$nginxExe = $null
+$nginxDir = $null
+$nginxPaths = @('C:\nginx','C:\tools\nginx','C:\ProgramData\chocolatey\lib\nginx\tools\nginx')
+foreach ($p in $nginxPaths) {
+    if (Test-Path "$p\nginx.exe") { $nginxExe = "$p\nginx.exe"; $nginxDir = $p; break }
 }
 
-# Instalar Apache si no existe
-if (-not $apacheConfDir) {
-    Write-Warn "Apache no encontrado -- instalando..."
-
-    # Intento 1: WinGet (disponible en Windows Server 2025)
-    $winget = Get-Command winget -ErrorAction SilentlyContinue
-    if ($winget) {
-        Write-Warn "  Intentando WinGet..."
-        & winget install --id Apache.ApacheHTTPServer -e --silent --accept-source-agreements --accept-package-agreements 2>$null | Out-File "$LOG\install.log" -Append
-        Start-Sleep 5
-    }
-
-    # Intento 2: Chocolatey
-    if (-not (Test-Path 'C:\Apache24\conf\httpd.conf')) {
-        Write-Warn "  Intentando Chocolatey..."
-        $null = Invoke-Cmd 'choco' @('install','apache-httpd','-y','--no-progress','--force')
-        Start-Sleep 3
-    }
-
-    # Intento 3: Descarga directa desde GitHub (binarios de Apache Lounge reempaquetados)
-    if (-not (Test-Path 'C:\Apache24\conf\httpd.conf')) {
-        Write-Warn "  Descargando Apache 2.4 directo..."
-        $apacheZip = "$env:TEMP\apache24.zip"
-        # Intentar varias versiones conocidas de Apache Lounge
-        $apacheUrls = @(
-            'https://github.com/nicholasvanni/apache-windows/releases/download/2.4.62/Apache24.zip',
-            'https://www.apachelounge.com/download/VS17/binaries/httpd-2.4.62-240904-win64-VS17.zip',
-            'https://www.apachelounge.com/download/VS17/binaries/httpd-2.4.58-win64-VS17.zip'
-        )
-        foreach ($url in $apacheUrls) {
-            try {
-                Write-Info "    Probando: $url"
-                [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-                (New-Object Net.WebClient).DownloadFile($url, $apacheZip)
-                $zipOk = Test-Path $apacheZip
-                if ($zipOk -and (Get-Item $apacheZip).Length -gt 1MB) {
-                    Expand-Archive $apacheZip -DestinationPath "$env:TEMP\apache-extract" -Force -ErrorAction Stop
-                    if (Test-Path "$env:TEMP\apache-extract\Apache24") {
-                        Copy-Item "$env:TEMP\apache-extract\Apache24" "C:\Apache24" -Recurse -Force
-                    } elseif (Test-Path "$env:TEMP\apache-extract") {
-                        $sub = Get-ChildItem "$env:TEMP\apache-extract" -Directory | Select-Object -First 1
-                        if ($sub) { Copy-Item $sub.FullName "C:\Apache24" -Recurse -Force }
-                    }
-                    if (Test-Path 'C:\Apache24\conf\httpd.conf') {
-                        Write-Ok "Apache descargado desde: $url"
-                        break
-                    }
-                }
-            } catch { Write-Warn "    Fallo ($url): $_" }
-        }
-    }
-
-    # Re-detectar tras instalacion
+# Instalar nginx via choco si no existe
+if (-not $nginxExe) {
+    Write-Warn "nginx no encontrado -- instalando via Chocolatey..."
+    $null = Invoke-Cmd 'choco' @('install','nginx','-y','--no-progress','--force')
     Update-Path
-    foreach ($pat in $apachePatterns) {
-        $res = Resolve-Path $pat -ErrorAction SilentlyContinue | Select-Object -First 1
-        if ($res -and (Test-Path "$($res.Path)\httpd.conf")) {
-            $apacheConfDir = $res.Path; break
-        }
+    Start-Sleep 5
+    foreach ($p in $nginxPaths) {
+        if (Test-Path "$p\nginx.exe") { $nginxExe = "$p\nginx.exe"; $nginxDir = $p; break }
     }
-    if ($apacheConfDir) {
-        $apacheBin = Join-Path (Split-Path $apacheConfDir -Parent) 'bin\httpd.exe'
-        if (Test-Path $apacheBin) {
-            & $apacheBin -k install 2>$null | Out-Null
-            Write-Ok "Apache instalado en $apacheConfDir"
-        }
-    } else {
-        Write-Warn "Apache no pudo instalarse -- Node.js servira directamente en puerto $PORT"
-    }
+    $ngCmd = Get-Command nginx -ErrorAction SilentlyContinue
+    if ($ngCmd -and -not $nginxExe) { $nginxExe = $ngCmd.Source; $nginxDir = Split-Path $nginxExe }
 }
 
-$apacheSvc = Get-Service -ErrorAction SilentlyContinue |
-    Where-Object { $_.Name -match '^Apache|^httpd' -or $_.DisplayName -match 'Apache HTTP' } |
-    Select-Object -First 1
+$nginxSvcName = 'MonserratNginx'
+$nginxSvc     = Get-Service -Name $nginxSvcName -ErrorAction SilentlyContinue
 
-if ($apacheConfDir) {
-    Write-Ok "Apache encontrado: $apacheConfDir"
-    $httpdConf  = "$apacheConfDir\httpd.conf"
-    $extraDir   = "$apacheConfDir\extra"
-    New-Item -ItemType Directory -Force -Path $extraDir | Out-Null
+if ($nginxExe -and (Test-Path $nginxExe)) {
+    Write-Ok "nginx encontrado: $nginxExe"
 
-    # Habilitar modulos necesarios (quitar # de LoadModule)
-    $conf = Get-Content $httpdConf -Raw -Encoding UTF8
-    @('proxy_module','proxy_http_module','proxy_wstunnel_module',
-      'headers_module','rewrite_module','ssl_module') | ForEach-Object {
-        $conf = $conf -replace ('#\s*LoadModule ' + $_ + '\b'), "LoadModule $_"
-    }
-    $conf = $conf -replace '#(Include conf/extra/httpd-ssl\.conf)',    '$1'
-    $conf = $conf -replace '#(Include conf/extra/httpd-vhosts\.conf)', '$1'
-    Set-Content $httpdConf $conf -Encoding UTF8
+    # Escribir config nginx
+    $nginxConf = "$nginxDir\conf\nginx.conf"
+    @"
+worker_processes 1;
+error_log $($LOG -replace '\\','/')/nginx-error.log warn;
+pid       $($nginxDir -replace '\\','/')/logs/nginx.pid;
 
-    # Obtener certificado SSL si no existe
-    $certFile = "C:\Certbot\live\$DOMAIN\fullchain.pem"
-    $keyFile  = "C:\Certbot\live\$DOMAIN\privkey.pem"
-    $sslOk    = Test-Path $certFile
+events { worker_connections 1024; }
 
-    if (-not $sslOk -and $certbotExe -and (Test-Path $certbotExe)) {
-        Write-Info "  Obteniendo certificado SSL (Let's Encrypt)..."
-        Write-Info "  Deteniendo Apache para challenge HTTP..."
-        if ($apacheSvc) { Stop-Service $apacheSvc.Name -Force -ErrorAction SilentlyContinue }
-        Start-Sleep 3
+http {
+    include       mime.types;
+    default_type  application/octet-stream;
+    sendfile      on;
+    keepalive_timeout 65;
+    client_max_body_size 50M;
 
-        # Liberar puerto 80 si lo tiene algo mas
-        $p80 = Get-NetTCPConnection -LocalPort 80 -State Listen -ErrorAction SilentlyContinue
-        if ($p80) { Stop-Process -Id $p80[0].OwningProcess -Force -ErrorAction SilentlyContinue }
+    access_log $($LOG -replace '\\','/')/nginx-access.log;
 
-        $p = Start-Process -FilePath $certbotExe `
-            -ArgumentList "certonly --standalone -d $DOMAIN --non-interactive --agree-tos --email webmaster@$DOMAIN --preferred-challenges http" `
-            -Wait -PassThru -NoNewWindow
-        if ($p.ExitCode -eq 0 -and (Test-Path $certFile)) {
-            Write-Ok "Certificado SSL obtenido para $DOMAIN"
-            $sslOk = $true
-        } else {
-            Write-Warn "Certbot fallo (exit $($p.ExitCode))"
-            Write-Warn "Asegurate de que el puerto 80 sea accesible desde Internet"
-            Write-Warn "Vuelve a ejecutar este script cuando el puerto este abierto"
+    server {
+        listen 80;
+        server_name $DOMAIN $VPS_IP;
+
+        location / {
+            proxy_pass         http://127.0.0.1:$PORT;
+            proxy_http_version 1.1;
+            proxy_set_header   Upgrade `$http_upgrade;
+            proxy_set_header   Connection 'upgrade';
+            proxy_set_header   Host `$host;
+            proxy_set_header   X-Real-IP `$remote_addr;
+            proxy_set_header   X-Forwarded-For `$proxy_add_x_forwarded_for;
+            proxy_set_header   X-Forwarded-Proto `$scheme;
+            proxy_cache_bypass `$http_upgrade;
+            proxy_read_timeout 300;
+            proxy_connect_timeout 300;
         }
     }
+}
+"@ | Set-Content $nginxConf -Encoding UTF8
+    Write-Ok "nginx: config escrita en $nginxConf"
 
-    # Generar vhost Apache (HTTPS si hay cert, HTTP temporal si no)
-    $vhostFile = "$extraDir\monserrath-vhost.conf"
-    if ($sslOk) {
-        @"
-# ===================================================
-#  Concentrados Monserrath - Apache VirtualHost HTTPS
-#  Generado por deploy-windows.ps1
-# ===================================================
+    # Matar instancias previas de nginx
+    Stop-Service $nginxSvcName -Force -ErrorAction SilentlyContinue
+    & $nssmExe remove $nginxSvcName confirm 2>$null | Out-Null
+    Get-Process nginx -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    Start-Sleep 2
 
-# Puerto 80 -> redirigir a HTTPS
-<VirtualHost *:80>
-    ServerName $DOMAIN
-    RewriteEngine On
-    RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
-</VirtualHost>
+    # Liberar puerto 80 si algo lo ocupa
+    $p80 = Get-NetTCPConnection -LocalPort 80 -State Listen -ErrorAction SilentlyContinue
+    if ($p80) { Stop-Process -Id $p80[0].OwningProcess -Force -ErrorAction SilentlyContinue; Start-Sleep 1 }
 
-# Puerto 443 - Reverse Proxy HTTPS
-<VirtualHost *:443>
-    ServerName $DOMAIN
-
-    SSLEngine               on
-    SSLCertificateFile      "C:/Certbot/live/$DOMAIN/cert.pem"
-    SSLCertificateKeyFile   "C:/Certbot/live/$DOMAIN/privkey.pem"
-    SSLCertificateChainFile "C:/Certbot/live/$DOMAIN/chain.pem"
-    SSLProtocol             all -SSLv2 -SSLv3 -TLSv1 -TLSv1.1
-    SSLCipherSuite          HIGH:!aNULL:!MD5
-
-    # Proxy a Node.js
-    ProxyPreserveHost On
-    ProxyRequests     Off
-
-    # WebSocket y SSE
-    RewriteEngine On
-    RewriteCond %{HTTP:Upgrade} websocket [NC]
-    RewriteRule ^/(.*) ws://127.0.0.1:$PORT/`$1 [P,L]
-
-    ProxyPass        / http://127.0.0.1:$PORT/
-    ProxyPassReverse / http://127.0.0.1:$PORT/
-
-    Header always set X-Forwarded-Proto "https"
-    Header always set X-Real-IP "%{REMOTE_ADDR}e"
-    RequestHeader set ngrok-skip-browser-warning "true"
-
-    # Keep-Alive para conexiones rapidas
-    KeepAlive On
-    KeepAliveTimeout 65
-    MaxKeepAliveRequests 100
-
-    ErrorLog  "$LOG/apache-error.log"
-    CustomLog "$LOG/apache-access.log" combined
-</VirtualHost>
-"@ | Set-Content $vhostFile -Encoding UTF8
-        Write-Ok "Apache: vhost HTTPS configurado"
-    } else {
-        @"
-# ===================================================
-#  Concentrados Monserrath - Apache VirtualHost HTTP
-#  TEMPORAL - volver a ejecutar para obtener SSL
-# ===================================================
-<VirtualHost *:80>
-    ServerName $DOMAIN
-
-    ProxyPreserveHost On
-    ProxyRequests     Off
-    ProxyPass         / http://127.0.0.1:$PORT/
-    ProxyPassReverse  / http://127.0.0.1:$PORT/
-
-    RequestHeader set ngrok-skip-browser-warning "true"
-    KeepAlive On
-    KeepAliveTimeout 65
-
-    ErrorLog  "$LOG/apache-error.log"
-    CustomLog "$LOG/apache-access.log" combined
-</VirtualHost>
-"@ | Set-Content $vhostFile -Encoding UTF8
-        Write-Ok "Apache: vhost HTTP (temporal -- sin SSL aun)"
-    }
-
-    # Incluir vhost en httpd.conf si no esta
-    $confCheck = Get-Content $httpdConf -Raw -Encoding UTF8
-    if ($confCheck -notmatch 'monserrath-vhost\.conf') {
-        Add-Content $httpdConf "`r`nInclude conf/extra/monserrath-vhost.conf" -Encoding UTF8
-        Write-Ok "Apache: include de vhost agregado a httpd.conf"
-    }
-
-    # Tarea de renovacion SSL (diaria a las 3am)
-    if ($sslOk -and $certbotExe -and (Test-Path $certbotExe)) {
-        Unregister-ScheduledTask -TaskName 'Certbot-Renew' -Confirm:$false -ErrorAction SilentlyContinue
-        $apacheSvcName = if ($apacheSvc) { $apacheSvc.Name } else { 'Apache24' }
-        $renewAction   = New-ScheduledTaskAction -Execute $certbotExe `
-            -Argument "renew --quiet --deploy-hook `"net start $apacheSvcName`""
-        $renewTrigger  = New-ScheduledTaskTrigger -Daily -At '03:00'
-        $renewSettings = New-ScheduledTaskSettingsSet -RunOnlyIfNetworkAvailable
-        Register-ScheduledTask -TaskName 'Certbot-Renew' `
-            -Action $renewAction -Trigger $renewTrigger -Settings $renewSettings `
-            -User 'NT AUTHORITY\SYSTEM' -RunLevel Highest -Force | Out-Null
-        Write-Ok "SSL: renovacion automatica programada (3am diario)"
-    }
-
-    # Reiniciar Apache como servicio
-    if ($apacheSvc) {
-        Restart-Service $apacheSvc.Name -ErrorAction SilentlyContinue
-        Start-Sleep 2
-        $svcState = if ($s = Get-Service $apacheSvc.Name -ErrorAction SilentlyContinue) { $s.Status } else { $null }
-        if ($svcState -eq 'Running') { Write-Ok "Apache: servicio activo" }
-        else { Write-Warn "Apache: el servicio no arranco. Revisa la config manualmente." }
-    }
+    # Registrar nginx como servicio NSSM
+    & $nssmExe install $nginxSvcName $nginxExe 2>$null | Out-Null
+    & $nssmExe set $nginxSvcName AppDirectory $nginxDir 2>$null | Out-Null
+    & $nssmExe set $nginxSvcName AppStdout "$LOG\nginx.log" 2>$null | Out-Null
+    & $nssmExe set $nginxSvcName AppStderr "$LOG\nginx.log" 2>$null | Out-Null
+    & $nssmExe set $nginxSvcName AppRestartDelay 5000 2>$null | Out-Null
+    Set-Service -Name $nginxSvcName -StartupType Automatic -ErrorAction SilentlyContinue
+    Start-Service $nginxSvcName -ErrorAction SilentlyContinue
+    Start-Sleep 3
+    $ngState = if ($s = Get-Service $nginxSvcName -ErrorAction SilentlyContinue) { $s.Status } else { 'Unknown' }
+    if ($ngState -eq 'Running') { Write-Ok "nginx activo (puerto 80 -> localhost:$PORT)" }
+    else { Write-Warn "nginx no arranco (estado: $ngState) -- usando portproxy como fallback" }
 } else {
-    Write-Warn "Apache no encontrado en rutas conocidas"
-    Write-Warn "Instala Apache24 desde https://www.apachelounge.com/download/"
-    Write-Warn "El servidor sera accesible directamente en http://${VPS_IP}:${PORT}"
+    Write-Warn "nginx no instalado -- usando netsh portproxy (80 -> $PORT)..."
 }
+
+# Fallback: netsh portproxy si nginx no esta disponible
+$portproxy80 = netsh interface portproxy show v4tov4 2>$null | Select-String ":80\s"
+if (-not ($nginxExe -and $nginxSvc) -or -not $portproxy80) {
+    netsh interface portproxy delete v4tov4 listenport=80  listenaddress=0.0.0.0 2>$null | Out-Null
+    netsh interface portproxy delete v4tov4 listenport=443 listenaddress=0.0.0.0 2>$null | Out-Null
+    netsh interface portproxy add v4tov4 listenport=80  listenaddress=0.0.0.0 connectport=$PORT connectaddress=127.0.0.1 2>$null | Out-Null
+    netsh interface portproxy add v4tov4 listenport=443 listenaddress=0.0.0.0 connectport=$PORT connectaddress=127.0.0.1 2>$null | Out-Null
+    Write-Ok "Portproxy: 80/443 -> $PORT"
+}
+
+# Alias para compatibilidad con bloque de resumen
+$apacheSvc = Get-Service -Name $nginxSvcName -ErrorAction SilentlyContinue
+
 
 # -------------------------------------------------------------
 # PASO 10 -- Servicio Windows para Node.js (via NSSM)
@@ -764,7 +596,7 @@ if ($cfExe -and (Test-Path $cfExe)) {
     & $nssmExe remove $CF_SVC_NAME confirm 2>$null | Out-Null
     Start-Sleep 2
     # Apuntar al puerto de Apache (80) si Apache esta activo, sino directo a Node
-    $tunnelPort = if ($apacheConfDir -and $apacheSvc) { 80 } else { $PORT }
+    $tunnelPort = if ($apacheSvc -and $apacheSvc.Status -eq 'Running') { 80 } else { $PORT }
     & $nssmExe install $CF_SVC_NAME $cfExe "tunnel --url http://localhost:$tunnelPort --no-autoupdate" 2>$null | Out-Null
     & $nssmExe set $CF_SVC_NAME AppStdout "$LOG\tunnel.log" 2>$null | Out-Null
     & $nssmExe set $CF_SVC_NAME AppStderr "$LOG\tunnel.log" 2>$null | Out-Null
@@ -800,8 +632,10 @@ $pairCode  = ''
 $connected = $false
 for ($i = 0; $i -lt 40; $i++) {
     $logContent = Get-Content "$LOG\server.log" -Raw -ErrorAction SilentlyContinue
-    if ($logContent -match '\[bot\].*nect') { $connected = $true; break }
-    if ($logContent -match '([A-Z0-9]{4}-[A-Z0-9]{4})') { $pairCode = $Matches[1]; break }
+    if ($logContent -cmatch '\[bot\].*[Cc]onnect') { $connected = $true; break }
+    if ($logContent -cmatch 'vinculacion[^=]+=+\s*([A-Z0-9]{4}-[A-Z0-9]{4})') { $pairCode = $Matches[1]; break }
+    if ($logContent -cmatch 'Pairing code[^:]*:\s*([A-Z0-9]{4}-[A-Z0-9]{4})') { $pairCode = $Matches[1]; break }
+    if ($logContent -cmatch 'code[^\n]*([A-Z0-9]{4}-[A-Z0-9]{4})') { $pairCode = $Matches[1]; break }
     Start-Sleep 2
 }
 
@@ -851,7 +685,7 @@ Write-Host ""
 Write-Host "  Servicios activos (sobreviven reinicios):" -ForegroundColor Yellow
 Write-Host "    - $SVC_NAME  (Node.js, NSSM)"            -ForegroundColor Yellow
 Write-Host "    - $CF_SVC_NAME  (cloudflared tunnel)"     -ForegroundColor Yellow
-if ($apacheSvc) { Write-Host "    - $($apacheSvc.Name)  (Apache reverse proxy)" -ForegroundColor Yellow }
+if ($apacheSvc) { Write-Host "    - $($apacheSvc.Name)  (nginx reverse proxy, puerto 80)" -ForegroundColor Yellow }
 Write-Host "    - DuckDNS-Monserrath  (tarea programada cada 10 min)" -ForegroundColor Yellow
 Write-Host ""
 Write-Host "  Deploy completado." -ForegroundColor Green
