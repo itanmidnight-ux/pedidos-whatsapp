@@ -266,6 +266,22 @@ cd "$APPDIR"
 PUB_LOCK="$APPDIR/pubspec.lock"
 PKG_CFG="$APPDIR/.dart_tool/package_config.json"
 
+# ── PASO 7: Clean opcional (ANTES de pub get) ────────────────────
+if [ "$CLEAN" = "--clean" ]; then
+    step "Limpiando build anterior..."
+    "$FLUTTER" clean 2>&1 | tail -2
+    ok "Clean completado"
+fi
+
+# Fix permisos de archivos que pudieron quedar como root
+sudo chown -R "$(id -u):$(id -g)" "$APPDIR/.dart_tool" 2>/dev/null || true
+sudo chown -R "$(id -u):$(id -g)" "$APPDIR/.flutter-plugins" 2>/dev/null || true
+sudo chown -R "$(id -u):$(id -g)" "$APPDIR/.flutter-plugins-dependencies" 2>/dev/null || true
+sudo chown -R "$(id -u):$(id -g)" "$APPDIR/android/.gradle" 2>/dev/null || true
+sudo chown -R "$(id -u):$(id -g)" "$APPDIR/android/local.properties" 2>/dev/null || true
+sudo chown -R "$(id -u):$(id -g)" "$HOME/.gradle" 2>/dev/null || true
+sudo chown -R "$(id -u):$(id -g)" "$HOME/.pub-cache" 2>/dev/null || true
+
 NEEDS_PUBGET=true
 if [ -f "$PUB_LOCK" ] && [ -f "$PKG_CFG" ] && \
    [ "$PUB_LOCK" -nt "$APPDIR/pubspec.yaml" ] && \
@@ -279,13 +295,6 @@ if [ "$NEEDS_PUBGET" = "true" ]; then
     ok "Dependencias resueltas"
 else
     ok "Dependencias OK (cache — usa --clean para forzar)"
-fi
-
-# ── PASO 7: Clean opcional ───────────────────────────────────────
-if [ "$CLEAN" = "--clean" ]; then
-    step "Limpiando build anterior..."
-    "$FLUTTER" clean 2>&1 | tail -2
-    ok "Clean completado"
 fi
 
 # ── PASO 8: Verificar fuentes vs APK existente ───────────────────
@@ -316,6 +325,13 @@ fi
 step "Compilando APK release (puede tardar 3-10 min en primer build)..."
 echo -e "  compileSdk=$COMPILE_SDK | targetSdk=$TARGET_SDK | minSdk=23"
 echo -e "  NDK=$NDK_VERSION | build-tools=$BUILD_TOOLS | R8=ON\n"
+
+# Re-escribir local.properties justo antes del build (Flutter puede sobreescribirlo)
+cat > "$LOCAL_PROPS" << LOCALEOF
+sdk.dir=$SDK
+flutter.sdk=$FLUTTER_DIR
+ndk.dir=$SDK/ndk/$NDK_VERSION
+LOCALEOF
 
 cd "$APPDIR"
 "$FLUTTER" build apk \

@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    Concentrados Monserrath v2.0 — Instalacion y despliegue en Windows VPS
+    Concentrados Monserrath v2.0 -- Instalacion y despliegue en Windows VPS
     Dominio : tu-dominio.duckdns.org | IP: 38.252.236.141
 .NOTES
     Click derecho -> Ejecutar con PowerShell
@@ -9,7 +9,7 @@
     Requiere     : Windows Server 2019+ o Windows 10+ con Apache ya instalado
 #>
 
-# ── Auto-elevacion a Administrador ───────────────────────────
+# -- Auto-elevacion a Administrador ---------------------------
 if (-NOT ([Security.Principal.WindowsPrincipal]
     [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
     [Security.Principal.WindowsBuiltInRole]::Administrator)) {
@@ -22,7 +22,7 @@ if (-NOT ([Security.Principal.WindowsPrincipal]
 Set-StrictMode -Off
 $ErrorActionPreference = 'Continue'
 
-# ── Constantes pre-configuradas ───────────────────────────────
+# -- Constantes pre-configuradas -------------------------------
 $DOMAIN      = "tu-dominio.duckdns.org"
 $DUCK_TOKEN  = "ec02d59d-b06c-4094-a4b1-0b5c1c95ce91"
 $SUBDOMAIN   = "concentrados-monserrath"
@@ -36,7 +36,7 @@ $LOG      = "$PROJ\logs"
 $ENV_FILE = "$PROJ\server\.env"
 $APPDATA_BOT = "$env:APPDATA\pedidos-bot"
 
-# ── Helpers de consola ────────────────────────────────────────
+# -- Helpers de consola ----------------------------------------
 function Write-Ok($m)   { Write-Host "  [OK]  $m" -ForegroundColor Green }
 function Write-Warn($m) { Write-Host "  [!]   $m" -ForegroundColor Yellow }
 function Write-Info($m) { Write-Host "  >>    $m" -ForegroundColor Cyan }
@@ -68,7 +68,7 @@ function Test-Cmd($name) {
     return !!(Get-Command $name -ErrorAction SilentlyContinue)
 }
 
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 Clear-Host
 Write-Host ""
 Write-Host "  ========================================================" -ForegroundColor Green
@@ -85,10 +85,10 @@ foreach ($d in @($LOG, "$APPDATA_BOT\media", "$APPDATA_BOT\docs",
 }
 "" | Out-File "$LOG\install.log" -Encoding UTF8
 
-# ─────────────────────────────────────────────────────────────
-# PASO 1 — Chocolatey
-# ─────────────────────────────────────────────────────────────
-Write-Info "PASO 1/10 — Verificando Chocolatey..."
+# -------------------------------------------------------------
+# PASO 1 -- Chocolatey
+# -------------------------------------------------------------
+Write-Info "PASO 1/10 -- Verificando Chocolatey..."
 Update-Path
 if (-not (Test-Cmd 'choco')) {
     Write-Warn "Instalando Chocolatey..."
@@ -103,10 +103,10 @@ if (-not (Test-Cmd 'choco')) {
     Write-Ok "Chocolatey $(choco --version 2>$null)"
 }
 
-# ─────────────────────────────────────────────────────────────
-# PASO 2 — Node.js 20 LTS
-# ─────────────────────────────────────────────────────────────
-Write-Info "PASO 2/10 — Verificando Node.js 20..."
+# -------------------------------------------------------------
+# PASO 2 -- Node.js 20 LTS
+# -------------------------------------------------------------
+Write-Info "PASO 2/10 -- Verificando Node.js 20..."
 Update-Path
 $nodeVer = ''
 try { $nodeVer = (& node --version 2>$null) } catch {}
@@ -128,10 +128,10 @@ if ($nodeVer -notmatch '^v20') {
     Write-Ok "Node.js $nodeVer"
 }
 
-# ─────────────────────────────────────────────────────────────
-# PASO 3 — NSSM (Windows Service Manager para Node.js)
-# ─────────────────────────────────────────────────────────────
-Write-Info "PASO 3/10 — Verificando NSSM (gestor de servicios)..."
+# -------------------------------------------------------------
+# PASO 3 -- NSSM (Windows Service Manager para Node.js)
+# -------------------------------------------------------------
+Write-Info "PASO 3/10 -- Verificando NSSM (gestor de servicios)..."
 $nssmExe = "$env:ProgramFiles\nssm\nssm.exe"
 if (-not (Test-Path $nssmExe)) {
     Write-Warn "Instalando NSSM..."
@@ -150,10 +150,10 @@ if (-not (Test-Path $nssmExe)) {
     Write-Ok "NSSM OK ($nssmExe)"
 }
 
-# ─────────────────────────────────────────────────────────────
-# PASO 4 — Cloudflared (tunel de respaldo)
-# ─────────────────────────────────────────────────────────────
-Write-Info "PASO 4/10 — Verificando cloudflared..."
+# -------------------------------------------------------------
+# PASO 4 -- Cloudflared (tunel de respaldo)
+# -------------------------------------------------------------
+Write-Info "PASO 4/10 -- Verificando cloudflared..."
 Update-Path
 $cfExe = ''
 $cfPaths = @(
@@ -173,16 +173,16 @@ if (-not $cfExe) {
     }
     $cfCmd = Get-Command cloudflared -ErrorAction SilentlyContinue
     if ($cfCmd) { $cfExe = $cfCmd.Source }
-    if (-not $cfExe) { Write-Warn "cloudflared no encontrado — continuando sin tunel de respaldo" }
+    if (-not $cfExe) { Write-Warn "cloudflared no encontrado -- continuando sin tunel de respaldo" }
     else { Write-Ok "cloudflared instalado" }
 } else {
     Write-Ok "cloudflared OK"
 }
 
-# ─────────────────────────────────────────────────────────────
-# PASO 5 — Certbot (SSL / Let's Encrypt)
-# ─────────────────────────────────────────────────────────────
-Write-Info "PASO 5/10 — Verificando Certbot (SSL)..."
+# -------------------------------------------------------------
+# PASO 5 -- Certbot (SSL / Let's Encrypt)
+# -------------------------------------------------------------
+Write-Info "PASO 5/10 -- Verificando Certbot (SSL)..."
 $certbotExe = ''
 $certbotPaths = @(
     "$env:ProgramFiles\Certbot\bin\certbot.exe",
@@ -202,15 +202,15 @@ if (-not $certbotExe) {
     $cbCmd = Get-Command certbot -ErrorAction SilentlyContinue
     if ($cbCmd) { $certbotExe = $cbCmd.Source }
     if ($certbotExe) { Write-Ok "Certbot instalado" }
-    else { Write-Warn "Certbot no encontrado — se configurara SSL manualmente" }
+    else { Write-Warn "Certbot no encontrado -- se configurara SSL manualmente" }
 } else {
     Write-Ok "Certbot OK"
 }
 
-# ─────────────────────────────────────────────────────────────
-# PASO 6 — Dependencias npm
-# ─────────────────────────────────────────────────────────────
-Write-Info "PASO 6/10 — Verificando dependencias npm..."
+# -------------------------------------------------------------
+# PASO 6 -- Dependencias npm
+# -------------------------------------------------------------
+Write-Info "PASO 6/10 -- Verificando dependencias npm..."
 $nodeModules = "$PROJ\server\node_modules"
 $pkgJson     = "$PROJ\server\package.json"
 $pkgLock     = "$PROJ\server\package-lock.json"
@@ -238,14 +238,14 @@ if ($needsInstall) {
     Write-Ok "Dependencias npm OK (cache)"
 }
 
-# ─────────────────────────────────────────────────────────────
-# PASO 7 — Archivo .env
-# ─────────────────────────────────────────────────────────────
-Write-Info "PASO 7/10 — Configurando .env..."
+# -------------------------------------------------------------
+# PASO 7 -- Archivo .env
+# -------------------------------------------------------------
+Write-Info "PASO 7/10 -- Configurando .env..."
 
 if (-not (Test-Path $ENV_FILE)) {
     Write-Host ""
-    Write-Host "  Primera ejecucion — configuracion inicial" -ForegroundColor Yellow
+    Write-Host "  Primera ejecucion -- configuracion inicial" -ForegroundColor Yellow
     Write-Host ""
     $BOT_PHONE = ''
     do {
@@ -295,10 +295,10 @@ Get-Content $ENV_FILE | ForEach-Object {
     }
 }
 
-# ─────────────────────────────────────────────────────────────
-# PASO 8 — DuckDNS + reglas de firewall + TCP optimizations
-# ─────────────────────────────────────────────────────────────
-Write-Info "PASO 8/10 — Red: DuckDNS, firewall y TCP..."
+# -------------------------------------------------------------
+# PASO 8 -- DuckDNS + reglas de firewall + TCP optimizations
+# -------------------------------------------------------------
+Write-Info "PASO 8/10 -- Red: DuckDNS, firewall y TCP..."
 
 # 8a. Actualizar IP en DuckDNS
 Write-Info "  Actualizando DuckDNS..."
@@ -307,7 +307,7 @@ try {
     $r = Invoke-WebRequest `
         -Uri "https://www.duckdns.org/update?domains=$SUBDOMAIN&token=$DUCK_TOKEN&ip=" `
         -UseBasicParsing -TimeoutSec 15
-    if ($r.Content.Trim() -eq 'OK') { Write-Ok "DuckDNS actualizado — $DOMAIN -> $VPS_IP" }
+    if ($r.Content.Trim() -eq 'OK') { Write-Ok "DuckDNS actualizado -- $DOMAIN -> $VPS_IP" }
     else { Write-Warn "DuckDNS respondio: $($r.Content.Trim())" }
 } catch { Write-Warn "DuckDNS: $_" }
 
@@ -360,10 +360,10 @@ netsh int tcp set global initialRto=2000          2>$null | Out-Null
 netsh int tcp set global maxsynretransmissions=2  2>$null | Out-Null
 Write-Ok "TCP: parametros de rendimiento aplicados"
 
-# ─────────────────────────────────────────────────────────────
-# PASO 9 — Apache: reverse proxy + SSL
-# ─────────────────────────────────────────────────────────────
-Write-Info "PASO 9/10 — Configurando Apache..."
+# -------------------------------------------------------------
+# PASO 9 -- Apache: reverse proxy + SSL
+# -------------------------------------------------------------
+Write-Info "PASO 9/10 -- Configurando Apache..."
 
 # Buscar Apache en rutas comunes
 $apacheConfDir = $null
@@ -507,7 +507,7 @@ if ($apacheConfDir) {
     CustomLog "$LOG/apache-access.log" combined
 </VirtualHost>
 "@ | Set-Content $vhostFile -Encoding UTF8
-        Write-Ok "Apache: vhost HTTP (temporal — sin SSL aun)"
+        Write-Ok "Apache: vhost HTTP (temporal -- sin SSL aun)"
     }
 
     # Incluir vhost en httpd.conf si no esta
@@ -545,10 +545,10 @@ if ($apacheConfDir) {
     Write-Warn "El servidor sera accesible directamente en http://${VPS_IP}:${PORT}"
 }
 
-# ─────────────────────────────────────────────────────────────
-# PASO 10 — Servicio Windows para Node.js (via NSSM)
-# ─────────────────────────────────────────────────────────────
-Write-Info "PASO 10/10 — Registrando Node.js como servicio de Windows..."
+# -------------------------------------------------------------
+# PASO 10 -- Servicio Windows para Node.js (via NSSM)
+# -------------------------------------------------------------
+Write-Info "PASO 10/10 -- Registrando Node.js como servicio de Windows..."
 
 # Ruta absoluta al ejecutable de Node
 $nodeExe = (Get-Command node -ErrorAction SilentlyContinue)?.Source
@@ -566,7 +566,7 @@ $envVars = @(Get-Content $ENV_FILE | Where-Object { $_ -match '^[A-Za-z_][A-Za-z
 # Detener y eliminar servicio previo si existe
 $existingSvc = Get-Service -Name $SVC_NAME -ErrorAction SilentlyContinue
 if ($existingSvc) {
-    Write-Warn "Servicio $SVC_NAME existente — actualizando..."
+    Write-Warn "Servicio $SVC_NAME existente -- actualizando..."
     Stop-Service  $SVC_NAME -Force -ErrorAction SilentlyContinue
     & $nssmExe remove $SVC_NAME confirm 2>$null | Out-Null
     Start-Sleep 2
@@ -589,7 +589,7 @@ if ($portProc) {
 & $nssmExe set $SVC_NAME AppRotateFiles 1                    2>$null | Out-Null
 & $nssmExe set $SVC_NAME AppRotateBytes 10485760             2>$null | Out-Null
 
-# Variables de entorno del servicio — cada KEY=VALUE como argumento separado
+# Variables de entorno del servicio -- cada KEY=VALUE como argumento separado
 & $nssmExe set $SVC_NAME AppEnvironmentExtra @envVars 2>$null | Out-Null
 
 # Configurar reinicio automatico en fallo
@@ -636,7 +636,7 @@ if (-not $serverOk) {
 }
 Write-Ok "Servicio $SVC_NAME activo en puerto $PORT (auto-inicio habilitado)"
 
-# ── Cloudflared como servicio de respaldo (si no hay Apache o no hay SSL) ─────
+# -- Cloudflared como servicio de respaldo (si no hay Apache o no hay SSL) -----
 if ($cfExe -and (Test-Path $cfExe)) {
     $cfSvcExists = Get-Service -Name $CF_SVC_NAME -ErrorAction SilentlyContinue
     # Solo instalar tunel si Apache no tiene SSL
@@ -666,7 +666,7 @@ if ($cfExe -and (Test-Path $cfExe)) {
     }
 }
 
-# ── Codigo de vinculacion WhatsApp ────────────────────────────
+# -- Codigo de vinculacion WhatsApp ----------------------------
 Write-Host ""
 Write-Info "Esperando codigo de vinculacion WhatsApp (max 80s)..."
 $pairCode  = ''
@@ -705,7 +705,7 @@ if ($connected) {
     Write-Warn "Revisa BOT_PHONE en $ENV_FILE y: Get-Content $LOG\server.log -Tail 30"
 }
 
-# ── Resumen ───────────────────────────────────────────────────
+# -- Resumen ---------------------------------------------------
 Write-Host ""
 Write-Host "  +======================================================+" -ForegroundColor Green
 Write-Host "  |        SISTEMA ACTIVO Y FUNCIONANDO                  |" -ForegroundColor Green
@@ -724,7 +724,7 @@ Write-Host "    - $SVC_NAME  (Node.js server, NSSM)"    -ForegroundColor Yellow
 if ($apacheSvc) { Write-Host "    - $($apacheSvc.Name)  (Apache reverse proxy)" -ForegroundColor Yellow }
 Write-Host "    - DuckDNS-Monserrath  (tarea programada cada 10 min)"           -ForegroundColor Yellow
 Write-Host ""
-Write-Host "  IMPORTANTE — Verifica que estos puertos esten abiertos en el VPS:" -ForegroundColor Cyan
+Write-Host "  IMPORTANTE -- Verifica que estos puertos esten abiertos en el VPS:" -ForegroundColor Cyan
 Write-Host "    Puerto 80  (HTTP / Let's Encrypt challenge)"                     -ForegroundColor Cyan
 Write-Host "    Puerto 443 (HTTPS)"                                              -ForegroundColor Cyan
 Write-Host ""
