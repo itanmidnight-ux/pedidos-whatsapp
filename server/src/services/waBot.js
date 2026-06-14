@@ -27,12 +27,13 @@ const API_URL  = `http://localhost:${process.env.PORT || 3000}`;
 const API_KEY  = process.env.API_KEY;
 const logger   = pino({ level: 'silent' });
 
-let sock           = null;
-let retryCount     = 0;
-let pairingDone    = false;
-let heartbeatTimer = null;
-let pollTimer      = null;
-let isReady        = false;
+let sock               = null;
+let retryCount         = 0;
+let pairingDone        = false;
+let heartbeatTimer     = null;
+let pollTimer          = null;
+let isReady            = false;
+let wasEverConnected   = false;
 
 const MAX_RETRIES  = 10;
 const HEARTBEAT_MS = 25000;
@@ -290,9 +291,10 @@ async function connect() {
 
     if (connection === 'open') {
       console.log('[bot] ✅ Connected');
-      isReady     = true;
-      retryCount  = 0;
-      pairingDone = true;
+      isReady          = true;
+      wasEverConnected = true;
+      retryCount       = 0;
+      pairingDone      = true;
       clearTimers();
       heartbeatTimer = setInterval(
         () => sock.sendPresenceUpdate('available').catch(() => {}),
@@ -305,18 +307,21 @@ async function connect() {
       isReady = false;
       clearTimers();
 
+      // loggedOut (401) only fatal if we were actually connected before;
+      // during initial pairing WA sends 401 — must retry without clearing session
       const FATAL = [
-        DisconnectReason.loggedOut,
         DisconnectReason.forbidden,
         DisconnectReason.badSession,
         411,
+        ...(wasEverConnected ? [DisconnectReason.loggedOut] : []),
       ];
 
       if (FATAL.includes(code)) {
         console.error(`[bot] ❌ Fatal disconnect (${code}). Clearing session and restarting...`);
         _clearAuth();
-        pairingDone = false;
-        retryCount  = 0;
+        pairingDone      = false;
+        wasEverConnected = false;
+        retryCount       = 0;
         setTimeout(connect, 8000);
         return;
       }
@@ -324,8 +329,9 @@ async function connect() {
       if (retryCount >= MAX_RETRIES) {
         console.error('[bot] ❌ Max retries reached. Clearing session and restarting...');
         _clearAuth();
-        pairingDone = false;
-        retryCount  = 0;
+        pairingDone      = false;
+        wasEverConnected = false;
+        retryCount       = 0;
         setTimeout(connect, 15000);
         return;
       }
