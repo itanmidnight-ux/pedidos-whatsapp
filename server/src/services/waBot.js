@@ -265,16 +265,19 @@ async function connect() {
       creds: state.creds,
       keys: makeCacheableSignalKeyStore(state.keys, logger),
     },
-    browser: Browsers.macOS('Safari'),
+    // macOS + Chrome: fingerprint mas compatible con WhatsApp Web
+    browser: Browsers.macOS('Chrome'),
+    printQRInTerminal: false,
     generateHighQualityLinkPreview: false,
-    keepAliveIntervalMs: 20000,
+    keepAliveIntervalMs: 25000,
     connectTimeoutMs: 60000,
     defaultQueryTimeoutMs: 60000,
-    retryRequestDelayMs: 300,
-    maxMsgRetryCount: 5,
-    markOnlineOnConnect: true,
+    retryRequestDelayMs: 500,
+    maxMsgRetryCount: 3,
+    markOnlineOnConnect: false,
     syncFullHistory: false,
     shouldIgnoreJid: jid => jid.endsWith('@g.us') || jid.endsWith('@broadcast'),
+    getMessage: async () => ({ conversation: '' }),
   });
 
   sock.ev.on('creds.update', saveCreds);
@@ -283,13 +286,18 @@ async function connect() {
     const code = lastDisconnect?.error?.output?.statusCode;
 
     if (connection === 'connecting' && PHONE && !pairingDone && !state.creds.registered) {
-      await delay(2000);
+      // Esperar que el handshake Noise este completo antes de pedir codigo
+      await delay(3000);
       try {
         const pair = await sock.requestPairingCode(PHONE);
         const fmt  = pair.match(/.{1,4}/g).join('-');
         console.log(`\n[bot] ===== Código de vinculación: ${fmt} =====\n`);
+        console.log(`[bot] Tienes 120s para ingresar el codigo en WhatsApp > Dispositivos vinculados\n`);
         pairingDone = true;
-      } catch (e) { console.error('[bot] pairing err', e.message); }
+      } catch (e) {
+        console.error('[bot] pairing err:', e.message);
+        pairingDone = false;
+      }
     }
 
     if (connection === 'open') {
