@@ -27,13 +27,14 @@ const API_URL  = `http://localhost:${process.env.PORT || 3000}`;
 const API_KEY  = process.env.API_KEY;
 const logger   = pino({ level: 'silent' });
 
-let sock               = null;
-let retryCount         = 0;
-let pairingDone        = false;
-let heartbeatTimer     = null;
-let pollTimer          = null;
-let isReady            = false;
-let wasEverConnected   = false;
+let sock             = null;
+let retryCount       = 0;
+let pairingDone      = false;
+let heartbeatTimer   = null;
+let pollTimer        = null;
+let isReady          = false;
+let wasEverConnected = false;
+let pairingAttempts  = 0;
 
 const MAX_RETRIES  = 10;
 const HEARTBEAT_MS = 25000;
@@ -293,6 +294,7 @@ async function connect() {
       console.log('[bot] ✅ Connected');
       isReady          = true;
       wasEverConnected = true;
+      pairingAttempts  = 0;
       retryCount       = 0;
       pairingDone      = true;
       clearTimers();
@@ -307,32 +309,38 @@ async function connect() {
       isReady = false;
       clearTimers();
 
-      // loggedOut (401) only fatal if we were actually connected before;
-      // during initial pairing WA sends 401 — must retry without clearing session
-      const FATAL = [
-        DisconnectReason.forbidden,
-        DisconnectReason.badSession,
+      // DisconnectReason.loggedOut === 401.
+      // During initial pairing: WA sends 401 when code expires — clear auth and request NEW code.
+      // After active session: 401 = truly logged out — same treatment (clear + new code).
+      const NEEDS_NEW_CODE = [
+        DisconnectReason.loggedOut,   // 401 - expired pairing OR logged out
+        DisconnectReason.forbidden,   // 403
+        DisconnectReason.badSession,  // 500
         411,
-        ...(wasEverConnected ? [DisconnectReason.loggedOut] : []),
       ];
 
-      if (FATAL.includes(code)) {
-        console.error(`[bot] ❌ Fatal disconnect (${code}). Clearing session and restarting...`);
+      if (NEEDS_NEW_CODE.includes(code)) {
+        if (!wasEverConnected) {
+          pairingAttempts++;
+          console.log(`[bot] Pairing code expired — requesting new code (attempt ${pairingAttempts})…`);
+        } else {
+          console.error(`[bot] ❌ Session terminated (${code}) — re-authenticating…`);
+          wasEverConnected = false;
+        }
         _clearAuth();
-        pairingDone      = false;
-        wasEverConnected = false;
-        retryCount       = 0;
-        setTimeout(connect, 8000);
+        pairingDone = false;
+        retryCount  = 0;
+        setTimeout(connect, 3000);
         return;
       }
 
       if (retryCount >= MAX_RETRIES) {
-        console.error('[bot] ❌ Max retries reached. Clearing session and restarting...');
+        console.log('[bot] Max retries reached — clearing session and requesting new pairing code…');
         _clearAuth();
-        pairingDone      = false;
         wasEverConnected = false;
+        pairingDone      = false;
         retryCount       = 0;
-        setTimeout(connect, 15000);
+        setTimeout(connect, 5000);
         return;
       }
 

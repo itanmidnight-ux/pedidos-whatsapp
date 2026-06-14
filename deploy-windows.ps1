@@ -1,4 +1,7 @@
 #Requires -Version 5.1
+param(
+    [string]$BotPhone = ''
+)
 <#
 .SYNOPSIS
     Concentrados Monserrath v2.0 -- Instalacion y despliegue en Windows VPS
@@ -30,7 +33,7 @@ $PORT        = 3000
 $SVC_NAME    = "MonserratNode"
 $CF_SVC_NAME = "MonserratTunnel"
 
-$PROJ        = "C:\pedidos-whatsapp"
+$PROJ        = "C:\Users\Administrator\Downloads\pedidos-whatsapp"
 $LOG         = "C:\logs"
 $ENV_FILE    = "$PROJ\server\.env"
 $APPDATA_BOT = "C:\ProgramData\pedidos-bot"
@@ -623,21 +626,23 @@ if ($cfExe -and (Test-Path $cfExe)) {
 # -- Configuracion interactiva de WhatsApp ---------------------
 Write-Host ""
 Write-Host "  +======================================================+" -ForegroundColor Cyan
-Write-Host "  |   CONFIGURACION WHATSAPP -- Ingresa tu numero       |" -ForegroundColor Cyan
+Write-Host "  |   CONFIGURACION WHATSAPP -- Numero de telefono      |" -ForegroundColor Cyan
 Write-Host "  +======================================================+" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "  Ingresa el numero de telefono que vincularas a WhatsApp." -ForegroundColor White
-Write-Host "  Incluye codigo de pais sin + ni espacios." -ForegroundColor Gray
-Write-Host "  Ejemplo Colombia: 573044016277" -ForegroundColor Gray
-Write-Host ""
 
-$BOT_PHONE = ''
-do {
-    $BOT_PHONE = (Read-Host "  Numero de telefono") -replace '\D',''
-    if ($BOT_PHONE.Length -lt 10) {
-        Write-Warn "Numero invalido. Debe tener minimo 10 digitos. Intenta de nuevo."
-    }
-} while ($BOT_PHONE.Length -lt 10)
+$BOT_PHONE = ($BotPhone -replace '\D','')
+if ($BOT_PHONE.Length -lt 10) {
+    Write-Host "  Ingresa el numero de telefono que vincularas a WhatsApp." -ForegroundColor White
+    Write-Host "  Incluye codigo de pais sin + ni espacios." -ForegroundColor Gray
+    Write-Host "  Ejemplo Colombia: 573044016277" -ForegroundColor Gray
+    Write-Host ""
+    do {
+        $BOT_PHONE = (Read-Host "  Numero de telefono") -replace '\D',''
+        if ($BOT_PHONE.Length -lt 10) {
+            Write-Warn "Numero invalido. Debe tener minimo 10 digitos. Intenta de nuevo."
+        }
+    } while ($BOT_PHONE.Length -lt 10)
+}
 
 Write-Ok "Numero aceptado: $BOT_PHONE"
 
@@ -680,64 +685,62 @@ for ($i = 0; $i -lt 30; $i++) {
     Start-Sleep 1
 }
 
-# Esperar codigo de vinculacion WhatsApp
+# Esperar codigo de vinculacion WhatsApp -- loop infinito hasta conectar
 Write-Host ""
-Write-Info "Solicitando codigo de vinculacion a WhatsApp (max 120s)..."
-Write-Info "  (Baileys conectara y pedira un codigo de 8 caracteres)"
+Write-Host "  +======================================================+" -ForegroundColor Cyan
+Write-Host "  |   VINCULACION WHATSAPP -- Sin limite de tiempo       |" -ForegroundColor Cyan
+Write-Host "  |   Cada codigo dura ~60s. Se mostrara uno nuevo       |" -ForegroundColor Cyan
+Write-Host "  |   automaticamente si el anterior expira.             |" -ForegroundColor Cyan
+Write-Host "  +======================================================+" -ForegroundColor Cyan
+Write-Host ""
+Write-Info "Esperando primer codigo de vinculacion..."
 Write-Host ""
 
-$pairCode  = ''
-$connected = $false
-for ($i = 0; $i -lt 60; $i++) {
+$lastShownCode = ''
+$connected     = $false
+$dotCount      = 0
+
+while ($true) {
     $logContent = Get-Content "$LOG\server.log" -Raw -ErrorAction SilentlyContinue
-    if ($logContent -cmatch '\[bot\].*Connected') { $connected = $true; break }
+
+    if ($logContent -cmatch '\[bot\].*Connected') {
+        Write-Host ""
+        Write-Host ""
+        Write-Ok "!!! Bot WhatsApp CONECTADO exitosamente !!!"
+        $connected = $true
+        break
+    }
+
     $allM = [regex]::Matches($logContent, 'Pairing code:\s*([A-Z0-9]{4}-[A-Z0-9]{4})')
     if ($allM.Count -gt 0) {
-        $pairCode = $allM[$allM.Count - 1].Groups[1].Value; break
-    }
-    Write-Host "  . " -NoNewline -ForegroundColor DarkGray
-    Start-Sleep 2
-}
-Write-Host ""
-
-if ($connected) {
-    Write-Ok "Bot WhatsApp ya conectado con sesion existente"
-} elseif ($pairCode) {
-    Write-Host ""
-    Write-Host "  +========================================+" -ForegroundColor Green
-    Write-Host "  |   CODIGO DE VINCULACION WHATSAPP      |" -ForegroundColor Green
-    Write-Host "  |                                        |" -ForegroundColor Green
-    Write-Host "  |          >>> $pairCode <<<             |" -ForegroundColor Yellow
-    Write-Host "  |                                        |" -ForegroundColor Green
-    Write-Host "  |  1. Abre WhatsApp en tu telefono       |" -ForegroundColor White
-    Write-Host "  |  2. Menu > Dispositivos vinculados     |" -ForegroundColor White
-    Write-Host "  |  3. Vincular dispositivo               |" -ForegroundColor White
-    Write-Host "  |  4. Vincular con numero de telefono    |" -ForegroundColor White
-    Write-Host "  |  5. Ingresa el codigo de arriba        |" -ForegroundColor White
-    Write-Host "  +========================================+" -ForegroundColor Green
-    Write-Host ""
-    Write-Host "  Tienes 120 segundos para ingresar el codigo antes de que expire." -ForegroundColor Yellow
-    Write-Host ""
-    Write-Info "Esperando confirmacion de vinculacion..."
-    for ($i = 0; $i -lt 60; $i++) {
-        $lc = Get-Content "$LOG\server.log" -Raw -ErrorAction SilentlyContinue
-        if ($lc -match '\[bot\].*Connected') {
+        $latestCode = $allM[$allM.Count - 1].Groups[1].Value
+        if ($latestCode -ne $lastShownCode) {
+            $lastShownCode = $latestCode
+            $dotCount      = 0
             Write-Host ""
-            Write-Ok "!!! Bot WhatsApp CONECTADO exitosamente !!!"
-            break
+            Write-Host "  +=========================================+" -ForegroundColor Green
+            Write-Host "  |    CODIGO DE VINCULACION WHATSAPP       |" -ForegroundColor Green
+            Write-Host "  |                                         |" -ForegroundColor Green
+            Write-Host "  |         >>> $latestCode <<<             |" -ForegroundColor Yellow
+            Write-Host "  |                                         |" -ForegroundColor Green
+            Write-Host "  |  1. Abre WhatsApp en tu telefono        |" -ForegroundColor White
+            Write-Host "  |  2. Menu (3 puntos) > Dispositivos      |" -ForegroundColor White
+            Write-Host "  |  3. Vincular un dispositivo             |" -ForegroundColor White
+            Write-Host "  |  4. Vincular con numero de telefono     |" -ForegroundColor White
+            Write-Host "  |  5. Ingresa el codigo de arriba         |" -ForegroundColor White
+            Write-Host "  |                                         |" -ForegroundColor Green
+            Write-Host "  |  Tienes ~60 segundos para ingresarlo.   |" -ForegroundColor Yellow
+            Write-Host "  |  Si expira, un nuevo codigo aparecer    |" -ForegroundColor Yellow
+            Write-Host "  |  automaticamente abajo.                 |" -ForegroundColor Yellow
+            Write-Host "  +=========================================+" -ForegroundColor Green
+            Write-Host ""
+            Write-Info "Esperando confirmacion de WhatsApp..."
         }
-        Write-Host "  . " -NoNewline -ForegroundColor DarkGray
-        Start-Sleep 2
     }
-    Write-Host ""
-} else {
-    Write-Host ""
-    Write-Warn "El codigo no aparecio en 120s. Ultimas lineas del log:"
-    Get-Content "$LOG\server.log" -Tail 20 -ErrorAction SilentlyContinue |
-        ForEach-Object { Write-Host "    $_" -ForegroundColor Gray }
-    Write-Host ""
-    Write-Warn "Revisa: Get-Content $LOG\server.log -Tail 40"
-    Write-Warn "Verifica que el numero $BOT_PHONE sea correcto y tenga WhatsApp activo."
+
+    Write-Host "  . " -NoNewline -ForegroundColor DarkGray
+    $dotCount++
+    Start-Sleep 3
 }
 
 # -- Resumen ---------------------------------------------------
