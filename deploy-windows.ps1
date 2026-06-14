@@ -335,10 +335,8 @@ Write-Info "PASO 8/10 -- Red: DuckDNS, firewall y TCP..."
 Write-Info "  Actualizando DuckDNS..."
 try {
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-    $r = Invoke-WebRequest `
-        -Uri "https://www.duckdns.org/update?domains=$SUBDOMAIN&token=$DUCK_TOKEN&ip=" `
-        -UseBasicParsing -TimeoutSec 15
-    $rc = [System.Text.Encoding]::UTF8.GetString($r.RawContentBytes).Trim()
+    $wc = New-Object Net.WebClient
+    $rc = $wc.DownloadString("https://www.duckdns.org/update?domains=$SUBDOMAIN&token=$DUCK_TOKEN&ip=").Trim()
     if ($rc -eq 'OK') { Write-Ok "DuckDNS actualizado -- $DOMAIN -> $VPS_IP" }
     else { Write-Warn "DuckDNS respondio: $rc" }
 } catch { Write-Warn "DuckDNS: $_" }
