@@ -549,4 +549,35 @@ class ApiService {
     ).timeout(const Duration(seconds: 10));
     if (res.statusCode != 200) throw Exception('Error actualizando configuración');
   }
+
+  // ── Saved credentials (remember me) ──────────────────────────
+  static Future<void> saveCredentials(String username, String password) async {
+    await _secureStorage.write(key: 'saved_username', value: username);
+    await _secureStorage.write(key: 'saved_password', value: password);
+  }
+
+  static Future<({String username, String password})> loadCredentials() async {
+    final u = await _secureStorage.read(key: 'saved_username') ?? '';
+    final p = await _secureStorage.read(key: 'saved_password') ?? '';
+    return (username: u, password: p);
+  }
+
+  static Future<void> clearCredentials() async {
+    await _secureStorage.delete(key: 'saved_username');
+    await _secureStorage.delete(key: 'saved_password');
+  }
+
+  // ── In-app chat message (order detection via bot) ─────────────
+  static Future<String> sendAppMessage(String message) async {
+    final res = await http.post(
+      Uri.parse('$_serverUrl/api/chat/message'),
+      headers: _headers,
+      body: jsonEncode({'message': message}),
+    ).timeout(const Duration(seconds: 15));
+    if (res.statusCode == 200) {
+      final body = jsonDecode(res.body) as Map<String, dynamic>;
+      return body['reply'] as String? ?? '✅ Mensaje recibido';
+    }
+    throw Exception('Error enviando mensaje');
+  }
 }

@@ -89,6 +89,7 @@ app.use('/api/users',    require('./routes/users'));
 app.use('/api/bot',      require('./routes/bot'));
 app.use('/api/estados',  require('./routes/estados'));
 app.use('/api/cart',     require('./routes/cart'));
+app.use('/api/chat',     require('./routes/chat'));
 app.use('/api/settings', require('./routes/settings'));
 
 app.get('/health',  (req, res) => res.json({ status: 'ok', time: new Date().toISOString() }));
