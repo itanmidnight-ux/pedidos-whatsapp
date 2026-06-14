@@ -116,4 +116,14 @@ class NotificationService {
         .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
         ?.requestNotificationsPermission();
   }
+
+  static Future<void> notifyNewOrders(int count) async {
+    await _notify(
+      id: 3,
+      title: count == 1 ? '🛒 ¡Nuevo pedido recibido!' : '🛒 $count nuevos pedidos!',
+      body: count == 1
+        ? 'Tienes un pedido pendiente por atender'
+        : '$count pedidos pendientes por atender',
+    );
+  }
 }

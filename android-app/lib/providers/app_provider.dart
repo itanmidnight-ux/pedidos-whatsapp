@@ -5,6 +5,7 @@ import '../models/order.dart';
 import '../models/product.dart';
 import '../services/api_service.dart';
 import '../services/local_db.dart';
+import '../services/notification_service.dart';
 
 class AppProvider extends ChangeNotifier {
   bool isLoggedIn    = ApiService.isConfigured;
@@ -14,8 +15,9 @@ class AppProvider extends ChangeNotifier {
   List<Order>                   orders   = [];
   List<Product>                 products = [];
   List<Map<String, dynamic>>    users    = [];
-  int  flaggedCount = 0;
-  bool loading      = false;
+  int  flaggedCount  = 0;
+  bool loading       = false;
+  int  _lastOrderId  = 0;
 
   Timer? _refreshTimer;
 
@@ -29,9 +31,21 @@ class AppProvider extends ChangeNotifier {
   void startAutoRefresh() {
     _refreshTimer?.cancel();
     _refreshTimer = Timer.periodic(const Duration(seconds: 20), (_) async {
-      if (isLoggedIn) {
-        isOnline = await _checkOnline();
-        await Future.wait([refreshOrders(), refreshFlagged()]);
+      if (!isLoggedIn) return;
+      isOnline = await _checkOnline();
+      final prevMax = _lastOrderId;
+      await Future.wait([refreshOrders(), refreshFlagged()]);
+      // Notify admin on new orders
+      if (isAdmin && orders.isNotEmpty) {
+        final ids  = orders.map((o) => o.id ?? 0).toList();
+        final maxId = ids.reduce((a, b) => a > b ? a : b);
+        if (_lastOrderId == 0) {
+          _lastOrderId = maxId;
+        } else if (maxId > prevMax) {
+          final newCount = orders.where((o) => (o.id ?? 0) > prevMax).length;
+          _lastOrderId = maxId;
+          await NotificationService.notifyNewOrders(newCount);
+        }
       }
     });
   }
