@@ -281,6 +281,8 @@ sudo chown -R "$(id -u):$(id -g)" "$APPDIR/android/.gradle" 2>/dev/null || true
 sudo chown -R "$(id -u):$(id -g)" "$APPDIR/android/local.properties" 2>/dev/null || true
 sudo chown -R "$(id -u):$(id -g)" "$HOME/.gradle" 2>/dev/null || true
 sudo chown -R "$(id -u):$(id -g)" "$HOME/.pub-cache" 2>/dev/null || true
+sudo chown -R "$(id -u):$(id -g)" "$PROJ/debug-symbols" 2>/dev/null || true
+mkdir -p "$PROJ/debug-symbols"
 
 NEEDS_PUBGET=true
 if [ -f "$PUB_LOCK" ] && [ -f "$PKG_CFG" ] && \
