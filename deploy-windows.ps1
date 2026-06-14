@@ -30,10 +30,10 @@ $PORT        = 3000
 $SVC_NAME    = "MonserratNode"
 $CF_SVC_NAME = "MonserratTunnel"
 
-$PROJ     = Split-Path -Parent $MyInvocation.MyCommand.Path
-$LOG      = "$PROJ\logs"
-$ENV_FILE = "$PROJ\server\.env"
-$APPDATA_BOT = "$env:APPDATA\pedidos-bot"
+$PROJ        = "C:\pedidos-whatsapp"
+$LOG         = "C:\logs"
+$ENV_FILE    = "$PROJ\server\.env"
+$APPDATA_BOT = "C:\ProgramData\pedidos-bot"
 
 # -- Helpers de consola ----------------------------------------
 function Write-Ok($m)   { Write-Host "  [OK]  $m" -ForegroundColor Green }
@@ -77,11 +77,36 @@ Write-Host "  ========================================================" -Foregro
 Write-Host ""
 
 # Crear directorios de trabajo
-foreach ($d in @($LOG, "$APPDATA_BOT\media", "$APPDATA_BOT\docs",
+foreach ($d in @($LOG, $PROJ, "$APPDATA_BOT\media", "$APPDATA_BOT\docs",
                   "$APPDATA_BOT\product-images", "$APPDATA_BOT\estados", "$APPDATA_BOT\auth")) {
     New-Item -ItemType Directory -Force -Path $d | Out-Null
 }
 "" | Out-File "$LOG\install.log" -Encoding UTF8
+
+# -------------------------------------------------------------
+# PASO 0 -- Clonar / actualizar repositorio
+# -------------------------------------------------------------
+Write-Info "PASO 0 -- Descargando codigo fuente..."
+$REPO_URL = "https://github.com/itanmidnight-ux/pedidos-whatsapp.git"
+if (Test-Cmd 'git') {
+    if (Test-Path "$PROJ\.git") {
+        Write-Warn "Actualizando repositorio..."
+        & git -C $PROJ pull --ff-only 2>&1 | Out-File "$LOG\install.log" -Append
+    } else {
+        Write-Warn "Clonando repositorio..."
+        & git clone $REPO_URL $PROJ 2>&1 | Out-File "$LOG\install.log" -Append
+    }
+} else {
+    Write-Warn "Git no instalado -- descargando ZIP..."
+    $zipUrl = "https://github.com/itanmidnight-ux/pedidos-whatsapp/archive/refs/heads/main.zip"
+    $zipTmp = "$env:TEMP\repo.zip"
+    (New-Object Net.WebClient).DownloadFile($zipUrl, $zipTmp)
+    Expand-Archive $zipTmp -DestinationPath "$env:TEMP\repo-extract" -Force
+    Copy-Item "$env:TEMP\repo-extract\pedidos-whatsapp-main\*" $PROJ -Recurse -Force
+    Remove-Item $zipTmp -Force
+}
+if (-not (Test-Path "$PROJ\server\package.json")) { Write-Die "Repositorio no descargado correctamente en $PROJ" }
+Write-Ok "Codigo fuente OK en $PROJ"
 
 # -------------------------------------------------------------
 # PASO 1 -- Chocolatey
