@@ -189,8 +189,9 @@ if (-not (Test-Path $nssmExe)) {
 Write-Info "PASO 4/10 -- Verificando cloudflared..."
 Update-Path
 $cfExe = ''
+$cfDir = "$env:ProgramFiles\cloudflared"
 $cfPaths = @(
-    "$env:ProgramFiles\cloudflared\cloudflared.exe",
+    "$cfDir\cloudflared.exe",
     "C:\ProgramData\chocolatey\bin\cloudflared.exe",
     (Get-Command cloudflared -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -ErrorAction SilentlyContinue)
 )
@@ -198,18 +199,21 @@ foreach ($p in $cfPaths) {
     if ($p -and (Test-Path $p)) { $cfExe = $p; break }
 }
 if (-not $cfExe) {
-    Write-Warn "Instalando cloudflared..."
-    $null = Invoke-Cmd 'choco' @('install','cloudflared','-y','--no-progress')
-    Update-Path
-    foreach ($p in $cfPaths) {
-        if ($p -and (Test-Path $p)) { $cfExe = $p; break }
+    Write-Warn "Instalando cloudflared via descarga directa..."
+    New-Item -ItemType Directory -Force -Path $cfDir | Out-Null
+    $cfDest = "$cfDir\cloudflared.exe"
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        (New-Object Net.WebClient).DownloadFile(
+            'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe',
+            $cfDest)
+        if (Test-Path $cfDest) { $cfExe = $cfDest; Write-Ok "cloudflared instalado en $cfDest" }
+        else { Write-Warn "cloudflared descarga fallida" }
+    } catch {
+        Write-Warn "cloudflared error: $_"
     }
-    $cfCmd = Get-Command cloudflared -ErrorAction SilentlyContinue
-    if ($cfCmd) { $cfExe = $cfCmd.Source }
-    if (-not $cfExe) { Write-Warn "cloudflared no encontrado -- continuando sin tunel de respaldo" }
-    else { Write-Ok "cloudflared instalado" }
 } else {
-    Write-Ok "cloudflared OK"
+    Write-Ok "cloudflared OK ($cfExe)"
 }
 
 # -------------------------------------------------------------
@@ -412,41 +416,74 @@ foreach ($pat in $apachePatterns) {
     }
 }
 
-# Instalar Apache via choco si no existe
+# Instalar Apache si no existe
 if (-not $apacheConfDir) {
-    Write-Warn "Apache no encontrado -- instalando via Chocolatey..."
-    $null = Invoke-Cmd 'choco' @('install','apache-httpd','-y','--no-progress','--force')
-    Update-Path
-    Start-Sleep 3
+    Write-Warn "Apache no encontrado -- instalando..."
+
+    # Intento 1: WinGet (disponible en Windows Server 2025)
+    $winget = Get-Command winget -ErrorAction SilentlyContinue
+    if ($winget) {
+        Write-Warn "  Intentando WinGet..."
+        & winget install --id Apache.ApacheHTTPServer -e --silent --accept-source-agreements --accept-package-agreements 2>$null | Out-File "$LOG\install.log" -Append
+        Start-Sleep 5
+    }
+
+    # Intento 2: Chocolatey
+    if (-not (Test-Path 'C:\Apache24\conf\httpd.conf')) {
+        Write-Warn "  Intentando Chocolatey..."
+        $null = Invoke-Cmd 'choco' @('install','apache-httpd','-y','--no-progress','--force')
+        Start-Sleep 3
+    }
+
+    # Intento 3: Descarga directa desde GitHub (binarios de Apache Lounge reempaquetados)
+    if (-not (Test-Path 'C:\Apache24\conf\httpd.conf')) {
+        Write-Warn "  Descargando Apache 2.4 directo..."
+        $apacheZip = "$env:TEMP\apache24.zip"
+        # Intentar varias versiones conocidas de Apache Lounge
+        $apacheUrls = @(
+            'https://github.com/nicholasvanni/apache-windows/releases/download/2.4.62/Apache24.zip',
+            'https://www.apachelounge.com/download/VS17/binaries/httpd-2.4.62-240904-win64-VS17.zip',
+            'https://www.apachelounge.com/download/VS17/binaries/httpd-2.4.58-win64-VS17.zip'
+        )
+        foreach ($url in $apacheUrls) {
+            try {
+                Write-Info "    Probando: $url"
+                [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+                (New-Object Net.WebClient).DownloadFile($url, $apacheZip)
+                $zipOk = Test-Path $apacheZip
+                if ($zipOk -and (Get-Item $apacheZip).Length -gt 1MB) {
+                    Expand-Archive $apacheZip -DestinationPath "$env:TEMP\apache-extract" -Force -ErrorAction Stop
+                    if (Test-Path "$env:TEMP\apache-extract\Apache24") {
+                        Copy-Item "$env:TEMP\apache-extract\Apache24" "C:\Apache24" -Recurse -Force
+                    } elseif (Test-Path "$env:TEMP\apache-extract") {
+                        $sub = Get-ChildItem "$env:TEMP\apache-extract" -Directory | Select-Object -First 1
+                        if ($sub) { Copy-Item $sub.FullName "C:\Apache24" -Recurse -Force }
+                    }
+                    if (Test-Path 'C:\Apache24\conf\httpd.conf') {
+                        Write-Ok "Apache descargado desde: $url"
+                        break
+                    }
+                }
+            } catch { Write-Warn "    Fallo ($url): $_" }
+        }
+    }
+
     # Re-detectar tras instalacion
+    Update-Path
     foreach ($pat in $apachePatterns) {
         $res = Resolve-Path $pat -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($res -and (Test-Path "$($res.Path)\httpd.conf")) {
-            $apacheConfDir = $res.Path
-            break
+            $apacheConfDir = $res.Path; break
         }
     }
     if ($apacheConfDir) {
-        # Instalar Apache como servicio de Windows
-        $apacheBin = Split-Path $apacheConfDir -Parent | Join-Path -ChildPath 'bin\httpd.exe'
+        $apacheBin = Join-Path (Split-Path $apacheConfDir -Parent) 'bin\httpd.exe'
         if (Test-Path $apacheBin) {
             & $apacheBin -k install 2>$null | Out-Null
             Write-Ok "Apache instalado en $apacheConfDir"
         }
     } else {
-        Write-Warn "Apache choco fallo -- intentando descarga directa Apache Lounge..."
-        $apacheZip = "$env:TEMP\apache24.zip"
-        $apacheUrl = "https://www.apachelounge.com/download/VS17/binaries/httpd-2.4.63-250207-win64-VS17.zip"
-        try {
-            (New-Object Net.WebClient).DownloadFile($apacheUrl, $apacheZip)
-            Expand-Archive $apacheZip -DestinationPath "$env:TEMP\apache-extract" -Force
-            Copy-Item "$env:TEMP\apache-extract\Apache24" "C:\Apache24" -Recurse -Force
-            $apacheConfDir = "C:\Apache24\conf"
-            & "C:\Apache24\bin\httpd.exe" -k install 2>$null | Out-Null
-            Write-Ok "Apache instalado desde Apache Lounge"
-        } catch {
-            Write-Warn "No se pudo instalar Apache: $_"
-        }
+        Write-Warn "Apache no pudo instalarse -- Node.js servira directamente en puerto $PORT"
     }
 }
 
@@ -630,13 +667,22 @@ if (-not (Test-Path $serverScript)) { Write-Die "No se encontro $serverScript" }
 $envVars = @(Get-Content $ENV_FILE | Where-Object { $_ -match '^[A-Za-z_][A-Za-z0-9_]*=' })
 
 # Limpiar sesion WhatsApp para forzar re-autenticacion
+# El servicio corre como SYSTEM: APPDATA = C:\Windows\system32\config\systemprofile\AppData\Roaming
 Write-Info "  Limpiando sesion WhatsApp para re-autenticacion..."
-$authDir = "$APPDATA_BOT\auth"
-if (Test-Path $authDir) {
-    Remove-Item $authDir -Recurse -Force -ErrorAction SilentlyContinue
-    Write-Ok "Sesion WhatsApp borrada -- se generara nuevo codigo de vinculacion"
+$authDirs = @(
+    "$APPDATA_BOT\auth",
+    "C:\Windows\system32\config\systemprofile\AppData\Roaming\pedidos-bot\auth",
+    "C:\Windows\SysWOW64\config\systemprofile\AppData\Roaming\pedidos-bot\auth"
+)
+foreach ($aDir in $authDirs) {
+    if (Test-Path $aDir) {
+        Remove-Item $aDir -Recurse -Force -ErrorAction SilentlyContinue
+        Write-Ok "Sesion borrada: $aDir"
+    }
+    New-Item -ItemType Directory -Force -Path $aDir | Out-Null
 }
-New-Item -ItemType Directory -Force -Path $authDir | Out-Null
+# Limpiar log para deteccion limpia de codigo de vinculacion
+"" | Set-Content "$LOG\server.log" -Encoding UTF8
 
 # Detener y eliminar servicio previo si existe
 $existingSvc = Get-Service -Name $SVC_NAME -ErrorAction SilentlyContinue
