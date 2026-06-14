@@ -690,8 +690,8 @@ $pairCode  = ''
 $connected = $false
 for ($i = 0; $i -lt 60; $i++) {
     $logContent = Get-Content "$LOG\server.log" -Raw -ErrorAction SilentlyContinue
-    if ($logContent -cmatch '\[bot\].*(Conectado|conectado|open)') { $connected = $true; break }
-    $allM = [regex]::Matches($logContent, '={3,}\s*([A-Z0-9]{4}-[A-Z0-9]{4})\s*={3,}')
+    if ($logContent -cmatch '\[bot\].*Connected') { $connected = $true; break }
+    $allM = [regex]::Matches($logContent, 'Pairing code:\s*([A-Z0-9]{4}-[A-Z0-9]{4})')
     if ($allM.Count -gt 0) {
         $pairCode = $allM[$allM.Count - 1].Groups[1].Value; break
     }
@@ -721,7 +721,7 @@ if ($connected) {
     Write-Info "Esperando confirmacion de vinculacion..."
     for ($i = 0; $i -lt 60; $i++) {
         $lc = Get-Content "$LOG\server.log" -Raw -ErrorAction SilentlyContinue
-        if ($lc -match '\[bot\].*Conectado') {
+        if ($lc -match '\[bot\].*Connected') {
             Write-Host ""
             Write-Ok "!!! Bot WhatsApp CONECTADO exitosamente !!!"
             break

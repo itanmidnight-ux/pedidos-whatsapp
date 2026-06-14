@@ -34,9 +34,9 @@ let heartbeatTimer = null;
 let pollTimer      = null;
 let isReady        = false;
 
-const MAX_RETRIES  = 15;
-const HEARTBEAT_MS = 20000;
-const POLL_MS      = 2500;
+const MAX_RETRIES  = 10;
+const HEARTBEAT_MS = 25000;
+const POLL_MS      = 3000;
 
 const http = axios.create({
   baseURL: API_URL,
@@ -265,19 +265,13 @@ async function connect() {
       creds: state.creds,
       keys: makeCacheableSignalKeyStore(state.keys, logger),
     },
-    // macOS + Chrome: fingerprint mas compatible con WhatsApp Web
-    browser: Browsers.macOS('Chrome'),
-    printQRInTerminal: false,
+    browser: Browsers.macOS('Safari'),
     generateHighQualityLinkPreview: false,
-    keepAliveIntervalMs: 25000,
+    keepAliveIntervalMs: 15000,
     connectTimeoutMs: 60000,
     defaultQueryTimeoutMs: 60000,
-    retryRequestDelayMs: 500,
-    maxMsgRetryCount: 3,
-    markOnlineOnConnect: false,
-    syncFullHistory: false,
-    shouldIgnoreJid: jid => jid.endsWith('@g.us') || jid.endsWith('@broadcast'),
-    getMessage: async () => ({ conversation: '' }),
+    retryRequestDelayMs: 250,
+    markOnlineOnConnect: true,
   });
 
   sock.ev.on('creds.update', saveCreds);
@@ -289,20 +283,15 @@ async function connect() {
       await delay(1500);
       try {
         const pair = await sock.requestPairingCode(PHONE);
-        const fmt  = pair.match(/.{1,4}/g).join('-');
-        console.log(`\n[bot] ===== Código de vinculación: ${fmt} =====`);
-        console.log(`[bot] Pairing code: ${fmt}\n`);
+        console.log(`\n[bot] Pairing code: ${pair.match(/.{1,4}/g).join('-')}\n`);
         pairingDone = true;
-      } catch (e) {
-        console.error('[bot] pairing err:', e.message);
-        pairingDone = false;
-      }
+      } catch (e) { console.error('[bot] pairing err', e.message); }
     }
 
     if (connection === 'open') {
-      console.log('[bot] ✅ Conectado a WhatsApp');
-      isReady    = true;
-      retryCount = 0;
+      console.log('[bot] ✅ Connected');
+      isReady     = true;
+      retryCount  = 0;
       pairingDone = true;
       clearTimers();
       heartbeatTimer = setInterval(
@@ -316,17 +305,6 @@ async function connect() {
       isReady = false;
       clearTimers();
 
-      // 401 durante vinculacion: NO borrar sesion ni codigo — reconectar con backoff
-      // El usuario puede estar a punto de ingresar el codigo; destruir la sesion lo invalida
-      if (code === 401 && !isReady) {
-        retryCount++;
-        const wait = Math.min(3000 * retryCount, 30000);
-        console.log(`[bot] 401 durante vinculacion — reintentando en ${wait / 1000}s sin borrar sesion (${retryCount}/${MAX_RETRIES})...`);
-        setTimeout(connect, wait);
-        return;
-      }
-
-      // Errores verdaderamente fatales: sesion expirada, baneada, corrompida
       const FATAL = [
         DisconnectReason.loggedOut,
         DisconnectReason.forbidden,
@@ -335,7 +313,7 @@ async function connect() {
       ];
 
       if (FATAL.includes(code)) {
-        console.error(`[bot] ❌ Desconexión fatal (${code}). Limpiando sesión...`);
+        console.error(`[bot] ❌ Fatal disconnect (${code}). Clearing session and restarting...`);
         _clearAuth();
         pairingDone = false;
         retryCount  = 0;
@@ -344,7 +322,7 @@ async function connect() {
       }
 
       if (retryCount >= MAX_RETRIES) {
-        console.error('[bot] ❌ Máximo de reintentos. Reiniciando autenticación...');
+        console.error('[bot] ❌ Max retries reached. Clearing session and restarting...');
         _clearAuth();
         pairingDone = false;
         retryCount  = 0;
@@ -352,10 +330,10 @@ async function connect() {
         return;
       }
 
-      const isRestart = code === DisconnectReason.restartRequired;
-      const backoff   = isRestart ? 500 : Math.min(1000 * Math.pow(2, retryCount), 60000);
+      const immediate = code === DisconnectReason.restartRequired;
+      const backoff   = immediate ? 500 : Math.min(1000 * 2 ** retryCount, 30000);
       retryCount++;
-      console.log(`[bot] Reconectando en ${Math.round(backoff / 1000)}s (${retryCount}/${MAX_RETRIES})…`);
+      console.log(`[bot] Reconnecting in ${backoff}ms (attempt ${retryCount}/${MAX_RETRIES})…`);
       setTimeout(connect, backoff);
     }
   });
@@ -377,11 +355,8 @@ function _clearAuth() {
 
 // ── API pública ────────────────────────────────────────────────
 async function initBot() {
-  if (!PHONE) {
-    console.warn('[bot] BOT_PHONE no configurado — bot desactivado');
-    return;
-  }
-  console.log('[bot] Iniciando conexión a WhatsApp...');
+  if (!PHONE) { console.warn('[bot] BOT_PHONE not set — bot disabled'); return; }
+  console.log('[bot] Starting…');
   await connect();
 }
 
