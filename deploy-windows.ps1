@@ -631,7 +631,7 @@ if (-not $serverOk) {
     Write-Host "  Ultimas lineas del log:" -ForegroundColor Yellow
     Get-Content "$LOG\server.log" -Tail 25 -ErrorAction SilentlyContinue |
         ForEach-Object { Write-Host "    $_" -ForegroundColor Gray }
-    Write-Die "El servidor no respondio. Servicio $SVC_NAME: $svcStatus"
+    Write-Die "El servidor no respondio. Servicio ${SVC_NAME}: $svcStatus"
 }
 Write-Ok "Servicio $SVC_NAME activo en puerto $PORT (auto-inicio habilitado)"
 
