@@ -321,7 +321,10 @@ async function connect() {
         _clearAuth();
         pairingDone = false;
         retryCount  = 0;
-        setTimeout(connect, 8000);
+        // 401 antes de vincular: dar 120s para que el usuario ingrese el código
+        const wait = (code === 401 && !isReady) ? 120000 : 8000;
+        console.log(`[bot] Reintentando en ${wait / 1000}s...`);
+        setTimeout(connect, wait);
         return;
       }
 
