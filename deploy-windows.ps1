@@ -627,15 +627,17 @@ if ($cfExe -and (Test-Path $cfExe)) {
 
 # -- Codigo de vinculacion WhatsApp ----------------------------
 Write-Host ""
-Write-Info "Esperando codigo de vinculacion WhatsApp (max 80s)..."
+Write-Info "Esperando codigo de vinculacion WhatsApp (max 120s)..."
 $pairCode  = ''
 $connected = $false
-for ($i = 0; $i -lt 40; $i++) {
+for ($i = 0; $i -lt 60; $i++) {
     $logContent = Get-Content "$LOG\server.log" -Raw -ErrorAction SilentlyContinue
-    if ($logContent -cmatch '\[bot\].*[Cc]onnect') { $connected = $true; break }
-    if ($logContent -cmatch 'vinculacion[^=]+=+\s*([A-Z0-9]{4}-[A-Z0-9]{4})') { $pairCode = $Matches[1]; break }
-    if ($logContent -cmatch 'Pairing code[^:]*:\s*([A-Z0-9]{4}-[A-Z0-9]{4})') { $pairCode = $Matches[1]; break }
-    if ($logContent -cmatch 'code[^\n]*([A-Z0-9]{4}-[A-Z0-9]{4})') { $pairCode = $Matches[1]; break }
+    if ($logContent -cmatch '\[bot\].*(conectado|connected|open)') { $connected = $true; break }
+    # Buscar patron ===== XXXX-XXXX ===== (formato real del log)
+    $allM = [regex]::Matches($logContent, '={3,}\s*([A-Z0-9]{4}-[A-Z0-9]{4})\s*={3,}')
+    if ($allM.Count -gt 0) {
+        $pairCode = $allM[$allM.Count - 1].Groups[1].Value; break
+    }
     Start-Sleep 2
 }
 
