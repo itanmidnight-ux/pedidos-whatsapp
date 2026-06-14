@@ -338,8 +338,9 @@ try {
     $r = Invoke-WebRequest `
         -Uri "https://www.duckdns.org/update?domains=$SUBDOMAIN&token=$DUCK_TOKEN&ip=" `
         -UseBasicParsing -TimeoutSec 15
-    if ($r.Content.Trim() -eq 'OK') { Write-Ok "DuckDNS actualizado -- $DOMAIN -> $VPS_IP" }
-    else { Write-Warn "DuckDNS respondio: $($r.Content.Trim())" }
+    $rc = [System.Text.Encoding]::UTF8.GetString($r.RawContentBytes).Trim()
+    if ($rc -eq 'OK') { Write-Ok "DuckDNS actualizado -- $DOMAIN -> $VPS_IP" }
+    else { Write-Warn "DuckDNS respondio: $rc" }
 } catch { Write-Warn "DuckDNS: $_" }
 
 # Script de actualizacion DuckDNS (se ejecutara como tarea programada)
@@ -357,14 +358,14 @@ try {
 Unregister-ScheduledTask -TaskName 'DuckDNS-Monserrath' -Confirm:$false -ErrorAction SilentlyContinue
 $dnsAction   = New-ScheduledTaskAction -Execute 'powershell.exe' `
     -Argument "-NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$duckScript`""
-$dnsTrigger  = New-ScheduledTaskTrigger -Once -At (Get-Date)
-$dnsTrigger.Repetition.Interval = 'PT10M'
-$dnsTrigger.Repetition.Duration = 'P9999D'
+$dnsTrigger  = New-ScheduledTaskTrigger -Once -At (Get-Date) `
+    -RepetitionInterval (New-TimeSpan -Minutes 10) `
+    -RepetitionDuration (New-TimeSpan -Days 9999)
 $dnsSettings = New-ScheduledTaskSettingsSet -RunOnlyIfNetworkAvailable -StartWhenAvailable `
     -ExecutionTimeLimit (New-TimeSpan -Minutes 1) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
 Register-ScheduledTask -TaskName 'DuckDNS-Monserrath' `
     -Action $dnsAction -Trigger $dnsTrigger -Settings $dnsSettings `
-    -RunLevel Highest -Force | Out-Null
+    -User 'NT AUTHORITY\SYSTEM' -RunLevel Highest -Force | Out-Null
 Write-Ok "DuckDNS: tarea programada cada 10 minutos"
 
 # 8b. Reglas de firewall (abrir puertos 80 y 443)
@@ -558,7 +559,7 @@ if ($apacheConfDir) {
         $renewSettings = New-ScheduledTaskSettingsSet -RunOnlyIfNetworkAvailable
         Register-ScheduledTask -TaskName 'Certbot-Renew' `
             -Action $renewAction -Trigger $renewTrigger -Settings $renewSettings `
-            -RunLevel Highest -Force | Out-Null
+            -User 'NT AUTHORITY\SYSTEM' -RunLevel Highest -Force | Out-Null
         Write-Ok "SSL: renovacion automatica programada (3am diario)"
     }
 
