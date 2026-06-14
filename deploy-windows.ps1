@@ -42,6 +42,11 @@ $APPDATA_BOT = "C:\ProgramData\pedidos-bot"
 function Write-Ok($m)   { Write-Host "  [OK]  $m" -ForegroundColor Green }
 function Write-Warn($m) { Write-Host "  [!]   $m" -ForegroundColor Yellow }
 function Write-Info($m) { Write-Host "  >>    $m" -ForegroundColor Cyan }
+
+# Write file without BOM (dotenv requires plain ASCII/UTF-8 without BOM)
+function Write-EnvFile($path, $content) {
+    [System.IO.File]::WriteAllText($path, $content, [System.Text.Encoding]::ASCII)
+}
 function Write-Die($m) {
     Write-Host ""
     Write-Host "  [ERROR] $m" -ForegroundColor Red
@@ -266,32 +271,24 @@ if (-not (Test-Path $ENV_FILE)) {
     $rng.GetBytes($b32); $JWT = ($b32 | ForEach-Object { $_.ToString('x2') }) -join ''
     $rng.GetBytes($b32); $KEY = ($b32 | ForEach-Object { $_.ToString('x2') }) -join ''
 
-    # BOT_PHONE vacio intencionalmente -- se configura al final de forma interactiva
-    @"
-PORT=$PORT
-API_KEY=$KEY
-JWT_SECRET=$JWT
-BOT_ENABLED=true
-BOT_PHONE=
-SERVER_DOMAIN=$DOMAIN
-DUCKDNS_TOKEN=$DUCK_TOKEN
-"@ | Set-Content $ENV_FILE -Encoding UTF8
+    $envContent = "PORT=$PORT`r`nAPI_KEY=$KEY`r`nJWT_SECRET=$JWT`r`nBOT_ENABLED=true`r`nBOT_PHONE=`r`nSERVER_DOMAIN=$DOMAIN`r`nDUCKDNS_TOKEN=$DUCK_TOKEN`r`n"
+    Write-EnvFile $ENV_FILE $envContent
     Write-Ok ".env creado"
 } else {
     # Actualizar/agregar claves que puedan faltar sin sobreescribir todo
-    $envContent = Get-Content $ENV_FILE -Raw
+    $envContent = Get-Content $ENV_FILE -Raw -Encoding Default
     $updates = @{
         'SERVER_DOMAIN'  = $DOMAIN
         'DUCKDNS_TOKEN'  = $DUCK_TOKEN
     }
     foreach ($k in $updates.Keys) {
-        if ($envContent -match "^$k=") {
+        if ($envContent -match "(?m)^$k=") {
             $envContent = $envContent -replace "(?m)^$k=.*", "$k=$($updates[$k])"
         } else {
-            $envContent += "`r`n$k=$($updates[$k])"
+            $envContent = $envContent.TrimEnd() + "`r`n$k=$($updates[$k])`r`n"
         }
     }
-    Set-Content $ENV_FILE $envContent -Encoding UTF8
+    Write-EnvFile $ENV_FILE $envContent
     Write-Ok ".env verificado y actualizado"
 }
 
@@ -653,8 +650,16 @@ if ($envContent -match '(?m)^BOT_PHONE=') {
 } else {
     $envContent = $envContent.TrimEnd() + "`r`nBOT_PHONE=$BOT_PHONE`r`n"
 }
-Set-Content $ENV_FILE $envContent -Encoding UTF8
+Write-EnvFile $ENV_FILE $envContent
 Write-Ok ".env actualizado con BOT_PHONE=$BOT_PHONE"
+
+# Actualizar tambien NSSM AppEnvironmentExtra con BOT_PHONE correcto
+$nssmPath = "C:\Program Files\nssm\nssm.exe"
+if (Test-Path $nssmPath) {
+    $updatedEnvVars = @(Get-Content $ENV_FILE | Where-Object { $_ -match '^[A-Za-z_][A-Za-z0-9_]*=.' })
+    & $nssmPath set $SVC_NAME AppEnvironmentExtra @updatedEnvVars 2>$null | Out-Null
+    Write-Ok "NSSM env vars actualizadas con BOT_PHONE=$BOT_PHONE"
+}
 
 # Limpiar sesion WhatsApp y log antes de reiniciar
 Write-Info "Limpiando sesion WhatsApp..."
@@ -667,7 +672,7 @@ foreach ($aDir in $authDirsWa) {
     Remove-Item $aDir -Recurse -Force -ErrorAction SilentlyContinue
     New-Item -ItemType Directory -Force -Path $aDir | Out-Null
 }
-"" | Set-Content "$LOG\server.log" -Encoding UTF8
+[System.IO.File]::WriteAllText("$LOG\server.log", "", [System.Text.Encoding]::ASCII)
 
 # Reiniciar servicio para aplicar nuevo BOT_PHONE
 Write-Info "Reiniciando servicio con numero $BOT_PHONE..."
