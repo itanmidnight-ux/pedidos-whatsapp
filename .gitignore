@@ -22,3 +22,7 @@ installer/node_modules/
 *.exe
 *.apk
 .claude/
+
+# Runtime PID files
+*.pid
+logs/

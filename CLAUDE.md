@@ -19,11 +19,11 @@
 
 ## Stack del proyecto
 - Backend: Node.js 20 + Express + better-sqlite3 (WAL)
-- Bot: whatsapp-web.js (Puppeteer) — migrado desde Baileys
-- LLM: Ollama llama3.2:1b (parser híbrido + reglas fuzzy)
+- Bot: @whiskeysockets/baileys v6.7.9 (no Puppeteer)
+- LLM: Ollama llama3.2:1b (parser híbrido + reglas fuzzy) + @nlpjs/basic
 - Tunnel: ngrok dominio fijo
-- App: Flutter 3.44 (Android + Web)
-- OS dev: Windows 10 LTSC x64
+- App: Flutter 3.44 (Android + Web/PWA)
+- OS dev: Linux Kali (build APK vía compilar-apk.ps1 en Windows)
 
 ## Reglas de código
 - Sin error handling para casos imposibles

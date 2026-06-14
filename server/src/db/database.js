@@ -106,6 +106,27 @@ async function initDB() {
      )`,
     // User address for delivery
     'ALTER TABLE users ADD COLUMN address TEXT',
+    // Estado reactions (hearts) — one per user per estado
+    `CREATE TABLE IF NOT EXISTS estado_reactions (
+       id INTEGER PRIMARY KEY AUTOINCREMENT,
+       estado_id INTEGER NOT NULL,
+       username TEXT NOT NULL,
+       created_at DATETIME DEFAULT (datetime('now','localtime')),
+       UNIQUE(estado_id, username),
+       FOREIGN KEY(estado_id) REFERENCES estados(id) ON DELETE CASCADE
+     )`,
+    // Estado comments from clients
+    `CREATE TABLE IF NOT EXISTS estado_comments (
+       id INTEGER PRIMARY KEY AUTOINCREMENT,
+       estado_id INTEGER NOT NULL,
+       username TEXT NOT NULL,
+       display_name TEXT,
+       comment TEXT NOT NULL,
+       created_at DATETIME DEFAULT (datetime('now','localtime')),
+       FOREIGN KEY(estado_id) REFERENCES estados(id) ON DELETE CASCADE
+     )`,
+    'CREATE INDEX IF NOT EXISTS idx_estado_reactions ON estado_reactions(estado_id)',
+    'CREATE INDEX IF NOT EXISTS idx_estado_comments  ON estado_comments(estado_id)',
   ];
   for (const sql of migrations) {
     try { db.exec(sql); } catch { /* already exists */ }
