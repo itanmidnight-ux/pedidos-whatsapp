@@ -257,24 +257,19 @@ if ($needsInstall) {
 Write-Info "PASO 7/10 -- Configurando .env..."
 
 if (-not (Test-Path $ENV_FILE)) {
-    Write-Host ""
-    Write-Host "  Primera ejecucion -- configuracion inicial" -ForegroundColor Yellow
-    Write-Host ""
-    $BOT_PHONE = ($env:BOT_PHONE -replace '\D','')
-    if ($BOT_PHONE.Length -lt 10) { $BOT_PHONE = '573044016277' }
-
     # Generar secretos criptograficos
     $rng = [Security.Cryptography.RNGCryptoServiceProvider]::new()
     $b32 = New-Object byte[] 32
     $rng.GetBytes($b32); $JWT = ($b32 | ForEach-Object { $_.ToString('x2') }) -join ''
     $rng.GetBytes($b32); $KEY = ($b32 | ForEach-Object { $_.ToString('x2') }) -join ''
 
+    # BOT_PHONE vacio intencionalmente -- se configura al final de forma interactiva
     @"
 PORT=$PORT
 API_KEY=$KEY
 JWT_SECRET=$JWT
 BOT_ENABLED=true
-BOT_PHONE=$BOT_PHONE
+BOT_PHONE=
 SERVER_DOMAIN=$DOMAIN
 DUCKDNS_TOKEN=$DUCK_TOKEN
 "@ | Set-Content $ENV_FILE -Encoding UTF8
@@ -625,47 +620,124 @@ if ($cfExe -and (Test-Path $cfExe)) {
     $tunnelUrl = ''
 }
 
-# -- Codigo de vinculacion WhatsApp ----------------------------
+# -- Configuracion interactiva de WhatsApp ---------------------
 Write-Host ""
-Write-Info "Esperando codigo de vinculacion WhatsApp (max 120s)..."
+Write-Host "  +======================================================+" -ForegroundColor Cyan
+Write-Host "  |   CONFIGURACION WHATSAPP -- Ingresa tu numero       |" -ForegroundColor Cyan
+Write-Host "  +======================================================+" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "  Ingresa el numero de telefono que vincularas a WhatsApp." -ForegroundColor White
+Write-Host "  Incluye codigo de pais sin + ni espacios." -ForegroundColor Gray
+Write-Host "  Ejemplo Colombia: 573044016277" -ForegroundColor Gray
+Write-Host ""
+
+$BOT_PHONE = ''
+do {
+    $BOT_PHONE = (Read-Host "  Numero de telefono") -replace '\D',''
+    if ($BOT_PHONE.Length -lt 10) {
+        Write-Warn "Numero invalido. Debe tener minimo 10 digitos. Intenta de nuevo."
+    }
+} while ($BOT_PHONE.Length -lt 10)
+
+Write-Ok "Numero aceptado: $BOT_PHONE"
+
+# Actualizar BOT_PHONE en .env
+$envContent = Get-Content $ENV_FILE -Raw -ErrorAction SilentlyContinue
+if ($envContent -match '(?m)^BOT_PHONE=') {
+    $envContent = $envContent -replace '(?m)^BOT_PHONE=.*', "BOT_PHONE=$BOT_PHONE"
+} else {
+    $envContent = $envContent.TrimEnd() + "`r`nBOT_PHONE=$BOT_PHONE`r`n"
+}
+Set-Content $ENV_FILE $envContent -Encoding UTF8
+Write-Ok ".env actualizado con BOT_PHONE=$BOT_PHONE"
+
+# Limpiar sesion WhatsApp y log antes de reiniciar
+Write-Info "Limpiando sesion WhatsApp..."
+$authDirsWa = @(
+    "$APPDATA_BOT\auth",
+    "C:\Windows\system32\config\systemprofile\AppData\Roaming\pedidos-bot\auth",
+    "C:\Windows\SysWOW64\config\systemprofile\AppData\Roaming\pedidos-bot\auth"
+)
+foreach ($aDir in $authDirsWa) {
+    Remove-Item $aDir -Recurse -Force -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Force -Path $aDir | Out-Null
+}
+"" | Set-Content "$LOG\server.log" -Encoding UTF8
+
+# Reiniciar servicio para aplicar nuevo BOT_PHONE
+Write-Info "Reiniciando servicio con numero $BOT_PHONE..."
+Stop-Service $SVC_NAME -Force -ErrorAction SilentlyContinue
+Start-Sleep 4
+Start-Service $SVC_NAME -ErrorAction SilentlyContinue
+
+# Esperar a que el servidor responda
+Write-Info "Esperando que el servidor arranque (max 30s)..."
+for ($i = 0; $i -lt 30; $i++) {
+    try {
+        $r = Invoke-WebRequest -Uri "http://localhost:$PORT/health" -UseBasicParsing -TimeoutSec 2 -ErrorAction Stop
+        if ($r.StatusCode -eq 200) { break }
+    } catch {}
+    Start-Sleep 1
+}
+
+# Esperar codigo de vinculacion WhatsApp
+Write-Host ""
+Write-Info "Solicitando codigo de vinculacion a WhatsApp (max 120s)..."
+Write-Info "  (Baileys conectara y pedira un codigo de 8 caracteres)"
+Write-Host ""
+
 $pairCode  = ''
 $connected = $false
 for ($i = 0; $i -lt 60; $i++) {
     $logContent = Get-Content "$LOG\server.log" -Raw -ErrorAction SilentlyContinue
-    if ($logContent -cmatch '\[bot\].*(conectado|connected|open)') { $connected = $true; break }
-    # Buscar patron ===== XXXX-XXXX ===== (formato real del log)
+    if ($logContent -cmatch '\[bot\].*(Conectado|conectado|open)') { $connected = $true; break }
     $allM = [regex]::Matches($logContent, '={3,}\s*([A-Z0-9]{4}-[A-Z0-9]{4})\s*={3,}')
     if ($allM.Count -gt 0) {
         $pairCode = $allM[$allM.Count - 1].Groups[1].Value; break
     }
+    Write-Host "  . " -NoNewline -ForegroundColor DarkGray
     Start-Sleep 2
 }
-
 Write-Host ""
+
 if ($connected) {
-    Write-Ok "Bot WhatsApp ya conectado (sesion existente)"
+    Write-Ok "Bot WhatsApp ya conectado con sesion existente"
 } elseif ($pairCode) {
-    Write-Host "  +----------------------------------------------------+" -ForegroundColor Green
-    Write-Host "  |     CODIGO DE VINCULACION WHATSAPP                 |" -ForegroundColor Green
-    Write-Host "  |----------------------------------------------------|" -ForegroundColor Green
-    Write-Host "  |                                                    |" -ForegroundColor Green
-    Write-Host "  |           $pairCode                           |" -ForegroundColor White
-    Write-Host "  |                                                    |" -ForegroundColor Green
-    Write-Host "  |  1. Abre WhatsApp en tu telefono                   |" -ForegroundColor Green
-    Write-Host "  |  2. Menu (3 puntos) > Dispositivos vinculados      |" -ForegroundColor Green
-    Write-Host "  |  3. Vincular dispositivo > Vincular con numero     |" -ForegroundColor Green
-    Write-Host "  |  4. Ingresa el codigo de arriba                    |" -ForegroundColor Green
-    Write-Host "  +----------------------------------------------------+" -ForegroundColor Green
     Write-Host ""
-    Write-Info "Esperando confirmacion (max 120s)..."
+    Write-Host "  +========================================+" -ForegroundColor Green
+    Write-Host "  |   CODIGO DE VINCULACION WHATSAPP      |" -ForegroundColor Green
+    Write-Host "  |                                        |" -ForegroundColor Green
+    Write-Host "  |          >>> $pairCode <<<             |" -ForegroundColor Yellow
+    Write-Host "  |                                        |" -ForegroundColor Green
+    Write-Host "  |  1. Abre WhatsApp en tu telefono       |" -ForegroundColor White
+    Write-Host "  |  2. Menu > Dispositivos vinculados     |" -ForegroundColor White
+    Write-Host "  |  3. Vincular dispositivo               |" -ForegroundColor White
+    Write-Host "  |  4. Vincular con numero de telefono    |" -ForegroundColor White
+    Write-Host "  |  5. Ingresa el codigo de arriba        |" -ForegroundColor White
+    Write-Host "  +========================================+" -ForegroundColor Green
+    Write-Host ""
+    Write-Host "  Tienes 120 segundos para ingresar el codigo antes de que expire." -ForegroundColor Yellow
+    Write-Host ""
+    Write-Info "Esperando confirmacion de vinculacion..."
     for ($i = 0; $i -lt 60; $i++) {
         $lc = Get-Content "$LOG\server.log" -Raw -ErrorAction SilentlyContinue
-        if ($lc -match '\[bot\].*nect') { Write-Ok "Bot WhatsApp CONECTADO!"; break }
+        if ($lc -match '\[bot\].*Conectado') {
+            Write-Host ""
+            Write-Ok "!!! Bot WhatsApp CONECTADO exitosamente !!!"
+            break
+        }
+        Write-Host "  . " -NoNewline -ForegroundColor DarkGray
         Start-Sleep 2
     }
+    Write-Host ""
 } else {
-    Write-Warn "Codigo de vinculacion no aparecio en 80s"
-    Write-Warn "Revisa BOT_PHONE en $ENV_FILE y: Get-Content $LOG\server.log -Tail 30"
+    Write-Host ""
+    Write-Warn "El codigo no aparecio en 120s. Ultimas lineas del log:"
+    Get-Content "$LOG\server.log" -Tail 20 -ErrorAction SilentlyContinue |
+        ForEach-Object { Write-Host "    $_" -ForegroundColor Gray }
+    Write-Host ""
+    Write-Warn "Revisa: Get-Content $LOG\server.log -Tail 40"
+    Write-Warn "Verifica que el numero $BOT_PHONE sea correcto y tenga WhatsApp activo."
 }
 
 # -- Resumen ---------------------------------------------------
