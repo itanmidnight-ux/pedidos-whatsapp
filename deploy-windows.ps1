@@ -43,7 +43,6 @@ function Write-Die($m) {
     Write-Host ""
     Write-Host "  [ERROR] $m" -ForegroundColor Red
     Write-Host "  Log: $LOG\install.log" -ForegroundColor Yellow
-    Read-Host "`n  Presiona Enter para cerrar"
     exit 1
 }
 
@@ -112,7 +111,7 @@ try { $nodeVer = (& node --version 2>$null) } catch {}
 
 if ($nodeVer -notmatch '^v20') {
     Write-Warn "Instalando Node.js 20 LTS..."
-    Invoke-Cmd 'choco' @('install','nodejs-lts','--version=20.18.0','-y','--no-progress')
+    $null = Invoke-Cmd 'choco' @('install','nodejs-lts','--version=20.18.0','-y','--no-progress')
     Update-Path
     try { $nodeVer = (& node --version 2>$null) } catch {}
     if ($nodeVer -notmatch '^v20') { Write-Die "Node.js 20 no se instalo. Intenta instalar manualmente desde nodejs.org" }
@@ -134,14 +133,24 @@ Write-Info "PASO 3/10 -- Verificando NSSM (gestor de servicios)..."
 $nssmExe = "$env:ProgramFiles\nssm\nssm.exe"
 if (-not (Test-Path $nssmExe)) {
     Write-Warn "Instalando NSSM..."
-    Invoke-Cmd 'choco' @('install','nssm','-y','--no-progress')
+    $null = Invoke-Cmd 'choco' @('install','nssm','-y','--no-progress','--force')
     Update-Path
-    # Buscar nssm en paths posibles
+    # Buscar nssm en paths posibles post-choco
     $nssmFound = Get-Command nssm -ErrorAction SilentlyContinue
-    if ($nssmFound) {
-        $nssmExe = $nssmFound.Source
-    } elseif (Test-Path "C:\ProgramData\chocolatey\bin\nssm.exe") {
-        $nssmExe = "C:\ProgramData\chocolatey\bin\nssm.exe"
+    if ($nssmFound) { $nssmExe = $nssmFound.Source }
+    elseif (Test-Path "C:\ProgramData\chocolatey\bin\nssm.exe") { $nssmExe = "C:\ProgramData\chocolatey\bin\nssm.exe" }
+    elseif (Test-Path "C:\ProgramData\chocolatey\lib\nssm\tools\nssm.exe") { $nssmExe = "C:\ProgramData\chocolatey\lib\nssm\tools\nssm.exe" }
+    # Fallback: descarga directa si choco fallo
+    if (-not (Test-Path $nssmExe)) {
+        Write-Warn "Choco fallo -- descargando NSSM directamente..."
+        $nssmDir  = "$env:ProgramFiles\nssm"
+        New-Item -ItemType Directory -Force -Path $nssmDir | Out-Null
+        $nssmZip  = "$env:TEMP\nssm.zip"
+        (New-Object Net.WebClient).DownloadFile("https://nssm.cc/release/nssm-2.24.zip", $nssmZip)
+        Expand-Archive $nssmZip -DestinationPath "$env:TEMP\nssm-extract" -Force
+        Copy-Item "$env:TEMP\nssm-extract\nssm-2.24\win64\nssm.exe" "$nssmDir\nssm.exe" -Force
+        $nssmExe = "$nssmDir\nssm.exe"
+        $env:PATH += ";$nssmDir"
     }
     if (-not (Test-Path $nssmExe)) { Write-Die "NSSM no se instalo." }
     Write-Ok "NSSM instalado en $nssmExe"
@@ -165,7 +174,7 @@ foreach ($p in $cfPaths) {
 }
 if (-not $cfExe) {
     Write-Warn "Instalando cloudflared..."
-    Invoke-Cmd 'choco' @('install','cloudflared','-y','--no-progress')
+    $null = Invoke-Cmd 'choco' @('install','cloudflared','-y','--no-progress')
     Update-Path
     foreach ($p in $cfPaths) {
         if ($p -and (Test-Path $p)) { $cfExe = $p; break }
@@ -193,7 +202,7 @@ foreach ($p in $certbotPaths) {
 }
 if (-not $certbotExe) {
     Write-Warn "Instalando Certbot..."
-    Invoke-Cmd 'choco' @('install','certbot','-y','--no-progress')
+    $null = Invoke-Cmd 'choco' @('install','certbot','-y','--no-progress')
     Update-Path
     foreach ($p in $certbotPaths) {
         if ($p -and (Test-Path $p)) { $certbotExe = $p; break }
@@ -246,10 +255,8 @@ if (-not (Test-Path $ENV_FILE)) {
     Write-Host ""
     Write-Host "  Primera ejecucion -- configuracion inicial" -ForegroundColor Yellow
     Write-Host ""
-    $BOT_PHONE = ''
-    do {
-        $BOT_PHONE = (Read-Host "  Numero WhatsApp del negocio (ej: 573001234567)") -replace '\D',''
-    } while ($BOT_PHONE.Length -lt 10)
+    $BOT_PHONE = ($env:BOT_PHONE -replace '\D','')
+    if ($BOT_PHONE.Length -lt 10) { $BOT_PHONE = '573044016277' }
 
     # Generar secretos criptograficos
     $rng = [Security.Cryptography.RNGCryptoServiceProvider]::new()
