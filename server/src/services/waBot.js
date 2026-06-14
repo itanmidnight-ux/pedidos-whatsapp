@@ -286,13 +286,12 @@ async function connect() {
     const code = lastDisconnect?.error?.output?.statusCode;
 
     if (connection === 'connecting' && PHONE && !pairingDone && !state.creds.registered) {
-      // Esperar que el handshake Noise este completo antes de pedir codigo
-      await delay(3000);
+      await delay(1500);
       try {
         const pair = await sock.requestPairingCode(PHONE);
         const fmt  = pair.match(/.{1,4}/g).join('-');
-        console.log(`\n[bot] ===== Código de vinculación: ${fmt} =====\n`);
-        console.log(`[bot] Tienes 120s para ingresar el codigo en WhatsApp > Dispositivos vinculados\n`);
+        console.log(`\n[bot] ===== Código de vinculación: ${fmt} =====`);
+        console.log(`[bot] Pairing code: ${fmt}\n`);
         pairingDone = true;
       } catch (e) {
         console.error('[bot] pairing err:', e.message);
@@ -317,11 +316,22 @@ async function connect() {
       isReady = false;
       clearTimers();
 
+      // 401 durante vinculacion: NO borrar sesion ni codigo — reconectar con backoff
+      // El usuario puede estar a punto de ingresar el codigo; destruir la sesion lo invalida
+      if (code === 401 && !isReady) {
+        retryCount++;
+        const wait = Math.min(3000 * retryCount, 30000);
+        console.log(`[bot] 401 durante vinculacion — reintentando en ${wait / 1000}s sin borrar sesion (${retryCount}/${MAX_RETRIES})...`);
+        setTimeout(connect, wait);
+        return;
+      }
+
+      // Errores verdaderamente fatales: sesion expirada, baneada, corrompida
       const FATAL = [
         DisconnectReason.loggedOut,
         DisconnectReason.forbidden,
         DisconnectReason.badSession,
-        411, 401,
+        411,
       ];
 
       if (FATAL.includes(code)) {
@@ -329,10 +339,7 @@ async function connect() {
         _clearAuth();
         pairingDone = false;
         retryCount  = 0;
-        // 401 antes de vincular: dar 120s para que el usuario ingrese el código
-        const wait = (code === 401 && !isReady) ? 120000 : 8000;
-        console.log(`[bot] Reintentando en ${wait / 1000}s...`);
-        setTimeout(connect, wait);
+        setTimeout(connect, 8000);
         return;
       }
 
