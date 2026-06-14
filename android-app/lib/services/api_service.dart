@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -16,7 +17,17 @@ class ApiService {
     aOptions: AndroidOptions(encryptedSharedPreferences: true),
   );
 
-  static const _defaultUrl = 'https://tu-dominio.duckdns.org';
+  static const _defaultUrl = 'http://tu-dominio.duckdns.org';
+
+  // En web usa el mismo origen (funciona con DuckDNS HTTP y cloudflare HTTPS)
+  static String get _autoUrl {
+    if (kIsWeb) {
+      final uri = Uri.base;
+      return '${uri.scheme}://${uri.host}${uri.hasPort && uri.port != 80 && uri.port != 443 ? ":${uri.port}" : ""}';
+    }
+    return _defaultUrl;
+  }
+
   static String _serverUrl   = _defaultUrl;
   static String _token       = '';
   static String _username    = '';
@@ -28,7 +39,8 @@ class ApiService {
 
   static Future<void> init() async {
     final prefs  = await SharedPreferences.getInstance();
-    _serverUrl   = prefs.getString('server_url') ?? _defaultUrl;
+    // Web: siempre usar mismo origen (ignora prefs guardadas)
+    _serverUrl   = kIsWeb ? _autoUrl : (prefs.getString('server_url') ?? _defaultUrl);
     _token       = await _secureStorage.read(key: 'jwt_token')    ?? '';
     _username    = await _secureStorage.read(key: 'username')     ?? '';
     _role        = await _secureStorage.read(key: 'role')         ?? '';
