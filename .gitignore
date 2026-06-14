@@ -10,7 +10,7 @@ daemon/
 *.db-shm
 *.db-wal
 reports/
-server/src/webapp/
+# server/src/webapp/ -- ahora commiteado (Flutter web build)
 .flutter-plugins
 .flutter-plugins-dependencies
 android-app/.dart_tool/
