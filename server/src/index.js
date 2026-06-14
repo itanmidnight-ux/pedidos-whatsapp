@@ -94,6 +94,19 @@ app.use('/api/settings', require('./routes/settings'));
 app.get('/health',  (req, res) => res.json({ status: 'ok', time: new Date().toISOString() }));
 app.get('/preview', (req, res) => res.sendFile(path.join(__dirname, 'preview.html')));
 
+// Raiz -> redirige a /app/
+app.get('/', (req, res) => res.redirect(301, '/app/'));
+
+// SPA fallback: /app/* sin archivo -> index.html (Flutter router)
+app.get('/app/*', (req, res) => {
+  const index = path.join(__dirname, 'webapp', 'index.html');
+  if (require('fs').existsSync(index)) {
+    res.sendFile(index);
+  } else {
+    res.status(503).send('App en construccion. API disponible en /api/');
+  }
+});
+
 // ── Error handler global ──────────────────────────────────────
 app.use((err, req, res, next) => {
   // multer LIMIT_FILE_SIZE / LIMIT_UNEXPECTED_FILE → 400 not 500
