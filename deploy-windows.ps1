@@ -734,4 +734,4 @@ Write-Host "  IMPORTANTE -- Verifica que estos puertos esten abiertos en el VPS:
 Write-Host "    Puerto 80  (HTTP / Let's Encrypt challenge)"                     -ForegroundColor Cyan
 Write-Host "    Puerto 443 (HTTPS)"                                              -ForegroundColor Cyan
 Write-Host ""
-Read-Host "  Presiona Enter para cerrar"
+Write-Host "  Deploy completado." -ForegroundColor Green
