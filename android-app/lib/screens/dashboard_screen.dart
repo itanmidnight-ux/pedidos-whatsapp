@@ -8,7 +8,9 @@ import 'products_screen.dart';
 import 'messages_screen.dart';
 import 'users_screen.dart';
 import 'admin_estados_screen.dart';
+import 'admin_settings_screen.dart';
 import 'inventario_screen.dart';
+import 'worker_estados_screen.dart';
 
 // Filter chips
 const _allStatuses = ['pending', 'claimed', 'en_camino'];
@@ -52,7 +54,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
     }
   }
 
-  static const _titlesWorker = ['Pedidos Activos', 'Mensajes'];
+  static const _titlesWorker = ['Pedidos Activos', 'Mensajes', 'Estados'];
   static const _titlesAdmin  = ['Pedidos Activos', 'Productos', 'Mensajes', 'Usuarios', 'Estados', 'Inventario'];
 
   /// Filter + sort orders:
@@ -90,6 +92,21 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
                 message: 'Sin conexión',
                 child: Icon(Icons.wifi_off, color: Color(0xFFD4800A), size: 20),
               ),
+            ),
+          if (provider.isAdmin)
+            IconButton(
+              icon: const Icon(Icons.settings_rounded, color: Colors.white70),
+              tooltip: 'Configuración',
+              onPressed: () => Navigator.push(context, MaterialPageRoute(
+                builder: (_) => Scaffold(
+                  appBar: AppBar(
+                    title: const Text('Configuración'),
+                    backgroundColor: const Color(0xFF1E6B2E),
+                    foregroundColor: Colors.white,
+                  ),
+                  backgroundColor: const Color(0xFFF8F4EE),
+                  body: const AdminSettingsScreen(),
+                ))),
             ),
           IconButton(
             icon: const Icon(Icons.refresh_rounded, color: Colors.white),
@@ -184,8 +201,9 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
         const MessagesScreen(),
         // USUARIOS (admin only)
         if (provider.isAdmin) const UsersScreen(),
-        // ESTADOS (admin only)
-        if (provider.isAdmin) const AdminEstadosScreen(),
+        // ESTADOS (admin only → AdminEstadosScreen / worker → WorkerEstadosScreen)
+        if (provider.isAdmin) const AdminEstadosScreen()
+        else const WorkerEstadosScreen(),
         // INVENTARIO (admin only)
         if (provider.isAdmin) const InventarioScreen(),
       ]),
@@ -220,6 +238,12 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
               backgroundColor: Colors.red,
               child: const Icon(Icons.chat_bubble_rounded, color: Color(0xFF1E6B2E))),
             label: 'Mensajes'),
+          // Estados tab: admin gets it in its own slot; worker gets it here
+          if (!provider.isAdmin)
+            const NavigationDestination(
+              icon: Icon(Icons.auto_stories_outlined),
+              selectedIcon: Icon(Icons.auto_stories_rounded, color: Color(0xFF1E6B2E)),
+              label: 'Estados'),
           if (provider.isAdmin)
             NavigationDestination(
               icon: Badge(

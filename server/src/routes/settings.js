@@ -13,8 +13,8 @@ router.get('/', clientAuth, (req, res) => {
     rows.forEach(r => { settings[r.key] = r.value; });
     return res.json({ settings });
   }
-  // Clients only get nequi_phone + nequi_name
-  const allowed = ['nequi_phone', 'nequi_name'];
+  // Clients only get nequi_phone + nequi_name + empresa_nombre + horario_atencion
+  const allowed = ['nequi_phone', 'nequi_name', 'empresa_nombre', 'horario_atencion'];
   const settings = {};
   allowed.forEach(k => {
     const row = db.prepare('SELECT value FROM settings WHERE key=?').get(k);
@@ -23,7 +23,11 @@ router.get('/', clientAuth, (req, res) => {
   res.json({ settings });
 });
 
-const ALLOWED_SETTINGS_KEYS = ['nequi_phone', 'nequi_name', 'business_name', 'business_phone', 'delivery_message', 'greeting_message'];
+const ALLOWED_SETTINGS_KEYS = [
+  'nequi_phone', 'nequi_name', 'business_name', 'business_phone',
+  'delivery_message', 'greeting_message',
+  'empresa_nombre', 'empresa_descripcion', 'horario_atencion',
+];
 
 // PUT /api/settings — update setting (admin only)
 router.put('/', adminAuth, (req, res) => {

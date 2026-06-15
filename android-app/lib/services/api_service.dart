@@ -158,6 +158,48 @@ class ApiService {
   }
 
   // ── Auth ────────────────────────────────────────────────
+  static Future<Map<String, String>> register({
+    required String username,
+    required String password,
+    required String displayName,
+    required String email,
+    required String address,
+    String? nickname,
+    String? bio,
+  }) async {
+    http.Response res;
+    try {
+      res = await http.post(
+        Uri.parse('$_serverUrl/api/auth/register'),
+        headers: {'Content-Type': 'application/json', 'ngrok-skip-browser-warning': 'true'},
+        body: jsonEncode({
+          'username':     username.toLowerCase().trim(),
+          'password':     password,
+          'display_name': displayName.trim(),
+          'email':        email.trim(),
+          'address':      address.trim(),
+          if (nickname != null && nickname.isNotEmpty) 'nickname': nickname.trim(),
+          if (bio      != null && bio.isNotEmpty)      'bio':      bio.trim(),
+        }),
+      ).timeout(const Duration(seconds: 12));
+    } on TimeoutException {
+      throw Exception('Servidor no responde. Verifica tu conexión.');
+    } catch (_) {
+      throw Exception('No se pudo conectar al servidor.');
+    }
+    if (res.statusCode == 201) {
+      final body = jsonDecode(res.body) as Map<String, dynamic>;
+      return {
+        'token':        body['token'] as String,
+        'username':     body['username'] as String,
+        'role':         body['role'] as String? ?? 'client',
+        'display_name': body['display_name'] as String? ?? username,
+      };
+    }
+    final body = _tryDecodeBody(res.body);
+    throw Exception(body['error'] as String? ?? 'Error al registrarse');
+  }
+
   static Future<Map<String, String>> login(String username, String pin) async {
     http.Response res;
     try {
@@ -367,6 +409,58 @@ class ApiService {
       body: jsonEncode({'flagged': flagged, 'flag_reason': reason})).timeout(const Duration(seconds: 10));
   }
 
+  // ── Users: clients list + self-profile ───────────────────
+  static Future<List<Map<String, dynamic>>> getClients() async {
+    final res = await http.get(Uri.parse('$_serverUrl/api/users/clients'), headers: _headers)
+      .timeout(const Duration(seconds: 10));
+    if (res.statusCode == 200) return List<Map<String, dynamic>>.from(jsonDecode(res.body)['clients']);
+    throw Exception('Error clientes: ${res.statusCode}');
+  }
+
+  static Future<Map<String, dynamic>> updateProfile(Map<String, dynamic> data) async {
+    final res = await http.put(Uri.parse('$_serverUrl/api/users/me'), headers: _headers,
+      body: jsonEncode(data)).timeout(const Duration(seconds: 10));
+    if (res.statusCode == 200) return jsonDecode(res.body)['user'] as Map<String, dynamic>;
+    throw Exception(jsonDecode(res.body)['error'] ?? 'Error actualizando perfil');
+  }
+
+  static Future<void> changePassword(String currentPw, String newPw) async {
+    final res = await http.put(Uri.parse('$_serverUrl/api/users/me/password'), headers: _headers,
+      body: jsonEncode({'current_password': currentPw, 'new_password': newPw}))
+      .timeout(const Duration(seconds: 10));
+    if (res.statusCode != 200) throw Exception(jsonDecode(res.body)['error'] ?? 'Error cambiando contraseña');
+  }
+
+  static Future<String> uploadProfilePic(String? filePath, {Uint8List? bytes, String? mimeType}) async {
+    final uri     = Uri.parse('$_serverUrl/api/users/me/profile-pic');
+    final request = http.MultipartRequest('POST', uri);
+    request.headers.addAll(_headersNoContent);
+    if (bytes != null) {
+      final mt  = MediaType.parse(mimeType ?? 'image/jpeg');
+      final ext = mt.subtype == 'jpeg' ? 'jpg' : mt.subtype;
+      request.files.add(http.MultipartFile.fromBytes('photo', bytes,
+        filename: 'photo.$ext', contentType: mt));
+    } else if (filePath != null) {
+      request.files.add(await http.MultipartFile.fromPath('photo', filePath,
+        contentType: _mimeOf(filePath)));
+    } else {
+      throw Exception('Se requiere filePath o bytes');
+    }
+    final streamed = await request.send().timeout(const Duration(seconds: 60));
+    final body = await streamed.stream.bytesToString();
+    if (streamed.statusCode != 200) throw Exception(_tryParseError(body) ?? 'Error subiendo foto');
+    return jsonDecode(body)['filename'] as String;
+  }
+
+  static Future<void> deleteProfilePic() async {
+    final res = await http.delete(Uri.parse('$_serverUrl/api/users/me/profile-pic'), headers: _headers)
+      .timeout(const Duration(seconds: 10));
+    if (res.statusCode != 200) throw Exception('Error eliminando foto');
+  }
+
+  static String profilePicUrl(String filename) =>
+    '$_serverUrl/api/users/profile-pic/${Uri.encodeComponent(filename)}';
+
   // ── Users: delete ────────────────────────────────────────
   static Future<void> deleteUser(int id) async {
     final res = await http.delete(Uri.parse('$_serverUrl/api/users/$id'), headers: _headers)
@@ -422,11 +516,15 @@ class ApiService {
     String? caption,
     Uint8List? bytes,
     String? mimeType,
+    int? productId,
+    String? productName,
   }) async {
     final uri     = Uri.parse('$_serverUrl/api/estados');
     final request = http.MultipartRequest('POST', uri);
     request.headers.addAll(_headersNoContent);
-    if (caption != null) request.fields['caption'] = caption;
+    if (caption     != null) request.fields['caption']      = caption;
+    if (productId   != null) request.fields['product_id']   = productId.toString();
+    if (productName != null) request.fields['product_name'] = productName;
 
     if (bytes != null) {
       final mt = MediaType.parse(mimeType ?? 'image/jpeg');
@@ -472,6 +570,13 @@ class ApiService {
       headers: _headers).timeout(const Duration(seconds: 10));
     if (res.statusCode == 200) return List<Map<String, dynamic>>.from(jsonDecode(res.body)['comments']);
     throw Exception('Error cargando comentarios');
+  }
+
+  static Future<List<Map<String, dynamic>>> getEstadoReactions(int id) async {
+    final res = await http.get(Uri.parse('$_serverUrl/api/estados/$id/reactions'),
+      headers: _headers).timeout(const Duration(seconds: 10));
+    if (res.statusCode == 200) return List<Map<String, dynamic>>.from(jsonDecode(res.body)['reactions']);
+    throw Exception('Error cargando reacciones');
   }
 
   static Future<void> addEstadoComment(int id, String comment) async {
