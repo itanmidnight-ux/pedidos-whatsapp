@@ -344,10 +344,18 @@ async function connect() {
         return;
       }
 
+      // When waiting for user to enter pairing code, hold 45s so they have time.
+      // Normal backoff resumes once wasEverConnected (session established).
       const immediate = code === DisconnectReason.restartRequired;
-      const backoff   = immediate ? 500 : Math.min(1000 * 2 ** retryCount, 30000);
+      const backoff   = (pairingDone && !wasEverConnected)
+        ? 45000
+        : immediate ? 500 : Math.min(1000 * 2 ** retryCount, 30000);
       retryCount++;
-      console.log(`[bot] Reconnecting in ${backoff}ms (attempt ${retryCount}/${MAX_RETRIES})…`);
+      if (pairingDone && !wasEverConnected) {
+        console.log(`[bot] Waiting 45s for pairing code entry (attempt ${retryCount}/${MAX_RETRIES})…`);
+      } else {
+        console.log(`[bot] Reconnecting in ${backoff}ms (attempt ${retryCount}/${MAX_RETRIES})…`);
+      }
       setTimeout(connect, backoff);
     }
   });
