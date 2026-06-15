@@ -13,8 +13,8 @@ router.get('/status', adminAuth, (req, res) => {
   }
 });
 
-// GET /api/bot/qr — QR code como imagen PNG (admin, solo cuando está pendiente de escanear)
-router.get('/qr', adminAuth, (req, res) => {
+// GET /api/bot/qr — QR code como imagen PNG (público — QR expira en 20s, no es dato sensible)
+router.get('/qr', (req, res) => {
   try {
     const { getQR } = require('../services/waBot');
     const qr = getQR();

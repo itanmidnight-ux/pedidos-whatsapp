@@ -256,11 +256,7 @@ function _buildClient() {
     try {
       const QRCode = require('qrcode');
       currentQR = await QRCode.toDataURL(qr);
-      // Print QR as ASCII art to log so admin can scan from NSSM log
-      const ascii = await QRCode.toString(qr, { type: 'terminal', small: true });
-      console.log('[bot] ===== ESCANEA ESTE QR CON WHATSAPP =====');
-      console.log(ascii);
-      console.log('[bot] WhatsApp > Dispositivos vinculados > Vincular dispositivo');
+      console.log('[bot] QR listo — abre en navegador: /api/bot/qr');
     } catch (_) {
       currentQR = null;
       console.log('[bot] QR listo — accede a GET /api/bot/qr para verlo');
