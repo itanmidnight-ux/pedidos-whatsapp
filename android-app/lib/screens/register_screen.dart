@@ -40,7 +40,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     if (!_formKey.currentState!.validate()) return;
     setState(() { _loading = true; _error = null; });
     try {
-      // Create the account
+      // Create the account first
       await ApiService.register(
         username:    _usernameCtrl.text.trim(),
         password:    _pwCtrl.text,
@@ -51,7 +51,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         bio:         _bioCtrl.text.trim().isEmpty ? null : _bioCtrl.text.trim(),
       );
       if (!mounted) return;
-      // Log in with the new credentials
+      // Auto-login with the new credentials
       await context.read<AppProvider>().login(
         _usernameCtrl.text.trim(), _pwCtrl.text);
     } catch (e) {

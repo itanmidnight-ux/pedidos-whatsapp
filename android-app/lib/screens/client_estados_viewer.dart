@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:cached_network_image/cached_network_image.dart';
@@ -112,13 +111,12 @@ class _ClientEstadosViewerState extends State<ClientEstadosViewer>
     _pauseProgress();
     try {
       final products = await ApiService.getProducts();
-      final prod     = products.firstWhere((p) => p.id == e.productId,
-        orElse: () => products.first);
-      if (!mounted) return;
+      final idx = products.indexWhere((p) => p.id == e.productId);
+      if (idx < 0 || !mounted) { if (mounted) _resumeProgress(); return; }
       await Navigator.push(context, MaterialPageRoute(
-        builder: (_) => ClientProductDetail(product: prod, description: '')));
+        builder: (_) => ClientProductDetail(product: products[idx], description: '')));
     } catch (_) {}
-    _resumeProgress();
+    if (mounted) _resumeProgress();
   }
 
   Future<void> _sendReply() async {
