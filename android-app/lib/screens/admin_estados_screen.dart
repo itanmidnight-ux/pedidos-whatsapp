@@ -26,13 +26,11 @@ class _AdminEstadosScreenState extends State<AdminEstadosScreen> {
   Future<void> _load() async {
     setState(() => _loading = true);
     try {
-      final results = await Future.wait([
-        ApiService.getEstados(),
-        ApiService.getProducts(),
-      ]);
+      final estados  = await ApiService.getEstados();
+      final products = await ApiService.getProducts();
       if (mounted) {
-        _estados  = results[0] as List<Estado>;
-        _products = (results[1] as List<Product>).where((p) => p.available).toList();
+        _estados  = estados;
+        _products = products.where((p) => p.available).toList();
       }
     } catch (_) {}
     if (mounted) setState(() => _loading = false);
@@ -63,7 +61,7 @@ class _AdminEstadosScreenState extends State<AdminEstadosScreen> {
     final mime = mimeMap[ext] ?? 'image/jpeg';
 
     final info = await _askCaptionAndProduct();
-    if (!mounted) return;
+    if (info == null || !mounted) return;  // user cancelled
     setState(() => _uploading = true);
     try {
       await ApiService.createEstado(
@@ -83,11 +81,11 @@ class _AdminEstadosScreenState extends State<AdminEstadosScreen> {
     }
   }
 
-  Future<Map<String, dynamic>> _askCaptionAndProduct() async {
+  Future<Map<String, dynamic>?> _askCaptionAndProduct() async {
     final captionCtrl = TextEditingController();
     Product? selectedProduct;
 
-    final result = await showDialog<Map<String, dynamic>>(
+    return showDialog<Map<String, dynamic>>(
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setS) => AlertDialog(
@@ -101,8 +99,8 @@ class _AdminEstadosScreenState extends State<AdminEstadosScreen> {
               ),
               maxLines: 2,
             ),
-            const SizedBox(height: 16),
-            if (_products.isNotEmpty)
+            if (_products.isNotEmpty) ...[
+              const SizedBox(height: 16),
               DropdownButtonFormField<Product>(
                 value: selectedProduct,
                 decoration: const InputDecoration(
@@ -119,9 +117,10 @@ class _AdminEstadosScreenState extends State<AdminEstadosScreen> {
                 ],
                 onChanged: (v) => setS(() => selectedProduct = v),
               ),
+            ],
           ]),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx, null), child: const Text('Cancelar')),
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancelar')),
             FilledButton(
               onPressed: () => Navigator.pop(ctx, {
                 'caption':      captionCtrl.text.trim().isEmpty ? null : captionCtrl.text.trim(),
@@ -134,7 +133,6 @@ class _AdminEstadosScreenState extends State<AdminEstadosScreen> {
         ),
       ),
     );
-    return result ?? {'caption': null, 'product_id': null, 'product_name': null};
   }
 
   Future<void> _showLikes(Estado e) async {
@@ -211,7 +209,7 @@ class _AdminEstadosScreenState extends State<AdminEstadosScreen> {
                     itemBuilder: (_, i) {
                       final e = _estados[i];
                       return GestureDetector(
-                        onTap: () => _showLikes(e),
+                        onLongPress: () => _showLikes(e),
                         child: Card(
                           clipBehavior: Clip.antiAlias,
                           child: Stack(children: [

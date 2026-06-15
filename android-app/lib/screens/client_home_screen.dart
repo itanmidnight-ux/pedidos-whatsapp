@@ -87,10 +87,6 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> with WidgetsBinding
     setState(() { _tab = 2; _newEstados = 0; });
   }
 
-  void _goToProfile() {
-    setState(() => _tab = 3);
-  }
-
   @override
   Widget build(BuildContext context) {
     final size = MediaQuery.of(context).size;
