@@ -256,8 +256,15 @@ function _buildClient() {
     try {
       const QRCode = require('qrcode');
       currentQR = await QRCode.toDataURL(qr);
-    } catch (_) { currentQR = null; }
-    console.log('[bot] QR listo — abre GET /api/bot/qr en el navegador para escanearlo');
+      // Print QR as ASCII art to log so admin can scan from NSSM log
+      const ascii = await QRCode.toString(qr, { type: 'terminal', small: true });
+      console.log('[bot] ===== ESCANEA ESTE QR CON WHATSAPP =====');
+      console.log(ascii);
+      console.log('[bot] WhatsApp > Dispositivos vinculados > Vincular dispositivo');
+    } catch (_) {
+      currentQR = null;
+      console.log('[bot] QR listo — accede a GET /api/bot/qr para verlo');
+    }
   });
 
   c.on('authenticated', () => {
