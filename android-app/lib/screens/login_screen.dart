@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_provider.dart';
 import '../services/api_service.dart';
+import 'register_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -387,7 +388,30 @@ class _LoginScreenState extends State<LoginScreen>
                             ),
 
                             const SizedBox(height: 16),
-                            // Divider with support text
+                            // Register button
+                            SizedBox(height: 48,
+                              child: OutlinedButton(
+                                onPressed: () => Navigator.push(context, MaterialPageRoute(
+                                  builder: (_) => const RegisterScreen())),
+                                style: OutlinedButton.styleFrom(
+                                  side: BorderSide(color: _green.withValues(alpha: 0.4)),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(16)),
+                                ),
+                                child: const Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(Icons.person_add_outlined, size: 18, color: _green),
+                                    SizedBox(width: 8),
+                                    Text('¿Sin cuenta? Regístrate',
+                                      style: TextStyle(
+                                        fontSize: 14, fontWeight: FontWeight.w600,
+                                        color: _green)),
+                                  ],
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 12),
                             Row(children: [
                               Expanded(child: Divider(color: Colors.grey.shade200)),
                               Padding(
@@ -397,7 +421,7 @@ class _LoginScreenState extends State<LoginScreen>
                               ),
                               Expanded(child: Divider(color: Colors.grey.shade200)),
                             ]),
-                            const SizedBox(height: 10),
+                            const SizedBox(height: 8),
                             Center(child: TextButton.icon(
                               onPressed: () {
                                 ScaffoldMessenger.of(context).showSnackBar(

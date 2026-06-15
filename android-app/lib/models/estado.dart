@@ -33,6 +33,8 @@ class Estado {
   final int heartCount;
   final bool hasHearted;
   final int commentCount;
+  final int? productId;
+  final String? productName;
 
   Estado({
     required this.id,
@@ -45,6 +47,8 @@ class Estado {
     this.heartCount = 0,
     this.hasHearted = false,
     this.commentCount = 0,
+    this.productId,
+    this.productName,
   });
 
   factory Estado.fromJson(Map<String, dynamic> j) => Estado(
@@ -58,6 +62,8 @@ class Estado {
     heartCount:   (j['heart_count'] as num?)?.toInt() ?? 0,
     hasHearted:   j['has_hearted'] == true || j['has_hearted'] == 1,
     commentCount: (j['comment_count'] as num?)?.toInt() ?? 0,
+    productId:    j['product_id'] as int?,
+    productName:  j['product_name'] as String?,
   );
 
   Estado copyWith({int? heartCount, bool? hasHearted, int? commentCount}) => Estado(
@@ -67,6 +73,8 @@ class Estado {
     heartCount:   heartCount   ?? this.heartCount,
     hasHearted:   hasHearted   ?? this.hasHearted,
     commentCount: commentCount ?? this.commentCount,
+    productId:    productId,
+    productName:  productName,
   );
 
   bool get isExpired => DateTime.now().isAfter(expiresAt);

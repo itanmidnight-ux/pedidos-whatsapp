@@ -127,6 +127,21 @@ async function initDB() {
      )`,
     'CREATE INDEX IF NOT EXISTS idx_estado_reactions ON estado_reactions(estado_id)',
     'CREATE INDEX IF NOT EXISTS idx_estado_comments  ON estado_comments(estado_id)',
+    // Product link on estados
+    'ALTER TABLE estados ADD COLUMN product_id INTEGER',
+    'ALTER TABLE estados ADD COLUMN product_name TEXT',
+    // Client registration fields
+    'ALTER TABLE users ADD COLUMN email TEXT',
+    'ALTER TABLE users ADD COLUMN bio TEXT',
+    'ALTER TABLE users ADD COLUMN nickname TEXT',
+    'ALTER TABLE users ADD COLUMN profile_pic TEXT',
+    // Profile pic for admin/workers
+    `CREATE TABLE IF NOT EXISTS profile_pics (
+       id INTEGER PRIMARY KEY AUTOINCREMENT,
+       username TEXT NOT NULL UNIQUE,
+       filename TEXT NOT NULL,
+       updated_at DATETIME DEFAULT (datetime('now','localtime'))
+     )`,
   ];
   for (const sql of migrations) {
     try { db.exec(sql); } catch { /* already exists */ }
@@ -150,6 +165,9 @@ async function initDB() {
   // Default settings
   db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES ('nequi_phone', '3001234567')`).run();
   db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES ('nequi_name', 'Concentrados Monserrath')`).run();
+  db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES ('empresa_nombre', 'Concentrados Monserrath')`).run();
+  db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES ('empresa_descripcion', 'Distribuidora de concentrados y alimentos para animales')`).run();
+  db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES ('horario_atencion', 'Lunes a Sábado 8:00am - 6:00pm')`).run();
 
   console.log('DB inicializada en', DB_PATH);
 }

@@ -3,7 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../models/estado.dart';
+import '../models/product.dart';
 import '../services/api_service.dart';
+import 'client_product_detail.dart';
 
 class ClientEstadosViewer extends StatefulWidget {
   final List<Estado> estados;
@@ -25,7 +27,7 @@ class _ClientEstadosViewerState extends State<ClientEstadosViewer>
   final _replyCtrl   = TextEditingController();
   final _replyFocus  = FocusNode();
 
-  static const _autoDuration = Duration(seconds: 15);
+  static const _autoDuration = Duration(seconds: 30);
   static const _green = Color(0xFF1A7A35);
 
   @override
@@ -104,22 +106,18 @@ class _ClientEstadosViewerState extends State<ClientEstadosViewer>
     if (mounted) setState(() => _reacting = false);
   }
 
-  void _showComments() async {
+  Future<void> _goToProduct() async {
+    final e = _estados[_current];
+    if (e.productId == null) return;
     _pauseProgress();
-    setState(() => _replying = true);
-    await showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (_) => _CommentsSheet(estadoId: _estados[_current].id),
-    );
     try {
-      final comments = await ApiService.getEstadoComments(_estados[_current].id);
-      if (mounted) setState(() {
-        _estados[_current] = _estados[_current].copyWith(commentCount: comments.length);
-      });
+      final products = await ApiService.getProducts();
+      final prod     = products.firstWhere((p) => p.id == e.productId,
+        orElse: () => products.first);
+      if (!mounted) return;
+      await Navigator.push(context, MaterialPageRoute(
+        builder: (_) => ClientProductDetail(product: prod, description: '')));
     } catch (_) {}
-    if (mounted) setState(() => _replying = false);
     _resumeProgress();
   }
 
@@ -348,13 +346,15 @@ class _ClientEstadosViewerState extends State<ClientEstadosViewer>
                           activeColor: Colors.red.withValues(alpha: 0.25),
                         ),
                         const SizedBox(width: 10),
-                        // Comments
-                        _ActionBtn(
-                          onTap: _showComments,
-                          icon: Icons.chat_bubble_outline_rounded,
-                          iconColor: Colors.white,
-                          label: '${e.commentCount}',
-                        ),
+                        // Ir al producto (only if estado has linked product)
+                        if (e.productId != null)
+                          _ActionBtn(
+                            onTap: _goToProduct,
+                            icon: Icons.shopping_bag_outlined,
+                            iconColor: const Color(0xFFD4800A),
+                            label: 'Ver producto',
+                            active: false,
+                          ),
                         const Spacer(),
                         Text('${_current + 1} / ${_estados.length}',
                           style: const TextStyle(color: Colors.white54, fontSize: 12)),
@@ -453,187 +453,3 @@ class _ActionBtn extends StatelessWidget {
   );
 }
 
-// ── Comments bottom sheet ──────────────────────────────────────
-class _CommentsSheet extends StatefulWidget {
-  final int estadoId;
-  const _CommentsSheet({required this.estadoId});
-  @override State<_CommentsSheet> createState() => _CommentsSheetState();
-}
-
-class _CommentsSheetState extends State<_CommentsSheet> {
-  static const _green = Color(0xFF1E6B2E);
-  List<Map<String, dynamic>> _comments = [];
-  bool _loading  = true;
-  bool _sending  = false;
-  final _ctrl       = TextEditingController();
-  final _scrollCtrl = ScrollController();
-
-  @override
-  void initState() { super.initState(); _load(); }
-
-  @override
-  void dispose() { _ctrl.dispose(); _scrollCtrl.dispose(); super.dispose(); }
-
-  Future<void> _load() async {
-    try {
-      final c = await ApiService.getEstadoComments(widget.estadoId);
-      if (mounted) setState(() { _comments = c; _loading = false; });
-    } catch (_) { if (mounted) setState(() => _loading = false); }
-  }
-
-  Future<void> _send() async {
-    final text = _ctrl.text.trim();
-    if (text.isEmpty || _sending) return;
-    setState(() => _sending = true);
-    try {
-      await ApiService.addEstadoComment(widget.estadoId, text);
-      _ctrl.clear();
-      await _load();
-      if (_scrollCtrl.hasClients) {
-        _scrollCtrl.animateTo(
-          _scrollCtrl.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 300),
-          curve: Curves.easeOut);
-      }
-    } catch (_) {}
-    if (mounted) setState(() => _sending = false);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      height: MediaQuery.of(context).size.height * 0.65,
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      child: Column(children: [
-        Container(
-          margin: const EdgeInsets.symmetric(vertical: 10),
-          width: 40, height: 4,
-          decoration: BoxDecoration(
-            color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)),
-        ),
-        const Text('Comentarios',
-          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
-        const Divider(height: 16),
-        Expanded(child: _loading
-          ? const Center(child: CircularProgressIndicator(color: _green))
-          : _comments.isEmpty
-            ? Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-                const Text('💬', style: TextStyle(fontSize: 40)),
-                const SizedBox(height: 12),
-                Text('Sé el primero en comentar',
-                  style: TextStyle(color: Colors.grey.shade500, fontSize: 14)),
-              ])
-            : ListView.builder(
-                controller: _scrollCtrl,
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                itemCount: _comments.length,
-                itemBuilder: (_, i) {
-                  final c    = _comments[i];
-                  final name = c['display_name'] as String? ?? c['username'] as String? ?? '?';
-                  final text = c['comment'] as String? ?? '';
-                  final time = c['created_at'] as String?;
-                  DateTime? dt;
-                  try { dt = time != null ? DateTime.parse(time).toLocal() : null; } catch (_) {}
-                  return Padding(
-                    padding: const EdgeInsets.only(bottom: 12),
-                    child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      CircleAvatar(
-                        radius: 18,
-                        backgroundColor: const Color(0xFFE8F5E9),
-                        child: Text(
-                          name.isNotEmpty ? name[0].toUpperCase() : '?',
-                          style: const TextStyle(
-                            color: _green, fontWeight: FontWeight.bold, fontSize: 14)),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                        Row(children: [
-                          Text(name,
-                            style: const TextStyle(
-                              fontWeight: FontWeight.w700, fontSize: 13)),
-                          if (dt != null) ...[
-                            const SizedBox(width: 8),
-                            Text(_fmtTime(dt),
-                              style: TextStyle(
-                                color: Colors.grey.shade400, fontSize: 11)),
-                          ],
-                        ]),
-                        const SizedBox(height: 3),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                          decoration: const BoxDecoration(
-                            color: Color(0xFFF5F5F5),
-                            borderRadius: BorderRadius.only(
-                              topRight:    Radius.circular(14),
-                              bottomLeft:  Radius.circular(14),
-                              bottomRight: Radius.circular(14),
-                            ),
-                          ),
-                          child: Text(text,
-                            style: const TextStyle(fontSize: 13, height: 1.4)),
-                        ),
-                      ])),
-                    ]),
-                  );
-                },
-              ),
-        ),
-        Container(
-          padding: EdgeInsets.fromLTRB(
-            12, 8, 12,
-            MediaQuery.of(context).viewInsets.bottom + 12),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            boxShadow: [BoxShadow(
-              color: Colors.black.withValues(alpha: 0.06),
-              blurRadius: 8, offset: const Offset(0, -2))],
-          ),
-          child: Row(children: [
-            Expanded(child: TextField(
-              controller: _ctrl,
-              maxLines: null,
-              textCapitalization: TextCapitalization.sentences,
-              decoration: InputDecoration(
-                hintText: 'Escribe un comentario...',
-                hintStyle: TextStyle(color: Colors.grey.shade400, fontSize: 14),
-                filled: true,
-                fillColor: const Color(0xFFF5F5F5),
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 16, vertical: 10),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(24),
-                  borderSide: BorderSide.none),
-              ),
-            )),
-            const SizedBox(width: 8),
-            GestureDetector(
-              onTap: _send,
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 150),
-                width: 44, height: 44,
-                decoration: const BoxDecoration(
-                  color: _green, shape: BoxShape.circle),
-                child: _sending
-                  ? const Center(child: SizedBox(width: 20, height: 20,
-                      child: CircularProgressIndicator(
-                        color: Colors.white, strokeWidth: 2)))
-                  : const Icon(Icons.send_rounded, color: Colors.white, size: 20),
-              ),
-            ),
-          ]),
-        ),
-      ]),
-    );
-  }
-
-  String _fmtTime(DateTime dt) {
-    final diff = DateTime.now().difference(dt);
-    if (diff.inMinutes < 1)  return 'ahora';
-    if (diff.inMinutes < 60) return 'hace ${diff.inMinutes}m';
-    if (diff.inHours < 24)   return 'hace ${diff.inHours}h';
-    return 'hace ${diff.inDays}d';
-  }
-}

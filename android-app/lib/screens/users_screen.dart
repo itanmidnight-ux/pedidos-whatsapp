@@ -9,28 +9,53 @@ class UsersScreen extends StatefulWidget {
   State<UsersScreen> createState() => _UsersScreenState();
 }
 
-class _UsersScreenState extends State<UsersScreen> {
+class _UsersScreenState extends State<UsersScreen> with SingleTickerProviderStateMixin {
   static const _green  = Color(0xFF2D5016);
   static const _gold   = Color(0xFFD4800A);
 
   bool _loading = false;
-  final _searchCtrl = TextEditingController();
-  String _query = '';
+  late final TabController _tabs;
+  final _staffSearchCtrl  = TextEditingController();
+  final _clientSearchCtrl = TextEditingController();
+  String _staffQuery  = '';
+  String _clientQuery = '';
+  List<Map<String, dynamic>> _clients = [];
+  bool _loadingClients = false;
 
   @override
   void initState() {
     super.initState();
+    _tabs = TabController(length: 2, vsync: this);
+    _staffSearchCtrl.addListener(
+      () => setState(() => _staffQuery = _staffSearchCtrl.text.toLowerCase()));
+    _clientSearchCtrl.addListener(
+      () => setState(() => _clientQuery = _clientSearchCtrl.text.toLowerCase()));
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<AppProvider>().refreshUsers();
+      _loadClients();
     });
-    _searchCtrl.addListener(() => setState(() => _query = _searchCtrl.text.toLowerCase()));
+    _tabs.addListener(() { if (_tabs.indexIsChanging && _tabs.index == 1) _loadClients(); });
   }
 
   @override
-  void dispose() { _searchCtrl.dispose(); super.dispose(); }
+  void dispose() {
+    _tabs.dispose();
+    _staffSearchCtrl.dispose();
+    _clientSearchCtrl.dispose();
+    super.dispose();
+  }
 
-  // ── Dialogo crear / editar ─────────────────────────────────
-  Future<void> _showUserDialog({Map<String, dynamic>? user}) async {
+  Future<void> _loadClients() async {
+    setState(() => _loadingClients = true);
+    try {
+      final c = await ApiService.getClients();
+      if (mounted) setState(() => _clients = c);
+    } catch (_) {}
+    if (mounted) setState(() => _loadingClients = false);
+  }
+
+  // ── Dialogo crear / editar personal (admin/worker) ─────────
+  Future<void> _showStaffDialog({Map<String, dynamic>? user}) async {
     final isEdit = user != null;
     final displayCtrl  = TextEditingController(text: isEdit ? user['display_name'] ?? '' : '');
     final usernameCtrl = TextEditingController(text: isEdit ? user['username'] ?? '' : '');
@@ -60,13 +85,10 @@ class _UsersScreenState extends State<UsersScreen> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Handle bar
                 Center(child: Container(
                   width: 40, height: 4,
                   decoration: BoxDecoration(
-                    color: Colors.grey.shade300,
-                    borderRadius: BorderRadius.circular(2),
-                  ),
+                    color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)),
                 )),
                 const SizedBox(height: 16),
                 Text(
@@ -74,8 +96,6 @@ class _UsersScreenState extends State<UsersScreen> {
                   style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: _green),
                 ),
                 const SizedBox(height: 20),
-
-                // Display name
                 TextFormField(
                   controller: displayCtrl,
                   decoration: _inputDeco('Nombre visible', Icons.badge_outlined),
@@ -83,8 +103,6 @@ class _UsersScreenState extends State<UsersScreen> {
                   validator: (v) => (v == null || v.trim().isEmpty) ? 'Campo requerido' : null,
                 ),
                 const SizedBox(height: 12),
-
-                // Username
                 TextFormField(
                   controller: usernameCtrl,
                   decoration: _inputDeco('Usuario (login)', Icons.person_outline),
@@ -93,8 +111,6 @@ class _UsersScreenState extends State<UsersScreen> {
                   validator: (v) => (v == null || v.trim().isEmpty) ? 'Campo requerido' : null,
                 ),
                 const SizedBox(height: 12),
-
-                // Contraseña
                 StatefulBuilder(builder: (_, setPw) => TextFormField(
                   controller: pwCtrl,
                   obscureText: pwObscure,
@@ -125,32 +141,16 @@ class _UsersScreenState extends State<UsersScreen> {
                   },
                 )),
                 const SizedBox(height: 12),
-
-                // Rol
                 DropdownButtonFormField<String>(
-                  initialValue: role,
+                  value: role == 'client' ? 'worker' : role,
                   decoration: _inputDeco('Rol', Icons.admin_panel_settings_outlined),
                   items: const [
                     DropdownMenuItem(value: 'worker', child: Text('Trabajador')),
                     DropdownMenuItem(value: 'admin',  child: Text('Administrador')),
-                    DropdownMenuItem(value: 'client', child: Text('Cliente')),
                   ],
                   onChanged: (v) { if (v != null) setS(() => role = v); },
                 ),
                 const SizedBox(height: 12),
-
-                // Dirección de entrega (solo para clientes)
-                if (role == 'client') ...[
-                  TextFormField(
-                    controller: addressCtrl,
-                    decoration: _inputDeco('Dirección de entrega', Icons.location_on_outlined),
-                    maxLines: 2,
-                    minLines: 1,
-                  ),
-                  const SizedBox(height: 12),
-                ],
-
-                // Activo (solo en edición)
                 if (isEdit)
                   SwitchListTile(
                     value: active,
@@ -159,10 +159,7 @@ class _UsersScreenState extends State<UsersScreen> {
                     activeThumbColor: _green,
                     contentPadding: EdgeInsets.zero,
                   ),
-
                 const SizedBox(height: 20),
-
-                // Botones
                 Row(children: [
                   Expanded(child: OutlinedButton(
                     onPressed: () => Navigator.pop(ctx),
@@ -192,7 +189,6 @@ class _UsersScreenState extends State<UsersScreen> {
                             pwCtrl.text.trim(),
                             displayCtrl.text.trim(),
                             role: role,
-                            address: addressCtrl.text.trim(),
                           );
                         }
                         if (mounted) _snack(isEdit ? 'Usuario actualizado' : 'Usuario creado', success: true);
@@ -214,7 +210,6 @@ class _UsersScreenState extends State<UsersScreen> {
     );
   }
 
-  // ── Toggle activo rápido ───────────────────────────────────
   Future<void> _toggleActive(Map<String, dynamic> user) async {
     final newActive = !(user['active'] == 1 || user['active'] == true);
     final name = user['display_name'] ?? user['username'];
@@ -239,9 +234,7 @@ class _UsersScreenState extends State<UsersScreen> {
     setState(() => _loading = true);
     try {
       await context.read<AppProvider>().updateUser(
-        user['id'] as int,
-        {'active': newActive ? 1 : 0},
-      );
+        user['id'] as int, {'active': newActive ? 1 : 0});
       if (mounted) _snack(newActive ? '$name activado' : '$name desactivado', success: true);
     } catch (e) {
       if (mounted) _snack(e.toString().replaceAll('Exception: ', ''));
@@ -250,13 +243,13 @@ class _UsersScreenState extends State<UsersScreen> {
     }
   }
 
-  Future<void> _deleteUser(Map<String, dynamic> user) async {
+  Future<void> _deleteUser(Map<String, dynamic> user, {bool isClient = false}) async {
     final name = user['display_name'] ?? user['username'];
     final confirm = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('Eliminar usuario'),
-        content: Text('¿Eliminar permanentemente a $name? Esta acción no se puede deshacer.'),
+        content: Text('¿Eliminar permanentemente a $name?'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
           FilledButton(
@@ -271,7 +264,11 @@ class _UsersScreenState extends State<UsersScreen> {
     setState(() => _loading = true);
     try {
       await ApiService.deleteUser(user['id'] as int);
-      await context.read<AppProvider>().refreshUsers();
+      if (isClient) {
+        await _loadClients();
+      } else {
+        await context.read<AppProvider>().refreshUsers();
+      }
       if (mounted) _snack('$name eliminado', success: true);
     } catch (e) {
       if (mounted) _snack(e.toString().replaceAll('Exception: ', ''));
@@ -308,21 +305,20 @@ class _UsersScreenState extends State<UsersScreen> {
     ),
   );
 
-  // ── Build ─────────────────────────────────────────────────
-  Widget _searchBar({required String hint}) => Container(
+  Widget _searchBar(TextEditingController ctrl, String query, String hint) => Container(
     padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
     color: Colors.white,
     child: TextField(
-      controller: _searchCtrl,
+      controller: ctrl,
       textInputAction: TextInputAction.search,
       decoration: InputDecoration(
         hintText: hint,
         hintStyle: TextStyle(color: Colors.grey.shade400, fontSize: 14),
         prefixIcon: const Icon(Icons.search_rounded, color: Color(0xFF1E6B2E), size: 20),
-        suffixIcon: _query.isNotEmpty
+        suffixIcon: query.isNotEmpty
             ? IconButton(
                 icon: Icon(Icons.close_rounded, color: Colors.grey.shade400, size: 18),
-                onPressed: () { _searchCtrl.clear(); setState(() => _query = ''); })
+                onPressed: () { ctrl.clear(); })
             : null,
         filled: true,
         fillColor: const Color(0xFFF5F5F5),
@@ -336,163 +332,205 @@ class _UsersScreenState extends State<UsersScreen> {
     ),
   );
 
+  Widget _userTile(Map<String, dynamic> u, {bool isClient = false}) {
+    final name    = u['display_name'] ?? u['username'] ?? '?';
+    final uname   = u['username'] ?? '';
+    final role    = u['role'] ?? 'worker';
+    final active  = u['active'] == 1 || u['active'] == true;
+    final isAdmin = role == 'admin';
+    final badgeColor  = isAdmin ? _gold : isClient ? Colors.blue : _green;
+    final badgeText   = isAdmin ? 'Admin' : isClient ? 'Cliente' : 'Trabajador';
+    final avatarColor = isAdmin
+        ? _gold.withValues(alpha: active ? 1 : 0.4)
+        : isClient
+            ? Colors.blue.withValues(alpha: active ? 0.8 : 0.3)
+            : _green.withValues(alpha: active ? 1 : 0.35);
+
+    return Card(
+      elevation: 0,
+      color: Colors.white,
+      margin: const EdgeInsets.only(bottom: 8),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: BorderSide(color: active ? Colors.transparent : Colors.grey.shade200),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: ListTile(
+          leading: CircleAvatar(
+            backgroundColor: avatarColor,
+            child: Text(
+              name.isNotEmpty ? name[0].toUpperCase() : '?',
+              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+            ),
+          ),
+          title: Row(children: [
+            Expanded(child: Text(
+              name,
+              maxLines: 1, overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 13, fontWeight: FontWeight.w600,
+                color: active ? Colors.black87 : Colors.grey),
+            )),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+              decoration: BoxDecoration(
+                color: badgeColor.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(20)),
+              child: Text(badgeText,
+                style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: badgeColor)),
+            ),
+          ]),
+          subtitle: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('@$uname', style: TextStyle(color: Colors.grey.shade500, fontSize: 12)),
+            if (u['email'] != null && (u['email'] as String).isNotEmpty)
+              Text(u['email'] as String,
+                style: TextStyle(color: Colors.grey.shade400, fontSize: 11)),
+            if (!active)
+              const Text('INACTIVO',
+                style: TextStyle(fontSize: 10, color: Colors.red, fontWeight: FontWeight.bold)),
+          ]),
+          trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+            if (!isClient)
+              IconButton(
+                icon: Icon(
+                  active ? Icons.toggle_on_rounded : Icons.toggle_off_rounded,
+                  color: active ? _green : Colors.grey, size: 28),
+                tooltip: active ? 'Desactivar' : 'Activar',
+                onPressed: () => _toggleActive(u),
+              ),
+            if (!isClient)
+              IconButton(
+                icon: const Icon(Icons.edit_rounded, size: 20, color: Color(0xFF2D5016)),
+                onPressed: () => _showStaffDialog(user: u),
+              ),
+            IconButton(
+              icon: const Icon(Icons.delete_outline_rounded, size: 20, color: Colors.red),
+              onPressed: () => _deleteUser(u, isClient: isClient),
+            ),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  // ── Build ─────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
     final allUsers = context.watch<AppProvider>().users;
-    final users = _query.isEmpty ? allUsers : allUsers.where((u) {
+    final staff = allUsers.where((u) => u['role'] != 'client').where((u) {
+      if (_staffQuery.isEmpty) return true;
       final n  = (u['display_name'] ?? '').toString().toLowerCase();
       final un = (u['username'] ?? '').toString().toLowerCase();
-      return n.contains(_query) || un.contains(_query);
+      return n.contains(_staffQuery) || un.contains(_staffQuery);
+    }).toList();
+
+    final clients = _clientQuery.isEmpty ? _clients : _clients.where((u) {
+      final n  = (u['display_name'] ?? '').toString().toLowerCase();
+      final un = (u['username'] ?? '').toString().toLowerCase();
+      final e  = (u['email'] ?? '').toString().toLowerCase();
+      return n.contains(_clientQuery) || un.contains(_clientQuery) || e.contains(_clientQuery);
     }).toList();
 
     return Column(children: [
-      _searchBar(hint: 'Buscar usuarios...'),
-      Expanded(child: Stack(children: [
-      RefreshIndicator(
-        onRefresh: () => context.read<AppProvider>().refreshUsers(),
-        color: _green,
-        child: users.isEmpty
-          ? ListView(children: [
-              const SizedBox(height: 120),
-              Column(children: [
-                Text(_query.isNotEmpty ? '🔍' : '👥',
-                  style: const TextStyle(fontSize: 56)),
-                const SizedBox(height: 12),
-                Text(_loading ? 'Cargando...'
-                    : _query.isNotEmpty ? 'Sin resultados'
-                    : 'No hay usuarios',
-                  style: const TextStyle(fontSize: 16, color: Colors.grey, fontWeight: FontWeight.w500)),
-                const SizedBox(height: 4),
-                if (_query.isEmpty)
-                  const Text('Desliza para actualizar', style: TextStyle(fontSize: 12, color: Colors.grey)),
-              ]),
-            ])
-          : ListView.separated(
-              padding: const EdgeInsets.fromLTRB(12, 12, 12, 100),
-              itemCount: users.length,
-              separatorBuilder: (_, __) => const SizedBox(height: 8),
-              itemBuilder: (ctx, i) {
-                final u    = users[i];
-                final name = u['display_name'] ?? u['username'] ?? '?';
-                final uname = u['username'] ?? '';
-                final role  = u['role'] ?? 'worker';
-                final active = u['active'] == 1 || u['active'] == true;
-                final isAdminUser  = role == 'admin';
-                final isClientUser = role == 'client';
-                final badgeColor = isAdminUser ? _gold : isClientUser ? Colors.blue : _green;
-                final badgeText  = isAdminUser ? 'Admin' : isClientUser ? 'Cliente' : 'Trabajador';
-                final avatarColor = isAdminUser
-                    ? _gold.withValues(alpha: active ? 1 : 0.4)
-                    : isClientUser
-                        ? Colors.blue.withValues(alpha: active ? 0.8 : 0.3)
-                        : _green.withValues(alpha: active ? 1 : 0.35);
-
-                return Card(
-                  elevation: 0,
-                  color: Colors.white,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14),
-                    side: BorderSide(
-                      color: active ? Colors.transparent : Colors.grey.shade200,
-                    ),
-                  ),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 4),
-                    child: ListTile(
-                      leading: CircleAvatar(
-                        backgroundColor: avatarColor,
-                        child: Text(
-                          name.isNotEmpty ? name[0].toUpperCase() : '?',
-                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-                        ),
-                      ),
-                      title: Row(children: [
-                        Expanded(child: Text(
-                          name,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                            color: active ? Colors.black87 : Colors.grey,
-                          ),
-                        )),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: badgeColor.withValues(alpha: 0.15),
-                            borderRadius: BorderRadius.circular(20),
-                          ),
-                          child: Text(
-                            badgeText,
-                            style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w600,
-                              color: badgeColor,
-                            ),
-                          ),
-                        ),
-                      ]),
-                      subtitle: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('@$uname', style: TextStyle(color: Colors.grey.shade500, fontSize: 12)),
-                          if (!active)
-                            const Text('INACTIVO',
-                              style: TextStyle(fontSize: 10, color: Colors.red, fontWeight: FontWeight.bold)),
-                        ],
-                      ),
-                      trailing: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          if (!isClientUser)
-                            IconButton(
-                              icon: Icon(
-                                active ? Icons.toggle_on_rounded : Icons.toggle_off_rounded,
-                                color: active ? _green : Colors.grey,
-                                size: 28,
-                              ),
-                              tooltip: active ? 'Desactivar' : 'Activar',
-                              onPressed: () => _toggleActive(u),
-                            ),
-                          IconButton(
-                            icon: const Icon(Icons.edit_rounded, size: 20, color: Color(0xFF2D5016)),
-                            tooltip: 'Editar',
-                            onPressed: () => _showUserDialog(user: u),
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.delete_outline_rounded, size: 20, color: Colors.red),
-                            tooltip: 'Eliminar',
-                            onPressed: () => _deleteUser(u),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                );
-              },
-            ),
-      ),
-
-      // Loading overlay
-      if (_loading)
-        const Positioned.fill(child: ColoredBox(
-          color: Colors.black12,
-          child: Center(child: CircularProgressIndicator(color: _green)),
-        )),
-
-      // FAB
-      Positioned(
-        bottom: 20,
-        right: 16,
-        child: FloatingActionButton.extended(
-          onPressed: () => _showUserDialog(),
-          backgroundColor: _green,
-          icon: const Icon(Icons.person_add_rounded, color: Colors.white),
-          label: const Text('Nuevo usuario', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+      Container(
+        color: Colors.white,
+        child: TabBar(
+          controller: _tabs,
+          labelColor: _green,
+          unselectedLabelColor: Colors.grey,
+          indicatorColor: _green,
+          tabs: [
+            Tab(text: 'Personal (${staff.length})'),
+            Tab(text: 'Clientes (${clients.length})'),
+          ],
         ),
       ),
-    ])),
+      Expanded(child: Stack(children: [
+        TabBarView(
+          controller: _tabs,
+          children: [
+            // ── Tab 1: Admins + Workers ──────────────────────
+            Column(children: [
+              _searchBar(_staffSearchCtrl, _staffQuery, 'Buscar personal...'),
+              Expanded(child: RefreshIndicator(
+                onRefresh: () => context.read<AppProvider>().refreshUsers(),
+                color: _green,
+                child: staff.isEmpty
+                    ? ListView(children: [
+                        const SizedBox(height: 100),
+                        Column(children: [
+                          Text(_staffQuery.isNotEmpty ? '🔍' : '👥',
+                            style: const TextStyle(fontSize: 56)),
+                          const SizedBox(height: 12),
+                          Text(_staffQuery.isNotEmpty ? 'Sin resultados' : 'No hay personal',
+                            style: const TextStyle(fontSize: 16, color: Colors.grey)),
+                        ]),
+                      ])
+                    : ListView(
+                        padding: const EdgeInsets.fromLTRB(12, 12, 12, 100),
+                        children: staff.map((u) => _userTile(u)).toList(),
+                      ),
+              )),
+            ]),
+
+            // ── Tab 2: Clients ───────────────────────────────
+            Column(children: [
+              _searchBar(_clientSearchCtrl, _clientQuery, 'Buscar clientes...'),
+              Expanded(child: RefreshIndicator(
+                onRefresh: _loadClients,
+                color: _green,
+                child: _loadingClients
+                    ? const Center(child: CircularProgressIndicator(color: _green))
+                    : clients.isEmpty
+                        ? ListView(children: [
+                            const SizedBox(height: 100),
+                            Column(children: [
+                              Text(_clientQuery.isNotEmpty ? '🔍' : '🛒',
+                                style: const TextStyle(fontSize: 56)),
+                              const SizedBox(height: 12),
+                              Text(_clientQuery.isNotEmpty ? 'Sin resultados' : 'No hay clientes registrados',
+                                style: const TextStyle(fontSize: 16, color: Colors.grey)),
+                              if (_clientQuery.isEmpty) ...[
+                                const SizedBox(height: 8),
+                                Text('Los clientes se registran desde la app',
+                                  style: TextStyle(fontSize: 12, color: Colors.grey.shade400)),
+                              ],
+                            ]),
+                          ])
+                        : ListView(
+                            padding: const EdgeInsets.fromLTRB(12, 12, 12, 20),
+                            children: clients.map((u) => _userTile(u, isClient: true)).toList(),
+                          ),
+              )),
+            ]),
+          ],
+        ),
+
+        // Loading overlay
+        if (_loading)
+          const Positioned.fill(child: ColoredBox(
+            color: Colors.black12,
+            child: Center(child: CircularProgressIndicator(color: _green)),
+          )),
+
+        // FAB only on Tab 0 (staff)
+        AnimatedBuilder(
+          animation: _tabs,
+          builder: (_, __) => _tabs.index == 0
+              ? Positioned(
+                  bottom: 20, right: 16,
+                  child: FloatingActionButton.extended(
+                    onPressed: () => _showStaffDialog(),
+                    backgroundColor: _green,
+                    icon: const Icon(Icons.person_add_rounded, color: Colors.white),
+                    label: const Text('Nuevo usuario',
+                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+                  ),
+                )
+              : const SizedBox.shrink(),
+        ),
+      ])),
     ]);
   }
 }

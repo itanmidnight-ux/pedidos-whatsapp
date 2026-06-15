@@ -135,4 +135,58 @@ router.post('/refresh', (req, res) => {
   res.json(signToken(user));
 });
 
+// ── POST /api/auth/register — Self-registration for clients ───
+router.post('/register', async (req, res) => {
+  const { username, password, email, display_name, address, nickname, bio } = req.body;
+
+  if (!username || typeof username !== 'string' || username.trim().length < 2)
+    return res.status(400).json({ error: 'Nombre de usuario requerido (mín 2 caracteres)' });
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email).trim()))
+    return res.status(400).json({ error: 'Correo electrónico inválido' });
+  if (!password || String(password).length < 8)
+    return res.status(400).json({ error: 'La contraseña debe tener mínimo 8 caracteres' });
+  if (!display_name || String(display_name).trim().length < 2)
+    return res.status(400).json({ error: 'Nombre completo requerido' });
+  if (!address || String(address).trim().length < 5)
+    return res.status(400).json({ error: 'Dirección de entrega requerida' });
+
+  const db   = getDB();
+  const name = username.trim().toLowerCase().replace(/[^a-z0-9._-]/g, '');
+  if (name.length < 2)
+    return res.status(400).json({ error: 'Nombre de usuario inválido (solo letras, números, puntos, guiones)' });
+
+  if (db.prepare('SELECT id FROM users WHERE username = ?').get(name))
+    return res.status(409).json({ error: 'El nombre de usuario ya existe' });
+  if (db.prepare('SELECT id FROM users WHERE email = ?').get(String(email).trim().toLowerCase()))
+    return res.status(409).json({ error: 'El correo electrónico ya está registrado' });
+
+  const ip      = getIP(req);
+  const lockKey = `register:${ip}`;
+  const secs    = checkLock(lockKey);
+  if (secs !== null)
+    return res.status(429).json({ error: `Demasiados intentos. Espera ${secs} segundos.`, retry_in: secs });
+
+  try {
+    const hash = await bcrypt.hash(String(password), 10);
+    const result = db.prepare(
+      `INSERT INTO users (username, password_hash, pin, display_name, role, active, email, address, nickname, bio)
+       VALUES (?,?,?,?,?,1,?,?,?,?)`
+    ).run(
+      name, hash, hash,
+      String(display_name).trim().slice(0, 100),
+      'client',
+      String(email).trim().toLowerCase().slice(0, 200),
+      String(address).trim().slice(0, 300),
+      nickname ? String(nickname).trim().slice(0, 50) : null,
+      bio      ? String(bio).trim().slice(0, 500)      : null,
+    );
+    clearAttempts(lockKey);
+    const user = db.prepare('SELECT * FROM users WHERE id=?').get(result.lastInsertRowid);
+    res.status(201).json(signToken(user));
+  } catch (e) {
+    recordFail(lockKey);
+    res.status(500).json({ error: 'Error al crear cuenta' });
+  }
+});
+
 module.exports = router;

@@ -45,13 +45,15 @@ router.get('/', clientAuth, (req, res) => {
 // POST /api/estados — create (admin only, 36h TTL)
 router.post('/', adminAuth, upload.single('media'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No se recibió archivo de media' });
-  const caption    = req.body.caption ? String(req.body.caption).trim().slice(0, 500) : null;
+  const caption      = req.body.caption ? String(req.body.caption).trim().slice(0, 500) : null;
+  const product_id   = req.body.product_id   ? parseInt(req.body.product_id, 10) || null : null;
+  const product_name = req.body.product_name ? String(req.body.product_name).trim().slice(0, 200) : null;
   const media_type = req.file.mimetype.startsWith('video') ? 'video' : 'image';
   const db = getDB();
   const result = db.prepare(`
-    INSERT INTO estados (admin_username, filename, media_type, caption, expires_at)
-    VALUES (?, ?, ?, ?, datetime('now','localtime','+36 hours'))
-  `).run(req.user.username, req.file.filename, media_type, caption);
+    INSERT INTO estados (admin_username, filename, media_type, caption, product_id, product_name, expires_at)
+    VALUES (?, ?, ?, ?, ?, ?, datetime('now','localtime','+36 hours'))
+  `).run(req.user.username, req.file.filename, media_type, caption, product_id, product_name);
   const estado = db.prepare('SELECT * FROM estados WHERE id=?').get(result.lastInsertRowid);
   res.status(201).json({ estado: enrichEstado(db, estado, req.user.username) });
 });
@@ -118,6 +120,21 @@ router.post('/:id/comments', clientAuth, (req, res) => {
   ).run(id, req.user.username, user?.display_name || req.user.username, comment);
   const created = db.prepare('SELECT * FROM estado_comments WHERE id=?').get(result.lastInsertRowid);
   res.status(201).json({ comment: created });
+});
+
+// GET /api/estados/:id/reactions — list of users who reacted (admin only)
+router.get('/:id/reactions', adminAuth, (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!id || id <= 0) return res.status(400).json({ error: 'ID inválido' });
+  const db = getDB();
+  const reactions = db.prepare(`
+    SELECT er.username, COALESCE(u.display_name, er.username) AS display_name, er.created_at
+    FROM estado_reactions er
+    LEFT JOIN users u ON u.username = er.username
+    WHERE er.estado_id = ?
+    ORDER BY er.created_at DESC
+  `).all(id);
+  res.json({ reactions });
 });
 
 // Serve estado media (authenticated)

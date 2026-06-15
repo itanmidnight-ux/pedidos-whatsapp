@@ -10,6 +10,7 @@ import '../services/local_db.dart';
 import 'client_products_screen.dart';
 import 'client_cart_screen.dart';
 import 'client_estados_screen.dart';
+import 'client_profile_screen.dart';
 
 class ClientHomeScreen extends StatefulWidget {
   const ClientHomeScreen({super.key});
@@ -86,6 +87,10 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> with WidgetsBinding
     setState(() { _tab = 2; _newEstados = 0; });
   }
 
+  void _goToProfile() {
+    setState(() => _tab = 3);
+  }
+
   @override
   Widget build(BuildContext context) {
     final size = MediaQuery.of(context).size;
@@ -114,6 +119,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> with WidgetsBinding
             estados: _estados,
             onRefresh: _loadEstados,
           ),
+          const ClientProfileScreen(),
         ])),
       ]),
       bottomNavigationBar: _buildBottomNav(),
@@ -242,6 +248,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> with WidgetsBinding
         if (i == 1) _cartKey.currentState?.reload();
         if (i == 2) setState(() => _newEstados = 0);
       },
+
       backgroundColor: Colors.white,
       indicatorColor: const Color(0xFFC8E6C9),
       elevation: 8,
@@ -271,6 +278,11 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> with WidgetsBinding
           ]),
           selectedIcon: const Icon(Icons.auto_stories_rounded, color: _green),
           label: 'Estados',
+        ),
+        const NavigationDestination(
+          icon:         Icon(Icons.person_outline_rounded),
+          selectedIcon: Icon(Icons.person_rounded, color: _green),
+          label: 'Perfil',
         ),
       ],
     );
