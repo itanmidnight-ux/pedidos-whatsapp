@@ -35,10 +35,14 @@ let pollTimer        = null;
 let isReady          = false;
 let wasEverConnected = false;
 let pairingAttempts  = 0;
+let pairingHoldCount = 0;
+let pairingCodeShownAt = 0;
 
-const MAX_RETRIES  = 10;
-const HEARTBEAT_MS = 25000;
-const POLL_MS      = 3000;
+const MAX_RETRIES         = 10;
+const HEARTBEAT_MS        = 25000;
+const POLL_MS             = 3000;
+const PAIRING_HOLD_MS     = 45000; // window for user to enter code
+const PAIRING_HOLD_RETRIES = 3;    // reconnects before cycling to new code
 
 const http = axios.create({
   baseURL: API_URL,
@@ -285,6 +289,7 @@ async function connect() {
       await delay(1500);
       try {
         const pair = await sock.requestPairingCode(PHONE);
+        pairingCodeShownAt = Date.now();
         console.log(`\n[bot] Pairing code: ${pair.match(/.{1,4}/g).join('-')}\n`);
         pairingDone = true;
       } catch (e) { console.error('[bot] pairing err', e.message); }
@@ -292,11 +297,13 @@ async function connect() {
 
     if (connection === 'open') {
       console.log('[bot] ✅ Connected');
-      isReady          = true;
-      wasEverConnected = true;
-      pairingAttempts  = 0;
-      retryCount       = 0;
-      pairingDone      = true;
+      isReady           = true;
+      wasEverConnected  = true;
+      pairingAttempts   = 0;
+      pairingHoldCount  = 0;
+      pairingCodeShownAt = 0;
+      retryCount        = 0;
+      pairingDone       = true;
       clearTimers();
       heartbeatTimer = setInterval(
         () => sock.sendPresenceUpdate('available').catch(() => {}),
@@ -322,11 +329,30 @@ async function connect() {
       if (NEEDS_NEW_CODE.includes(code)) {
         if (!wasEverConnected) {
           pairingAttempts++;
-          console.log(`[bot] Pairing code expired — requesting new code (attempt ${pairingAttempts})…`);
-        } else {
-          console.error(`[bot] ❌ Session terminated (${code}) — re-authenticating…`);
-          wasEverConnected = false;
+          // After requestPairingCode, WA closes with 401 immediately (expected handshake).
+          // Auth credentials are still valid — reconnect without clearing so WA can
+          // confirm when user enters the code. Only cycle to a new code after
+          // PAIRING_HOLD_RETRIES failed reconnects OR PAIRING_HOLD_MS elapsed.
+          if (pairingDone && pairingHoldCount < PAIRING_HOLD_RETRIES) {
+            pairingHoldCount++;
+            retryCount = 0;
+            console.log(`[bot] Waiting for code entry (reconnect ${pairingHoldCount}/${PAIRING_HOLD_RETRIES})…`);
+            setTimeout(connect, 3000);
+            return;
+          }
+          // Hold limit reached — show new code after remaining window expires
+          const elapsed = pairingCodeShownAt > 0 ? Date.now() - pairingCodeShownAt : PAIRING_HOLD_MS;
+          const waitMs  = Math.max(3000, PAIRING_HOLD_MS - elapsed);
+          pairingHoldCount = 0;
+          console.log(`[bot] Pairing code expired — new code in ${Math.round(waitMs / 1000)}s (attempt ${pairingAttempts})…`);
+          _clearAuth();
+          pairingDone = false;
+          retryCount  = 0;
+          setTimeout(connect, waitMs);
+          return;
         }
+        console.error(`[bot] ❌ Session terminated (${code}) — re-authenticating…`);
+        wasEverConnected = false;
         _clearAuth();
         pairingDone = false;
         retryCount  = 0;
@@ -344,18 +370,10 @@ async function connect() {
         return;
       }
 
-      // When waiting for user to enter pairing code, hold 45s so they have time.
-      // Normal backoff resumes once wasEverConnected (session established).
       const immediate = code === DisconnectReason.restartRequired;
-      const backoff   = (pairingDone && !wasEverConnected)
-        ? 45000
-        : immediate ? 500 : Math.min(1000 * 2 ** retryCount, 30000);
+      const backoff   = immediate ? 500 : Math.min(1000 * 2 ** retryCount, 30000);
       retryCount++;
-      if (pairingDone && !wasEverConnected) {
-        console.log(`[bot] Waiting 45s for pairing code entry (attempt ${retryCount}/${MAX_RETRIES})…`);
-      } else {
-        console.log(`[bot] Reconnecting in ${backoff}ms (attempt ${retryCount}/${MAX_RETRIES})…`);
-      }
+      console.log(`[bot] Reconnecting in ${backoff}ms (attempt ${retryCount}/${MAX_RETRIES})…`);
       setTimeout(connect, backoff);
     }
   });
