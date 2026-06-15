@@ -27,22 +27,20 @@ const API_URL  = `http://localhost:${process.env.PORT || 3000}`;
 const API_KEY  = process.env.API_KEY;
 const logger   = pino({ level: 'silent' });
 
-let sock             = null;
-let retryCount       = 0;
-let pairingDone      = false;
-let heartbeatTimer   = null;
-let pollTimer        = null;
-let isReady          = false;
-let wasEverConnected = false;
-let pairingAttempts  = 0;
-let pairingHoldCount = 0;
+let sock               = null;
+let retryCount         = 0;
+let pairingDone        = false;
+let heartbeatTimer     = null;
+let pollTimer          = null;
+let isReady            = false;
+let wasEverConnected   = false;
+let pairingAttempts    = 0;
 let pairingCodeShownAt = 0;
 
-const MAX_RETRIES         = 10;
-const HEARTBEAT_MS        = 25000;
-const POLL_MS             = 3000;
-const PAIRING_HOLD_MS     = 45000; // window for user to enter code
-const PAIRING_HOLD_RETRIES = 3;    // reconnects before cycling to new code
+const MAX_RETRIES        = 10;
+const HEARTBEAT_MS       = 25000;
+const POLL_MS            = 3000;
+const PAIRING_CODE_TTL   = 120000; // 2 min per code — matches WA server-side TTL
 
 const http = axios.create({
   baseURL: API_URL,
@@ -297,13 +295,12 @@ async function connect() {
 
     if (connection === 'open') {
       console.log('[bot] ✅ Connected');
-      isReady           = true;
-      wasEverConnected  = true;
-      pairingAttempts   = 0;
-      pairingHoldCount  = 0;
+      isReady            = true;
+      wasEverConnected   = true;
+      pairingAttempts    = 0;
       pairingCodeShownAt = 0;
-      retryCount        = 0;
-      pairingDone       = true;
+      retryCount         = 0;
+      pairingDone        = true;
       clearTimers();
       heartbeatTimer = setInterval(
         () => sock.sendPresenceUpdate('available').catch(() => {}),
@@ -316,39 +313,34 @@ async function connect() {
       isReady = false;
       clearTimers();
 
-      // DisconnectReason.loggedOut === 401.
-      // During initial pairing: WA sends 401 when code expires — clear auth and request NEW code.
-      // After active session: 401 = truly logged out — same treatment (clear + new code).
+      // 401/403/500/411 — handling depends on whether pairing or active session.
       const NEEDS_NEW_CODE = [
-        DisconnectReason.loggedOut,   // 401 - expired pairing OR logged out
-        DisconnectReason.forbidden,   // 403
-        DisconnectReason.badSession,  // 500
+        DisconnectReason.loggedOut,  // 401
+        DisconnectReason.forbidden,  // 403
+        DisconnectReason.badSession, // 500
         411,
       ];
 
       if (NEEDS_NEW_CODE.includes(code)) {
         if (!wasEverConnected) {
-          pairingAttempts++;
-          // After requestPairingCode, WA closes with 401 immediately (expected handshake).
-          // Auth credentials are still valid — reconnect without clearing so WA can
-          // confirm when user enters the code. Only cycle to a new code after
-          // PAIRING_HOLD_RETRIES failed reconnects OR PAIRING_HOLD_MS elapsed.
-          if (pairingDone && pairingHoldCount < PAIRING_HOLD_RETRIES) {
-            pairingHoldCount++;
+          // During pairing WA closes with 401 after requestPairingCode (expected handshake —
+          // NOT code expiry). Auth credentials remain valid. Reconnect silently and keep
+          // the same code until PAIRING_CODE_TTL (2 min) elapses from when it was shown.
+          const elapsed = pairingCodeShownAt > 0 ? Date.now() - pairingCodeShownAt : PAIRING_CODE_TTL;
+          if (pairingDone && elapsed < PAIRING_CODE_TTL) {
+            const remaining = Math.round((PAIRING_CODE_TTL - elapsed) / 1000);
             retryCount = 0;
-            console.log(`[bot] Waiting for code entry (reconnect ${pairingHoldCount}/${PAIRING_HOLD_RETRIES})…`);
+            console.log(`[bot] Waiting for code entry (${remaining}s remaining)…`);
             setTimeout(connect, 3000);
             return;
           }
-          // Hold limit reached — show new code after remaining window expires
-          const elapsed = pairingCodeShownAt > 0 ? Date.now() - pairingCodeShownAt : PAIRING_HOLD_MS;
-          const waitMs  = Math.max(3000, PAIRING_HOLD_MS - elapsed);
-          pairingHoldCount = 0;
-          console.log(`[bot] Pairing code expired — new code in ${Math.round(waitMs / 1000)}s (attempt ${pairingAttempts})…`);
+          // True expiry — cycle to a new code
+          pairingAttempts++;
+          console.log(`[bot] Code expired — new code (attempt ${pairingAttempts})…`);
           _clearAuth();
           pairingDone = false;
           retryCount  = 0;
-          setTimeout(connect, waitMs);
+          setTimeout(connect, 5000);
           return;
         }
         console.error(`[bot] ❌ Session terminated (${code}) — re-authenticating…`);
@@ -360,7 +352,8 @@ async function connect() {
         return;
       }
 
-      if (retryCount >= MAX_RETRIES) {
+      // During pairing retryCount is kept at 0 — don't let MAX_RETRIES fire while waiting.
+      if (!pairingDone && retryCount >= MAX_RETRIES) {
         console.log('[bot] Max retries reached — clearing session and requesting new pairing code…');
         _clearAuth();
         wasEverConnected = false;
