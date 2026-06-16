@@ -17,7 +17,7 @@ class ApiService {
     aOptions: AndroidOptions(encryptedSharedPreferences: true),
   );
 
-  static const _defaultUrl = 'http://tu-dominio.duckdns.org';
+  static const _defaultUrl = 'https://tu-dominio.duckdns.org';
 
   // En web usa el mismo origen (funciona con DuckDNS HTTP y cloudflare HTTPS)
   static String get _autoUrl {

@@ -14,12 +14,8 @@ const app = express();
 app.set('trust proxy', 1);
 
 // ── Flutter web ANTES de helmet ──────────────────────────────
-// Se sirve sin CSP ni CORP para que WASM y Workers carguen sin restricciones.
-// Es código propio — no necesita CSP de protección.
 app.use('/app', (req, res, next) => {
   res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('ngrok-skip-browser-warning', 'true');
-  // Permitir workers cross-origin (necesario para skwasm)
   res.setHeader('Cross-Origin-Opener-Policy',   'same-origin');
   res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
   res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
@@ -30,42 +26,41 @@ app.use('/app', (req, res, next) => {
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {
-      defaultSrc: ["'self'"],
-      scriptSrc:  ["'self'", "'unsafe-inline'"],
-      styleSrc:   ["'self'", "'unsafe-inline'"],
-      imgSrc:     ["'self'", "data:"],
-      connectSrc: ["'self'", "https://*.ngrok-free.dev"],
-      frameSrc:   ["'none'"],
+      defaultSrc:  ["'self'"],
+      scriptSrc:   ["'self'", "'unsafe-inline'"],
+      styleSrc:    ["'self'", "'unsafe-inline'"],
+      imgSrc:      ["'self'", "data:", "https:"],
+      connectSrc:  ["'self'"],
+      frameSrc:    ["'none'"],
+      upgradeInsecureRequests: [],
     },
   },
   crossOriginEmbedderPolicy: false,
+  hsts: {
+    maxAge: 31536000,
+    includeSubDomains: true,
+    preload: true,
+  },
 }));
 
 // ── CORS restrictivo ─────────────────────────────────────────
 const allowedOrigins = [
-  process.env.NGROK_URL,
-  process.env.NGROK_DOMAIN   ? `https://${process.env.NGROK_DOMAIN}`   : null,
-  process.env.SERVER_DOMAIN  ? `https://${process.env.SERVER_DOMAIN}`  : null,
-  process.env.SERVER_DOMAIN  ? `http://${process.env.SERVER_DOMAIN}`   : null,
+  process.env.SERVER_DOMAIN  ? `https://${process.env.SERVER_DOMAIN}` : null,
   'https://tu-dominio.duckdns.org',
-  'http://tu-dominio.duckdns.org',
   'http://localhost:3000',
   'http://127.0.0.1:3000',
-  'http://localhost:80',
-  'http://127.0.0.1:80',
 ].filter(Boolean);
 
 app.use(cors({
   origin: (origin, cb) => {
     if (!origin) return cb(null, true);
     if (allowedOrigins.some(o => origin.startsWith(o))) return cb(null, true);
-    if (origin.endsWith('.ngrok-free.dev') || origin.endsWith('.ngrok.io')) return cb(null, true);
-    if (origin.endsWith('.duckdns.org') || origin.endsWith('.trycloudflare.com')) return cb(null, true);
+    if (origin.endsWith('.duckdns.org')) return cb(null, true);
     cb(new Error('Origen no permitido por CORS'));
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-API-Key', 'ngrok-skip-browser-warning'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-API-Key'],
 }));
 
 app.use(express.json({ limit: '2mb' }));

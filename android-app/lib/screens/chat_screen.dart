@@ -98,7 +98,7 @@ class _ChatScreenState extends State<ChatScreen> {
   void _scrollDown() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scroll.hasClients) {
-        _scroll.animateTo(_scroll.position.maxScrollExtent,
+        _scroll.animateTo(0,
           duration: const Duration(milliseconds: 200), curve: Curves.easeOut);
       }
     });
@@ -400,8 +400,7 @@ class _ChatScreenState extends State<ChatScreen> {
     if (_recording) {
       return Container(
         color: Colors.white,
-        padding: EdgeInsets.only(left: 12, right: 12, top: 8,
-          bottom: MediaQuery.of(context).viewInsets.bottom + 8),
+        padding: const EdgeInsets.only(left: 12, right: 12, top: 8, bottom: 8),
         child: Row(children: [
           GestureDetector(
             onTap: _cancelRecording,
@@ -432,8 +431,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
     return Container(
       color: Colors.white,
-      padding: EdgeInsets.only(left: 6, right: 8, top: 6,
-        bottom: MediaQuery.of(context).viewInsets.bottom + 6),
+      padding: const EdgeInsets.only(left: 6, right: 8, top: 6, bottom: 6),
       child: Row(children: [
         // Attach image
         IconButton(
@@ -566,9 +564,10 @@ class _ChatScreenState extends State<ChatScreen> {
             ? const Center(child: Text('Sin mensajes aún', style: TextStyle(color: Colors.grey)))
             : ListView.builder(
                 controller: _scroll,
+                reverse: true,
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
                 itemCount: _messages.length,
-                itemBuilder: (ctx, i) => _buildBubble(_messages[i]),
+                itemBuilder: (ctx, i) => _buildBubble(_messages[_messages.length - 1 - i]),
               ),
         ),
         _buildInputBar(),

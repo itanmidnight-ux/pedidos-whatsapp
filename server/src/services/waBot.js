@@ -253,14 +253,27 @@ function _buildClient() {
   });
 
   c.on('qr', async (qr) => {
+    if (PHONE) {
+      // Prefer phone-number pairing: user enters code in WA > Linked Devices > Link by phone
+      try {
+        const code = await c.requestPairingCode(PHONE);
+        const fmt  = code.match(/.{1,4}/g)?.join('-') ?? code;
+        console.log('[bot] ════════════════════════════════');
+        console.log(`[bot] CÓDIGO DE VINCULACIÓN: ${fmt}`);
+        console.log('[bot] WhatsApp → Dispositivos vinculados → Vincular con número de teléfono');
+        console.log('[bot] ════════════════════════════════');
+        currentQR = null;
+        return;
+      } catch (e) {
+        console.log('[bot] Pairing code falló, usando QR fallback:', e.message);
+      }
+    }
+    // Fallback: QR
     try {
       const QRCode = require('qrcode');
       currentQR = await QRCode.toDataURL(qr);
-      console.log('[bot] QR listo — abre en navegador: /api/bot/qr');
-    } catch (_) {
-      currentQR = null;
-      console.log('[bot] QR listo — accede a GET /api/bot/qr para verlo');
-    }
+    } catch (_) { currentQR = null; }
+    console.log('[bot] QR listo — GET /api/bot/qr');
   });
 
   c.on('authenticated', () => {
