@@ -121,7 +121,7 @@ emptyscale=,white
 fullscale=,green
 '
 
-TITLE="🌾 Concentrados Monserrath — Panel de Servidor"
+TITLE="Concentrados Monserrath — Panel de Servidor"
 
 splash() {
     if $HAS_ZENITY; then
@@ -699,9 +699,9 @@ security_audit() {
 # ================================================================
 status_icon() {
     case "$1" in
-        active)  echo "🟢 activo" ;;
-        failed)  echo "🔴 fallo" ;;
-        *)       echo "⚪ $1" ;;
+        active)  echo "activo" ;;
+        failed)  echo "fallo" ;;
+        *)       echo "$1" ;;
     esac
 }
 
@@ -715,10 +715,10 @@ dashboard() {
     [ -n "$mem" ] && [ "$mem" != "[not set]" ] && mem="$((mem / 1024 / 1024)) MB" || mem="?"
     bot_line=$(curl -fsS --max-time 2 "http://127.0.0.1:${port}/api/bot/status" 2>/dev/null | grep -oE '"ready":(true|false)' || echo "")
     local bot_txt="sin datos (revisa login admin)"
-    [[ "$bot_line" == *true*  ]] && bot_txt="🟢 WhatsApp conectado"
-    [[ "$bot_line" == *false* ]] && bot_txt="🟡 WhatsApp reconectando"
+    [[ "$bot_line" == *true*  ]] && bot_txt="WhatsApp conectado"
+    [[ "$bot_line" == *false* ]] && bot_txt="WhatsApp reconectando"
 
-    ui_msg "📊 ESTADO DEL SERVIDOR\n\n🖥️  Servidor Node    : $node_status\n☁️  Tunel Cloudflare : $cf_status\n💬 Bot WhatsApp     : $bot_txt\n🔌 Puerto (local)   : $port\n🧠 Memoria en uso   : $mem\n⏱️  Activo desde     : ${uptime:-?}\n🌐 Publico          : $(load_conf TUNNEL_URL || echo 'no configurado')"
+    ui_msg "ESTADO DEL SERVIDOR\n\nServidor Node    : $node_status\nTunel Cloudflare : $cf_status\nBot WhatsApp     : $bot_txt\nPuerto (local)   : $port\nMemoria en uso   : $mem\nActivo desde     : ${uptime:-?}\nPublico          : $(load_conf TUNNEL_URL || echo 'no configurado')"
 }
 
 management_menu() {
@@ -728,21 +728,21 @@ management_menu() {
         local status; status=$(status_icon "$(systemctl is-active "$NODE_SVC" 2>/dev/null || echo 'no-instalado')")
         local choice
         choice=$(ui_menu "Servidor: $status   |   Puerto: $port\n\nElige una accion:" \
-            D "📊 Dashboard — estado en vivo" \
-            1 "🔎 Ver estado detallado del servicio" \
-            2 "🔄 Reiniciar servidor" \
-            3 "⏸️  Detener servidor" \
-            4 "▶️  Iniciar servidor" \
-            5 "📜 Ver logs en vivo (Ctrl+C para salir)" \
-            6 "📱 Re-vincular WhatsApp (borra sesion actual)" \
-            7 "🔌 Cambiar puerto" \
-            8 "🔑 Regenerar secretos (API_KEY / JWT_SECRET)" \
-            9 "🌐 Configurar DuckDNS" \
-            10 "🔒 Configurar dominio propio (nginx + HTTPS)" \
-            11 "🛡️  Auditoria de seguridad" \
-            12 "⬆️  Actualizar codigo (git pull + reinstalar)" \
-            13 "🗑️  Desinstalar todo" \
-            0 "🚪 Salir")
+            D "Dashboard — estado en vivo" \
+            1 "Ver estado detallado del servicio" \
+            2 "Reiniciar servidor" \
+            3 "Detener servidor" \
+            4 "Iniciar servidor" \
+            5 "Ver logs en vivo (Ctrl+C para salir)" \
+            6 "Re-vincular WhatsApp (borra sesion actual)" \
+            7 "Cambiar puerto" \
+            8 "Regenerar secretos (API_KEY / JWT_SECRET)" \
+            9 "Configurar DuckDNS" \
+            10 "Configurar dominio propio (nginx + HTTPS)" \
+            11 "Auditoria de seguridad" \
+            12 "Actualizar codigo (git pull + reinstalar)" \
+            13 "Desinstalar todo" \
+            0 "Salir")
         case "$choice" in
             D) dashboard ;;
             1) ui_msg "$(systemctl status "$NODE_SVC" --no-pager 2>&1 | head -25)" ;;
@@ -790,7 +790,7 @@ main_install() {
     splash
     echo ""
     echo -e "${GREEN}${BOLD}  +================================================+${NC}"
-    echo -e "${GREEN}${BOLD}  |  🌾 CONCENTRADOS MONSERRATH v2.0 — Deploy Linux |${NC}"
+    echo -e "${GREEN}${BOLD}  |  CONCENTRADOS MONSERRATH v2.0 — Deploy Linux |${NC}"
     echo -e "${GREEN}${BOLD}  +================================================+${NC}"
 
     [ -d "$SERVER_DIR" ] || die "No se encontro server/ en $PROJ — ejecuta este script desde la raiz del repo."
@@ -811,9 +811,9 @@ main_install() {
 
     local access_method
     access_method=$(ui_menu "Como quieres exponer el servidor a internet?" \
-        1 "☁️  Cloudflare Tunnel (recomendado: sin abrir puertos, HTTPS auto)" \
-        2 "🔒 Dominio propio + nginx + Let's Encrypt (abre 80/443)" \
-        3 "🏠 Solo red local / VPN (no exponer a internet)")
+        1 "Cloudflare Tunnel (recomendado: sin abrir puertos, HTTPS auto)" \
+        2 "Dominio propio + nginx + Let's Encrypt (abre 80/443)" \
+        3 "Solo red local / VPN (no exponer a internet)")
 
     case "$access_method" in
         1) install_cloudflared; setup_cloudflared_tunnel "$port"; harden_firewall false ;;
@@ -843,6 +843,11 @@ main_install() {
     echo -e "  Gestion: ./deploy-linux.sh --menu"
     echo -e "${GREEN}${BOLD}  +======================================================+${NC}"
     echo ""
+
+    if has_gtk_dashboard; then
+        info "Abriendo panel de administracion..."
+        launch_dashboard
+    fi
 }
 
 has_gtk_dashboard() {
