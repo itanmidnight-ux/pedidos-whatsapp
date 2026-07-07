@@ -82,7 +82,7 @@ async function generateDailyPDF() {
   const chatPhones = Object.keys(chatsByPhone);
 
   // ── Crear directorio y archivo ────────────────────────────────
-  const reportsDir = path.join(__dirname, '../../reports');
+  const reportsDir = process.env.REPORTS_DIR || path.join(__dirname, '../../reports');
   if (!fs.existsSync(reportsDir)) fs.mkdirSync(reportsDir, { recursive: true });
 
   const filename = `registro-${todayISO}.pdf`;

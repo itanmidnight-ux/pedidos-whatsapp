@@ -7,7 +7,7 @@ const multer  = require('multer');
 const { adminAuth, clientAuth } = require('../middleware/auth');
 const { getDB } = require('../db/database');
 
-const ESTADOS_DIR = path.join(process.env.HOME || process.env.USERPROFILE, 'pedidos-bot', 'estados');
+const ESTADOS_DIR = path.join(process.env.APPDATA || process.env.HOME || process.env.USERPROFILE, 'pedidos-bot', 'estados');
 fs.mkdirSync(ESTADOS_DIR, { recursive: true });
 
 const storage = multer.diskStorage({

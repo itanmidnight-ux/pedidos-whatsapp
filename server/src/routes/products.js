@@ -6,7 +6,7 @@ const multer = require('multer');
 const { jwtAuth, adminAuth, clientAuth } = require('../middleware/auth');
 const { getDB } = require('../db/database');
 
-const PRODUCT_IMAGES_DIR = path.join(process.env.HOME || process.env.USERPROFILE, 'pedidos-bot', 'product-images');
+const PRODUCT_IMAGES_DIR = path.join(process.env.APPDATA || process.env.HOME || process.env.USERPROFILE, 'pedidos-bot', 'product-images');
 fs.mkdirSync(PRODUCT_IMAGES_DIR, { recursive: true });
 
 const storage = multer.diskStorage({
