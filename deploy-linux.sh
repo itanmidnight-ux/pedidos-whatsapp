@@ -75,6 +75,9 @@ pkg_install() {
 # ================================================================
 HAS_WHIPTAIL=false
 has_cmd whiptail && HAS_WHIPTAIL=true
+# Sesiones sin terminal real (cron, CI, SSH sin pty) no pueden dibujar whiptail
+# -- forzar modo texto plano con DEPLOY_NO_GUI=1.
+[ "${DEPLOY_NO_GUI:-}" = "1" ] && HAS_WHIPTAIL=false
 
 # Tema visual "Olivo & Ambar" (mismos colores de marca que la app) para
 # que el panel de whiptail se sienta parte del mismo producto, no una
@@ -160,13 +163,13 @@ env_set() {
         echo "${key}=${val}" >> "$ENV_FILE"
     fi
 }
-env_get() { grep "^${1}=" "$ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2-; }
+env_get() { grep "^${1}=" "$ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2- || true; }
 
 save_conf() { local key="$1" val="$2"; touch "$DEPLOY_CONF"
     if grep -q "^${key}=" "$DEPLOY_CONF" 2>/dev/null; then sed -i "s|^${key}=.*|${key}=${val}|" "$DEPLOY_CONF"
     else echo "${key}=${val}" >> "$DEPLOY_CONF"; fi
 }
-load_conf() { grep "^${1}=" "$DEPLOY_CONF" 2>/dev/null | head -1 | cut -d= -f2-; }
+load_conf() { grep "^${1}=" "$DEPLOY_CONF" 2>/dev/null | head -1 | cut -d= -f2- || true; }
 
 # ================================================================
 #  PASO 1 — Node.js 20 LTS
