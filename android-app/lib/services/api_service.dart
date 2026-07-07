@@ -701,6 +701,35 @@ class ApiService {
     }
   }
 
+  // ── Analíticas (admin) ────────────────────────────────────────
+  static Future<Map<String, dynamic>> getAnalyticsSummary() async {
+    final res = await _client.get(Uri.parse('$_serverUrl/api/analytics/summary'), headers: _headers)
+      .timeout(const Duration(seconds: 10));
+    if (res.statusCode == 200) return jsonDecode(res.body) as Map<String, dynamic>;
+    throw Exception('Error cargando resumen');
+  }
+
+  static Future<Map<String, dynamic>> getAnalyticsProducts() async {
+    final res = await _client.get(Uri.parse('$_serverUrl/api/analytics/products'), headers: _headers)
+      .timeout(const Duration(seconds: 10));
+    if (res.statusCode == 200) return jsonDecode(res.body) as Map<String, dynamic>;
+    throw Exception('Error cargando productos');
+  }
+
+  static Future<Map<String, dynamic>> getAnalyticsEmployees() async {
+    final res = await _client.get(Uri.parse('$_serverUrl/api/analytics/employees'), headers: _headers)
+      .timeout(const Duration(seconds: 10));
+    if (res.statusCode == 200) return jsonDecode(res.body) as Map<String, dynamic>;
+    throw Exception('Error cargando empleados');
+  }
+
+  static Future<Map<String, dynamic>> getAnalyticsCustomers() async {
+    final res = await _client.get(Uri.parse('$_serverUrl/api/analytics/customers'), headers: _headers)
+      .timeout(const Duration(seconds: 10));
+    if (res.statusCode == 200) return jsonDecode(res.body) as Map<String, dynamic>;
+    throw Exception('Error cargando clientes');
+  }
+
   // ── Remember me: solo el usuario, nunca la contraseña ────────
   // La sesión ya persiste vía el JWT (ver init()); esto es solo para no
   // tener que retipear el usuario si el token expiró o cerró sesión.

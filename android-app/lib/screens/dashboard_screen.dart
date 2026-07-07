@@ -8,6 +8,7 @@ import '../widgets/empty_state.dart';
 import 'products_screen.dart';
 import 'messages_screen.dart';
 import 'users_screen.dart';
+import 'admin_analytics_screen.dart';
 import 'admin_estados_screen.dart';
 import 'admin_settings_screen.dart';
 import 'inventario_screen.dart';
@@ -110,6 +111,8 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
           if (provider.isAdmin) ...[
             const Padding(padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
               child: Text('NEGOCIO', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, letterSpacing: 1))),
+            ListTile(leading: const Icon(Icons.bar_chart_rounded), title: const Text('Analíticas'),
+              onTap: () { Navigator.pop(context); Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminAnalyticsScreen())); }),
             ListTile(leading: const Icon(Icons.bar_chart_rounded), title: const Text('Inventario'),
               onTap: () { Navigator.pop(context); Navigator.push(context, MaterialPageRoute(builder: (_) => const InventarioScreen())); }),
             ListTile(leading: const Icon(Icons.auto_stories_rounded), title: const Text('Estados'),
