@@ -42,44 +42,54 @@ echo ""
 [ -d "$APPDIR" ]          || die "Directorio android-app no encontrado: $APPDIR"
 [ -f "$APPDIR/pubspec.yaml" ] || die "pubspec.yaml no encontrado en $APPDIR"
 
-# ── PASO 1: Java 17+ ─────────────────────────────────────────────
-step "Verificando Java 17..."
+# ── PASO 1: JDK 17-23 (con javac, no solo JRE) ───────────────────
+# Nota: se acepta un rango (no solo 17) porque muchas distros (ej. Kali)
+# no empaquetan openjdk-17 pero si 21/25+; Gradle 9.x soporta JDK 21 sin
+# problema para compilar targets Java 17. JDK 24+ se evita por ser muy
+# nuevo/no probado con el Gradle wrapper de este proyecto.
+step "Verificando JDK (17-23, con javac)..."
 
-JAVA_OK=false
-if command -v java &>/dev/null; then
-    JAVA_MAJ=$(java -version 2>&1 | grep -oP '(?<=")\d+' | head -1 || echo "0")
-    [[ "${JAVA_MAJ:-0}" -ge 17 ]] && JAVA_OK=true
-fi
-
-if [ "$JAVA_OK" = "false" ]; then
-    warn "Java 17 no encontrado — instalando openjdk-17..."
-    if command -v apt-get &>/dev/null; then
-        sudo apt-get update -qq
-        sudo apt-get install -y openjdk-17-jdk-headless 2>/dev/null \
-            || sudo apt-get install -y openjdk-17-jdk \
-            || die "Instala Java 17 manualmente: sudo apt install openjdk-17-jdk"
-    elif command -v dnf &>/dev/null; then
-        sudo dnf install -y java-17-openjdk-devel
-    elif command -v pacman &>/dev/null; then
-        sudo pacman -S --noconfirm jdk17-openjdk
-    else
-        die "Instala Java 17 desde https://adoptium.net y vuelve a ejecutar."
+JDK_STANDALONE_DIR="$HOME/.local/opt/jdk"
+find_system_jdk() {
+    local jbin
+    jbin="$(command -v javac 2>/dev/null || true)"
+    if [ -n "$jbin" ]; then
+        local maj; maj=$(javac -version 2>&1 | grep -oP '(?<=javac )\d+' || echo 0)
+        if [ "${maj:-0}" -ge 17 ] && [ "${maj:-0}" -le 23 ]; then
+            readlink -f "$jbin" | sed 's|/bin/javac$||'
+            return 0
+        fi
     fi
+    return 1
+}
+
+JAVA_HOME_CANDIDATE=""
+if [ -x "$JDK_STANDALONE_DIR/current/bin/javac" ]; then
+    JAVA_HOME_CANDIDATE="$JDK_STANDALONE_DIR/current"
+elif JAVA_HOME_CANDIDATE=$(find_system_jdk); then
+    :
+else
+    warn "No hay JDK 17-23 completo (con javac) — descargando Temurin 21 standalone..."
+    ARCH=$(uname -m); case "$ARCH" in x86_64) JARCH=x64;; aarch64) JARCH=aarch64;; *) die "Arquitectura no soportada: $ARCH";; esac
+    mkdir -p "$JDK_STANDALONE_DIR"
+    curl -fsSL "https://api.adoptium.net/v3/binary/latest/21/ga/linux/${JARCH}/jdk/hotspot/normal/eclipse" -o /tmp/jdk21.tar.gz \
+        || die "Descarga de JDK 21 fallo. Verifica conexion a Internet."
+    tar xzf /tmp/jdk21.tar.gz -C "$JDK_STANDALONE_DIR"
+    rm -f /tmp/jdk21.tar.gz
+    JDK_EXTRACTED=$(find "$JDK_STANDALONE_DIR" -maxdepth 1 -iname "jdk-21*" | head -1)
+    [ -n "$JDK_EXTRACTED" ] || die "JDK 21 no se extrajo correctamente."
+    ln -sfn "$JDK_EXTRACTED" "$JDK_STANDALONE_DIR/current"
+    JAVA_HOME_CANDIDATE="$JDK_STANDALONE_DIR/current"
+    ok "JDK 21 instalado en $JAVA_HOME_CANDIDATE (sin afectar el Java del sistema)"
 fi
 
-# Preferir Java 17 si hay alternativas
-if command -v update-alternatives &>/dev/null; then
-    JV17=$(update-alternatives --list java 2>/dev/null | grep "java-17" | head -1 || true)
-    [ -n "$JV17" ] && sudo update-alternatives --set java "$JV17" &>/dev/null || true
-fi
+export JAVA_HOME="$JAVA_HOME_CANDIDATE"
+export PATH="$JAVA_HOME/bin:$PATH"
+JAVA_MAJ=$(javac -version 2>&1 | grep -oP '(?<=javac )\d+' || echo 0)
+[[ "${JAVA_MAJ:-0}" -ge 17 ]] || die "JDK 17+ requerido. Detectado: $JAVA_MAJ en $JAVA_HOME"
+ok "JDK $JAVA_MAJ — JAVA_HOME=$JAVA_HOME"
 
-JAVA_MAJ=$(java -version 2>&1 | grep -oP '(?<=")\d+' | head -1 || echo "0")
-[[ "${JAVA_MAJ:-0}" -ge 17 ]] || die "Java 17+ requerido. Instalado: $JAVA_MAJ"
-
-JAVA_BIN=$(readlink -f "$(which java)")
-export JAVA_HOME="${JAVA_BIN%/bin/java}"
-[[ -d "$JAVA_HOME" ]] || export JAVA_HOME="${JAVA_BIN%/jre/bin/java}"
-ok "Java $JAVA_MAJ — JAVA_HOME=$JAVA_HOME"
+JAVA_BIN="$JAVA_HOME/bin/java"
 
 # ── PASO 2: Flutter ──────────────────────────────────────────────
 step "Verificando Flutter..."
