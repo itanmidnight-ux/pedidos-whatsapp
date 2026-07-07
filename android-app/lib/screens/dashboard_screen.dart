@@ -55,9 +55,6 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
     }
   }
 
-  static const _titlesWorker = ['Pedidos Activos', 'Mensajes', 'Estados'];
-  static const _titlesAdmin  = ['Pedidos Activos', 'Productos', 'Mensajes', 'Usuarios', 'Estados', 'Inventario'];
-
   /// Filter + sort orders:
   /// - No filter: show pending + current user's claimed/en_camino (other workers' orders hidden)
   /// - Filter active: show only matching statuses
@@ -78,14 +75,16 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<AppProvider>();
-    final titles = provider.isAdmin ? _titlesAdmin : _titlesWorker;
-    final safeTab = _tab < titles.length ? _tab : 0;
     final scheme = Theme.of(context).colorScheme;
+    final bottomTitles = provider.isAdmin
+        ? const ['Pedidos Activos', 'Productos', 'Mensajes']
+        : const ['Pedidos Activos', 'Mensajes'];
+    final safeTab = _tab < bottomTitles.length ? _tab : 0;
 
     return Scaffold(
       backgroundColor: scheme.surface,
       appBar: CompanyHeader(
-        pageTitle: titles[safeTab],
+        pageTitle: bottomTitles[safeTab],
         actions: [
           if (!provider.isOnline)
             Padding(
@@ -95,48 +94,50 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
                 child: Icon(Icons.wifi_off, color: scheme.secondary, size: 20),
               ),
             ),
-          if (provider.isAdmin)
-            IconButton(
-              icon: const Icon(Icons.settings_rounded, color: Colors.white70),
-              tooltip: 'Configuración',
-              onPressed: () => Navigator.push(context, MaterialPageRoute(
-                builder: (_) => Scaffold(
-                  appBar: AppBar(
-                    title: const Text('Configuración'),
-                    backgroundColor: scheme.primary,
-                    foregroundColor: Colors.white,
-                  ),
-                  backgroundColor: scheme.surface,
-                  body: const AdminSettingsScreen(),
-                ))),
-            ),
           IconButton(
             icon: const Icon(Icons.refresh_rounded, color: Colors.white),
             onPressed: () => provider.refreshAll(),
           ),
-          IconButton(
-            icon: const Icon(Icons.logout_rounded, color: Colors.white70),
-            tooltip: 'Cerrar sesión',
-            onPressed: () async {
-              final confirm = await showDialog<bool>(
-                context: context,
-                builder: (_) => AlertDialog(
-                  title: const Text('Cerrar sesión'),
-                  content: const Text('¿Deseas cerrar sesión?'),
-                  actions: [
-                    TextButton(onPressed: () => Navigator.pop(context, false),
-                      child: const Text('Cancelar')),
-                    FilledButton(onPressed: () => Navigator.pop(context, true),
-                      child: const Text('Salir')),
-                  ],
-                ),
-              );
-              if (confirm == true && context.mounted) {
-                context.read<AppProvider>().logout();
-              }
-            },
-          ),
         ],
+      ),
+      drawer: Drawer(
+        child: ListView(padding: EdgeInsets.zero, children: [
+          DrawerHeader(
+            decoration: BoxDecoration(color: scheme.primary),
+            child: const Align(alignment: Alignment.bottomLeft,
+              child: Text('Menú', style: TextStyle(color: Colors.white, fontSize: 20))),
+          ),
+          if (provider.isAdmin) ...[
+            const Padding(padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
+              child: Text('NEGOCIO', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, letterSpacing: 1))),
+            ListTile(leading: const Icon(Icons.bar_chart_rounded), title: const Text('Inventario'),
+              onTap: () { Navigator.pop(context); Navigator.push(context, MaterialPageRoute(builder: (_) => const InventarioScreen())); }),
+            ListTile(leading: const Icon(Icons.auto_stories_rounded), title: const Text('Estados'),
+              onTap: () { Navigator.pop(context); Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminEstadosScreen())); }),
+            const Padding(padding: EdgeInsets.fromLTRB(16, 16, 16, 4),
+              child: Text('SISTEMA', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, letterSpacing: 1))),
+            ListTile(leading: const Icon(Icons.group_rounded), title: const Text('Usuarios'),
+              onTap: () { Navigator.pop(context); Navigator.push(context, MaterialPageRoute(builder: (_) => const UsersScreen())); }),
+            ListTile(leading: const Icon(Icons.settings_rounded), title: const Text('Configuración'),
+              onTap: () { Navigator.pop(context); Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(
+                appBar: AppBar(title: const Text('Configuración')),
+                body: const AdminSettingsScreen()))); }),
+          ] else
+            ListTile(leading: const Icon(Icons.auto_stories_rounded), title: const Text('Estados'),
+              onTap: () { Navigator.pop(context); Navigator.push(context, MaterialPageRoute(builder: (_) => const WorkerEstadosScreen())); }),
+          const Divider(),
+          ListTile(leading: const Icon(Icons.logout_rounded), title: const Text('Cerrar sesión'),
+            onTap: () async {
+              Navigator.pop(context);
+              final confirm = await showDialog<bool>(context: context, builder: (_) => AlertDialog(
+                title: const Text('Cerrar sesión'), content: const Text('¿Deseas cerrar sesión?'),
+                actions: [
+                  TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
+                  FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Salir')),
+                ]));
+              if (confirm == true && context.mounted) context.read<AppProvider>().logout();
+            }),
+        ]),
       ),
       body: IndexedStack(index: safeTab, children: [
         // PEDIDOS (all roles)
@@ -199,13 +200,6 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
         if (provider.isAdmin) const ProductsScreen(),
         // MENSAJES (all roles)
         const MessagesScreen(),
-        // USUARIOS (admin only)
-        if (provider.isAdmin) const UsersScreen(),
-        // ESTADOS (admin only → AdminEstadosScreen / worker → WorkerEstadosScreen)
-        if (provider.isAdmin) const AdminEstadosScreen()
-        else const WorkerEstadosScreen(),
-        // INVENTARIO (admin only)
-        if (provider.isAdmin) const InventarioScreen(),
       ]),
       bottomNavigationBar: NavigationBar(
         selectedIndex: safeTab,
@@ -238,31 +232,6 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
               backgroundColor: Colors.red,
               child: Icon(Icons.chat_bubble_rounded, color: scheme.primary)),
             label: 'Mensajes'),
-          // Estados tab: admin gets it in its own slot; worker gets it here
-          if (!provider.isAdmin)
-            NavigationDestination(
-              icon: const Icon(Icons.auto_stories_outlined),
-              selectedIcon: Icon(Icons.auto_stories_rounded, color: scheme.primary),
-              label: 'Estados'),
-          if (provider.isAdmin)
-            NavigationDestination(
-              icon: Badge(
-                isLabelVisible: provider.users.isNotEmpty,
-                label: Text('${provider.users.length}'),
-                backgroundColor: scheme.secondary,
-                child: const Icon(Icons.group_outlined)),
-              selectedIcon: Icon(Icons.group_rounded, color: scheme.primary),
-              label: 'Usuarios'),
-          if (provider.isAdmin)
-            NavigationDestination(
-              icon: const Icon(Icons.auto_stories_outlined),
-              selectedIcon: Icon(Icons.auto_stories_rounded, color: scheme.primary),
-              label: 'Estados'),
-          if (provider.isAdmin)
-            NavigationDestination(
-              icon: const Icon(Icons.bar_chart_rounded),
-              selectedIcon: Icon(Icons.bar_chart_rounded, color: scheme.primary),
-              label: 'Inventario'),
         ],
       ),
     );
