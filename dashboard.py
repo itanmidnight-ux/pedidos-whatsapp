@@ -1,174 +1,400 @@
 #!/usr/bin/env python3
-# ================================================================
-#  dashboard.py — Panel nativo de escritorio (GTK3) para
-#  Concentrados Monserrath: monitoreo, ventas, marca, configuracion
-#  y seguridad del servidor, con datos reales (systemd + SQLite).
+# ================================================================================
+#  dashboard.py — Panel nativo de escritorio GTK3 para Concentrados Monserrath
+#  Versión 3.0 — Reescritura completa del panel de administración del servidor.
 #
-#  Se lanza desde deploy-linux.sh (--menu), que ya corre como root
-#  y deja DISPLAY/XAUTHORITY listos para dibujar en la sesion real.
-# ================================================================
+#  9 módulos: Monitoreo · Ventas · Pedidos Activos · Bot WhatsApp · Empleados
+#             · Marca · Configuración · Seguridad · Logs
+#
+#  Arquitectura:
+#   - Sidebar lateral colapsable + área principal responsive (1200x800 min 900x600)
+#   - Estilo Adwaita oscuro con acentos de marca (olivo/ámbar)
+#   - Gráficos Cairo dibujados a mano (barras, líneas, dona, sparklines)
+#   - Acceso híbrido: SQLite directo (stats) + systemd (control servicio)
+#                      + API HTTP (estado del bot WhatsApp, QR)
+#
+#  Se lanza desde deploy-linux.sh (--menu) o directamente: python3 dashboard.py
+# ================================================================================
 import gi
 gi.require_version('Gtk', '3.0')
-from gi.repository import Gtk, Gdk, GLib
-import subprocess, sqlite3, os, re, sys, datetime, secrets
+from gi.repository import Gtk, Gdk, GLib, GdkPixbuf
+import cairo
+import subprocess, sqlite3, os, re, sys, datetime, secrets, json, base64
+import urllib.request, urllib.error
 
-SERVICE = os.environ.get('DEPLOY_SERVICE', 'pedidos-bot')
-TUNNEL_SERVICE = os.environ.get('DEPLOY_TUNNEL_SERVICE', 'pedidos-bot-tunnel')
-PROJ = os.environ.get('DEPLOY_PROJ', os.path.dirname(os.path.abspath(__file__)))
-ENV_FILE = os.path.join(PROJ, 'server', '.env')
-LOG_DIR = os.environ.get('DEPLOY_LOG_DIR', '/var/log/pedidos-bot')
+# ─── Configuración de rutas y servicios ─────────────────────────────────────────
+SERVICE         = os.environ.get('DEPLOY_SERVICE', 'pedidos-bot')
+TUNNEL_SERVICE  = os.environ.get('DEPLOY_TUNNEL_SERVICE', 'pedidos-bot-tunnel')
+PROJ            = os.environ.get('DEPLOY_PROJ', os.path.dirname(os.path.abspath(__file__)))
+ENV_FILE        = os.path.join(PROJ, 'server', '.env')
+LOG_DIR         = os.environ.get('DEPLOY_LOG_DIR', '/var/log/pedidos-bot')
+# API_BASE se define después de env_get() más abajo
 
+# ─── Paleta de marca (para el módulo Marca) ─────────────────────────────────────
 PRIMARY_DEFAULT = '#2D5016'
 ACCENT_DEFAULT  = '#D4800A'
-
 PRESETS = [
-    ('Olivo & Ambar',    '#2D5016', '#D4800A'),
-    ('Bosque & Cuero',   '#1B4332', '#B08968'),
-    ('Slate & Terracota','#264653', '#E76F51'),
-    ('Vino & Oro',       '#5C1A28', '#C9A227'),
-    ('Azul Corporativo', '#1B3A6B', '#3D8BFD'),
-    ('Carbon & Lima',    '#22302B', '#8AB833'),
+    ('Olivo & Ambar',     '#2D5016', '#D4800A'),
+    ('Bosque & Cuero',    '#1B4332', '#B08968'),
+    ('Slate & Terracota', '#264653', '#E76F51'),
+    ('Vino & Oro',        '#5C1A28', '#C9A227'),
+    ('Azul Corporativo',  '#1B3A6B', '#3D8BFD'),
+    ('Carbon & Lima',     '#22302B', '#8AB833'),
 ]
 
-# Paleta "admin console" — deliberadamente neutra/tecnica (slate + OLED),
-# distinta de la paleta de marca del negocio: esta es una herramienta de
-# operacion interna, no la app que ve el cliente final.
-BG        = '#020617'
-SURFACE   = '#0F172A'
-SURFACE_2 = '#1E293B'
-BORDER    = '#334155'
-FG        = '#F8FAFC'
-FG_MUTED  = '#94A3B8'
-ACCENT    = '#22C55E'   # positivo / activo
-WARNING   = '#F59E0B'
-DANGER    = '#EF4444'
-INFO      = '#3B82F6'
+# ─── Paleta "admin console" — Adwaita oscuro + acentos de marca ─────────────────
+# Nativa de GNOME: colores tomados de la spec Adwaita dark, con acentos
+# puntuales (verde olivo / ámbar) para highlights de marca sin romper la HIG.
+BG          = '#1e1e1e'   # window background (Adwaita dark)
+SURFACE     = '#242424'   # cards, sidebar
+SURFACE_2   = '#303030'   # hover, elevated
+SURFACE_3   = '#383838'   # active, pressed
+BORDER      = '#3d3d3d'   # 1px borders
+BORDER_SOFT = '#2e2e2e'   # subtle dividers
+FG          = '#ffffff'   # primary text
+FG_MUTED    = '#cdcdcd'   # secondary text (Adwaita uses 0.8 alpha on white)
+FG_DIM      = '#8d8d8d'   # tertiary / labels
+ACCENT      = '#3584e4'   # Adwaita accent blue (acciones primarias)
+BRAND       = '#D4800A'   # acento de marca (highlights, indicadores activos)
+BRAND_DARK  = '#2D5016'   # primario de marca (presets, preview)
+SUCCESS     = '#26a269'   # estados activos / OK
+WARNING     = '#f5c211'   # advertencias / acciones sensibles
+DANGER      = '#e01b24'   # errores / cancelados / crítico
+INFO        = '#3584e4'   # info / charts secundarios
 
+# ─── CSS (Adwaita dark + brand accents) ─────────────────────────────────────────
+# HIG de GNOME: esquinas 6-8px, padding generoso, transiciones 150-200ms,
+# sin sombras agresivas, jerarquía tipográfica clara.
 CSS = f"""
-* {{ font-family: 'Inter', 'Fira Sans', 'Cantarell', sans-serif; }}
-.mono {{ font-family: 'Fira Code', 'JetBrains Mono', monospace; }}
+* {{
+    font-family: 'Cantarell', 'Inter', 'Fira Sans', 'Segoe UI', sans-serif;
+    color: {FG};
+}}
+.mono {{ font-family: 'Fira Code', 'JetBrains Mono', 'DejaVu Sans Mono', monospace; }}
 
-window {{ background-color: {BG}; }}
+window, .background {{ background-color: {BG}; }}
 
+/* ─── Header bar ─────────────────────────────────── */
 headerbar {{
     background-color: {SURFACE};
     border-bottom: 1px solid {BORDER};
     box-shadow: none;
-    color: {FG};
+    padding: 4px 10px;
 }}
-headerbar label {{ color: {FG}; }}
-headerbar .title {{ font-weight: 700; letter-spacing: 0.2px; font-size: 14px; }}
-headerbar .subtitle {{ color: {FG_MUTED}; font-size: 11px; }}
+headerbar:backdrop {{ background-color: {SURFACE}; }}
+headerbar .title {{
+    color: {FG};
+    font-weight: 700;
+    font-size: 14px;
+    letter-spacing: 0.3px;
+}}
+headerbar .subtitle {{
+    color: {FG_MUTED};
+    font-size: 11px;
+    font-weight: 400;
+}}
 headerbar button {{
-    background: transparent;
+    background: {SURFACE_2};
     border: 1px solid {BORDER};
     border-radius: 6px;
     color: {FG};
-    padding: 4px 12px;
+    padding: 5px 12px;
+    font-weight: 500;
     transition: background 150ms ease, border-color 150ms ease;
 }}
-headerbar button:hover {{ background: {SURFACE_2}; border-color: {FG_MUTED}; }}
+headerbar button:hover {{ background: {SURFACE_3}; border-color: {FG_DIM}; }}
+headerbar button:active {{ background: {SURFACE_3}; }}
 
-notebook > header {{ background-color: {SURFACE}; border-bottom: 1px solid {BORDER}; }}
-notebook > header > tabs > tab {{
-    padding: 10px 18px;
+/* ─── Sidebar ────────────────────────────────────── */
+.sidebar {{
+    background-color: {SURFACE};
+    border-right: 1px solid {BORDER};
+    padding: 8px 6px;
+}}
+.sidebar-btn {{
+    background: transparent;
+    border: none;
+    border-radius: 6px;
     color: {FG_MUTED};
+    padding: 10px 12px;
     font-weight: 500;
-    font-size: 12px;
-    letter-spacing: 0.4px;
-    border-bottom: 2px solid transparent;
-    transition: color 150ms ease, border-color 150ms ease;
+    font-size: 15px;
+    transition: background 150ms ease, color 150ms ease;
+    outline: none;
 }}
-notebook > header > tabs > tab:checked {{
+.sidebar-btn:hover {{ background: {SURFACE_2}; color: {FG}; }}
+.sidebar-btn.active {{
+    background: {SURFACE_3};
     color: {FG};
-    border-bottom: 2px solid {ACCENT};
-    background-color: shade({SURFACE}, 1.15);
+    box-shadow: inset 2px 0 0 {BRAND};
 }}
-notebook > header > tabs > tab:hover {{ color: {FG}; }}
-notebook stack {{ background-color: {BG}; }}
+.sidebar-btn .badge {{
+    background: {BRAND};
+    color: {BG};
+    border-radius: 10px;
+    padding: 1px 7px;
+    font-size: 10px;
+    font-weight: 700;
+    min-width: 16px;
+}}
+.sidebar-section {{
+    color: {FG_DIM};
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1.2px;
+    padding: 14px 12px 6px 12px;
+}}
+.sidebar-divider {{
+    background: {BORDER};
+    min-height: 1px;
+    margin: 6px 8px;
+}}
 
+/* ─── Content area ───────────────────────────────── */
+.content {{ background-color: {BG}; padding: 20px 22px; }}
+.content-scrolled {{ background-color: {BG}; }}
+
+/* ─── Section headers ────────────────────────────── */
 .section-title {{
     color: {FG_MUTED};
-    font-weight: 600;
+    font-weight: 700;
     font-size: 11px;
-    letter-spacing: 1px;
+    letter-spacing: 1.2px;
+}}
+.section-h {{
+    color: {FG};
+    font-weight: 700;
+    font-size: 16px;
+    letter-spacing: 0.2px;
 }}
 
+/* ─── Stat cards ─────────────────────────────────── */
 .stat-card {{
     background-color: {SURFACE};
-    border-radius: 8px;
+    border-radius: 10px;
     border: 1px solid {BORDER};
     padding: 14px 16px;
-    box-shadow: 0 1px 2px rgba(0,0,0,0.4);
-    transition: border-color 150ms ease;
+    transition: border-color 150ms ease, background-color 150ms ease;
 }}
-.stat-card:hover {{ border-color: {FG_MUTED}; }}
-.stat-label {{ color: {FG_MUTED}; font-size: 11px; letter-spacing: 0.3px; }}
-.stat-value {{ color: {FG}; font-size: 22px; font-weight: 700; }}
+.stat-card:hover {{
+    border-color: {FG_DIM};
+    background-color: {SURFACE_2};
+}}
+.stat-label {{
+    color: {FG_DIM};
+    font-size: 11px;
+    letter-spacing: 0.5px;
+    font-weight: 600;
+}}
+.stat-value {{
+    color: {FG};
+    font-size: 24px;
+    font-weight: 700;
+    margin-top: 4px;
+}}
+.stat-sub {{
+    color: {FG_MUTED};
+    font-size: 11px;
+    margin-top: 2px;
+}}
+.stat-trend-up   {{ color: {SUCCESS}; font-size: 11px; font-weight: 600; }}
+.stat-trend-down {{ color: {DANGER};  font-size: 11px; font-weight: 600; }}
 
-.status-dot {{ border-radius: 999px; min-width: 8px; min-height: 8px; }}
-.dot-active   {{ background-color: {ACCENT}; }}
-.dot-inactive {{ background-color: {FG_MUTED}; }}
+/* ─── Status pills / dots ────────────────────────── */
+.status-pill {{
+    border-radius: 999px;
+    padding: 3px 10px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+}}
+.pill-success {{ background: rgba(38,162,105,0.18); color: {SUCCESS}; border: 1px solid rgba(38,162,105,0.4); }}
+.pill-warning {{ background: rgba(245,194,17,0.18); color: {WARNING}; border: 1px solid rgba(245,194,17,0.4); }}
+.pill-danger  {{ background: rgba(224,27,36,0.18); color: {DANGER};  border: 1px solid rgba(224,27,36,0.4); }}
+.pill-muted   {{ background: {SURFACE_3};            color: {FG_MUTED}; border: 1px solid {BORDER}; }}
+.pill-info    {{ background: rgba(53,132,228,0.18); color: {INFO};    border: 1px solid rgba(53,132,228,0.4); }}
+.pill-brand   {{ background: rgba(212,128,10,0.18); color: {BRAND};   border: 1px solid rgba(212,128,10,0.4); }}
+
+.status-dot {{ border-radius: 999px; min-width: 9px; min-height: 9px; }}
+.dot-active   {{ background-color: {SUCCESS}; }}
+.dot-inactive {{ background-color: {FG_DIM}; }}
 .dot-failed   {{ background-color: {DANGER}; }}
+.dot-warning  {{ background-color: {WARNING}; }}
 
+/* ─── Buttons ────────────────────────────────────── */
 button.action-btn {{
     border-radius: 6px;
     padding: 8px 16px;
     font-weight: 600;
     font-size: 12px;
     letter-spacing: 0.3px;
-    transition: background 150ms ease, border-color 150ms ease;
+    transition: background 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
+    outline: none;
 }}
-.btn-primary {{ background-color: {ACCENT}; color: {BG}; border: 1px solid {ACCENT}; }}
-.btn-primary:hover {{ background-color: shade({ACCENT}, 1.1); }}
-.btn-warn {{ background-color: transparent; color: {WARNING}; border: 1px solid {WARNING}; }}
-.btn-warn:hover {{ background-color: rgba(245,158,11,0.12); }}
-.btn-danger {{ background-color: transparent; color: {DANGER}; border: 1px solid {DANGER}; }}
-.btn-danger:hover {{ background-color: rgba(239,68,68,0.12); }}
-.btn-flat {{ background-color: {SURFACE_2}; color: {FG}; border: 1px solid {BORDER}; }}
-.btn-flat:hover {{ background-color: shade({SURFACE_2}, 1.2); }}
+.btn-primary {{
+    background-color: {ACCENT};
+    color: {FG};
+    border: 1px solid {ACCENT};
+}}
+.btn-primary:hover {{ background-color: #4990e4; }}
+.btn-primary:active {{ background-color: #2675d4; }}
+.btn-brand {{
+    background-color: {BRAND};
+    color: {BG};
+    border: 1px solid {BRAND};
+}}
+.btn-brand:hover {{ background-color: #e8901f; }}
+.btn-warn {{
+    background-color: transparent;
+    color: {WARNING};
+    border: 1px solid {WARNING};
+}}
+.btn-warn:hover {{ background-color: rgba(245,194,17,0.12); }}
+.btn-danger {{
+    background-color: transparent;
+    color: {DANGER};
+    border: 1px solid {DANGER};
+}}
+.btn-danger:hover {{ background-color: rgba(224,27,36,0.12); }}
+.btn-flat {{
+    background-color: {SURFACE_2};
+    color: {FG};
+    border: 1px solid {BORDER};
+}}
+.btn-flat:hover {{ background-color: {SURFACE_3}; border-color: {FG_DIM}; }}
+.btn-small {{ padding: 4px 10px; font-size: 11px; }}
+.btn-icon  {{ padding: 6px 8px; min-width: 30px; }}
 
+/* ─── Inputs ─────────────────────────────────────── */
 entry {{
     background-color: {SURFACE_2};
     color: {FG};
     border-radius: 6px;
     border: 1px solid {BORDER};
     padding: 7px 10px;
+    transition: border-color 150ms ease, box-shadow 150ms ease;
 }}
-entry:focus {{ border: 1px solid {ACCENT}; }}
+entry:focus {{
+    border-color: {ACCENT};
+    box-shadow: 0 0 0 2px rgba(53,132,228,0.25);
+}}
+entry:disabled {{ color: {FG_DIM}; background: {SURFACE}; }}
 
 label {{ color: {FG}; }}
 .label-muted {{ color: {FG_MUTED}; font-size: 12px; }}
+.label-dim    {{ color: {FG_DIM}; font-size: 11px; }}
+.label-bold   {{ font-weight: 700; }}
 
-textview {{ background-color: {SURFACE}; }}
-textview text {{ background-color: {SURFACE}; color: #CBD5E1; }}
-
-scrolledwindow, treeview {{ background-color: {SURFACE}; color: {FG}; }}
+/* ─── Treeview / lists ───────────────────────────── */
+scrolledwindow, treeview {{
+    background-color: {SURFACE};
+    color: {FG};
+}}
 treeview header button {{
     background-color: {SURFACE_2};
-    color: {FG_MUTED};
+    color: {FG_DIM};
     border: none;
     border-bottom: 1px solid {BORDER};
     font-size: 11px;
-    font-weight: 600;
-    padding: 8px;
+    font-weight: 700;
+    padding: 9px 10px;
+    letter-spacing: 0.4px;
 }}
-treeview:selected {{ background-color: {SURFACE_2}; }}
+treeview row:nth-child(even) {{ background-color: {SURFACE}; }}
+treeview row:nth-child(odd)  {{ background-color: {SURFACE_2}; }}
+treeview row:selected {{ background-color: rgba(53,132,228,0.25); color: {FG}; }}
 
+/* ─── Textview (logs, security) ──────────────────── */
+textview {{ background-color: {SURFACE}; }}
+textview text {{ background-color: {SURFACE}; color: {FG_MUTED}; }}
+textview selection {{ background-color: rgba(53,132,228,0.3); }}
+
+/* ─── Separator / divider ────────────────────────── */
 separator {{ background-color: {BORDER}; min-height: 1px; }}
+.divider-v {{ background-color: {BORDER}; min-width: 1px; }}
 
+/* ─── Brand swatches ─────────────────────────────── */
 .preset-swatch {{
-    border-radius: 6px;
+    border-radius: 8px;
     border: 1px solid {BORDER};
     background-color: {SURFACE};
+    padding: 8px;
+    transition: border-color 150ms ease, transform 100ms ease;
+}}
+.preset-swatch:hover {{ border-color: {FG_DIM}; }}
+.preset-selected {{ border: 2px solid {BRAND}; }}
+
+/* ─── QR / preview frames ────────────────────────── */
+.frame {{
+    background-color: {SURFACE};
+    border: 1px solid {BORDER};
+    border-radius: 10px;
+    padding: 14px;
+}}
+
+/* ─── Order card (Pedidos Activos) ───────────────── */
+.order-card {{
+    background-color: {SURFACE};
+    border: 1px solid {BORDER};
+    border-left: 3px solid {FG_DIM};
+    border-radius: 8px;
+    padding: 12px 14px;
     transition: border-color 150ms ease;
 }}
-.preset-swatch:hover {{ border-color: {FG_MUTED}; }}
-.preset-selected {{ border: 2px solid {ACCENT}; }}
+.order-card:hover {{ border-color: {FG_DIM}; }}
+.order-pending  {{ border-left-color: {WARNING}; }}
+.order-claimed  {{ border-left-color: {INFO}; }}
+.order-en_camino{{ border-left-color: {BRAND}; }}
+
+/* ─── Bot status card ────────────────────────────── */
+.bot-frame {{
+    background: linear-gradient(180deg, {SURFACE} 0%, {SURFACE_2} 100%);
+    border: 1px solid {BORDER};
+    border-radius: 12px;
+    padding: 18px;
+}}
+
+/* ─── Scrollbar slim ─────────────────────────────── */
+scrollbar slider {{
+    background-color: {SURFACE_3};
+    border-radius: 999px;
+    min-width: 8px;
+    min-height: 8px;
+}}
+scrollbar {{ background-color: transparent; }}
+
+/* ─── Empty state ────────────────────────────────── */
+.empty-state {{
+    color: {FG_DIM};
+    font-size: 13px;
+    font-style: italic;
+    padding: 32px;
+}}
 """
+
+# ─── Helpers ────────────────────────────────────────────────────────────────────
+
+def _resolve_api_base():
+    """Resuelve la URL base del API: lee PORT del .env (si existe) → 3000 por defecto.
+    Autocontenida para poder llamarse al inicio del módulo antes que env_get()."""
+    port = os.environ.get('PORT') or '3000'
+    env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'server', '.env')
+    if os.path.exists(env_path):
+        try:
+            with open(env_path) as f:
+                for line in f:
+                    if line.startswith('PORT='):
+                        port = line.strip().split('=', 1)[1] or port
+                        break
+        except Exception:
+            pass
+    return os.environ.get('DEPLOY_API_BASE', f'http://127.0.0.1:{port}')
+
+API_BASE = _resolve_api_base()
 
 
 def sh(cmd):
+    """Ejecuta comando shell con timeout — devuelve stdout stripped o '' si falla."""
     try:
         return subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=6).stdout.strip()
     except Exception:
@@ -176,21 +402,29 @@ def sh(cmd):
 
 
 def env_get(key):
+    """Lee una clave del .env del servidor."""
     if not os.path.exists(ENV_FILE):
         return ''
-    with open(ENV_FILE) as f:
-        for line in f:
-            if line.startswith(key + '='):
-                return line.strip().split('=', 1)[1]
+    try:
+        with open(ENV_FILE) as f:
+            for line in f:
+                if line.startswith(key + '='):
+                    return line.strip().split('=', 1)[1]
+    except Exception:
+        pass
     return ''
 
 
 def env_set(key, value):
+    """Setea una clave en el .env (crea o reemplaza)."""
     lines = []
     found = False
     if os.path.exists(ENV_FILE):
-        with open(ENV_FILE) as f:
-            lines = f.readlines()
+        try:
+            with open(ENV_FILE) as f:
+                lines = f.readlines()
+        except Exception:
+            lines = []
     for i, line in enumerate(lines):
         if line.startswith(key + '='):
             lines[i] = f'{key}={value}\n'
@@ -198,8 +432,11 @@ def env_set(key, value):
             break
     if not found:
         lines.append(f'{key}={value}\n')
-    with open(ENV_FILE, 'w') as f:
-        f.writelines(lines)
+    try:
+        with open(ENV_FILE, 'w') as f:
+            f.writelines(lines)
+    except Exception as e:
+        print(f'[dashboard] env_set error: {e}', file=sys.stderr)
 
 
 def db_path():
@@ -208,6 +445,7 @@ def db_path():
 
 
 def query(sql, params=()):
+    """Query SQLite read-only (mode=ro) — devuelve lista de tuplas o [] si falla."""
     p = db_path()
     if not os.path.exists(p):
         return []
@@ -222,6 +460,7 @@ def query(sql, params=()):
 
 
 def db_write(sql, params=()):
+    """Escribe en SQLite con timeout — devuelve True/False."""
     p = db_path()
     if not os.path.exists(p):
         return False
@@ -248,55 +487,212 @@ def setting_set(key, value):
 
 
 def hex_to_rgb(h):
-    h = h.lstrip('#')
+    """Convierte #RRGGBB a tupla (r,g,b) 0-1."""
+    h = (h or '').lstrip('#')
     if len(h) != 6:
         return (0.2, 0.3, 0.1)
-    return tuple(int(h[i:i + 2], 16) / 255 for i in (0, 2, 4))
+    try:
+        return tuple(int(h[i:i + 2], 16) / 255 for i in (0, 2, 4))
+    except Exception:
+        return (0.2, 0.3, 0.1)
 
+
+def http_get(path, timeout=4):
+    """GET a la API HTTP del servidor (con API-Key). Devuelve dict o None."""
+    url = API_BASE + path
+    api_key = env_get('API_KEY')
+    req = urllib.request.Request(url, headers={
+        'X-API-Key': api_key,
+        'Authorization': 'Bearer ' + _get_admin_token(),
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode('utf-8'))
+    except Exception:
+        return None
+
+
+def http_post(path, data, timeout=5):
+    url = API_BASE + path
+    api_key = env_get('API_KEY')
+    body = json.dumps(data).encode('utf-8')
+    req = urllib.request.Request(url, data=body, method='POST', headers={
+        'X-API-Key': api_key,
+        'Authorization': 'Bearer ' + _get_admin_token(),
+        'Content-Type': 'application/json',
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode('utf-8'))
+    except Exception:
+        return None
+
+
+def http_put(path, data, timeout=5):
+    url = API_BASE + path
+    api_key = env_get('API_KEY')
+    body = json.dumps(data).encode('utf-8')
+    req = urllib.request.Request(url, data=body, method='PUT', headers={
+        'X-API-Key': api_key,
+        'Authorization': 'Bearer ' + _get_admin_token(),
+        'Content-Type': 'application/json',
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode('utf-8'))
+    except Exception:
+        return None
+
+
+# Cache del token admin (renovado cada 6h)
+_ADMIN_TOKEN = {'value': '', 'expires': 0}
+
+
+def _get_admin_token():
+    """Obtiene (con cache) un JWT admin haciendo login con las credenciales del .env.
+    El dashboard asume que existe un usuario admin 'jesus' o el configurado en
+    DASHBOARD_ADMIN_USER / DASHBOARD_ADMIN_PASS del .env."""
+    import time
+    now = time.time()
+    if _ADMIN_TOKEN['value'] and now < _ADMIN_TOKEN['expires']:
+        return _ADMIN_TOKEN['value']
+    user = env_get('DASHBOARD_ADMIN_USER') or 'jesus'
+    pw   = env_get('DASHBOARD_ADMIN_PASS') or 'jesus'
+    url  = API_BASE + '/api/auth/token'
+    body = json.dumps({'username': user, 'password': pw}).encode('utf-8')
+    req  = urllib.request.Request(url, data=body, method='POST', headers={
+        'Content-Type': 'application/json'
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=4) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+            if 'token' in data:
+                _ADMIN_TOKEN['value'] = data['token']
+                _ADMIN_TOKEN['expires'] = now + 6 * 3600  # 6h cache
+                return data['token']
+    except Exception:
+        pass
+    return ''
+
+
+def fmt_money(v):
+    """Formatea número como moneda colombiana."""
+    try:
+        return f'${int(v or 0):,}'
+    except Exception:
+        return '$0'
+
+
+def fmt_relative(iso_dt):
+    """ISO datetime → texto relativo ('hace 5 min', 'hace 2 h', '—')."""
+    if not iso_dt:
+        return '—'
+    try:
+        # Acepta formatos 'YYYY-MM-DD HH:MM:SS' o ISO con T
+        s = iso_dt.replace('T', ' ').split('.')[0]
+        dt = datetime.datetime.strptime(s, '%Y-%m-%d %H:%M:%S')
+    except Exception:
+        try:
+            dt = datetime.datetime.fromisoformat(iso_dt.replace('Z', ''))
+        except Exception:
+            return '—'
+    delta = datetime.datetime.now() - dt
+    secs = int(delta.total_seconds())
+    if secs < 0:
+        return '—'
+    if secs < 60:
+        return 'hace segundos'
+    if secs < 3600:
+        return f'hace {secs // 60} min'
+    if secs < 86400:
+        return f'hace {secs // 3600} h'
+    if secs < 86400 * 30:
+        return f'hace {secs // 86400} d'
+    return dt.strftime('%d/%m/%Y')
+
+
+def status_pill(text, kind='muted'):
+    """Crea un Gtk.Box con clase status-pill + pill-<kind>."""
+    box = Gtk.Box()
+    box.get_style_context().add_class('status-pill')
+    box.get_style_context().add_class(f'pill-{kind}')
+    lbl = Gtk.Label(label=text)
+    lbl.get_style_context().add_class('mono')
+    box.pack_start(lbl, True, True, 0)
+    return box
+
+
+# ─── Chart (Cairo) — barras, líneas, dona, sparkline ────────────────────────────
 
 class Chart(Gtk.DrawingArea):
-    """Grafico dibujado a mano con Cairo (barras o linea) -- cero dependencias
-    externas de graficacion, suficiente para vistas de 7-14 dias."""
-    def __init__(self, title, kind='bar', color=None):
+    """Gráfico dibujado a mano con Cairo. Cero dependencias externas.
+    Kinds: 'bar' | 'line' | 'donut' | 'sparkline'.
+    data: lista de (label, value) para bar/line/sparkline, lista de (label, value, color_rgb) para donut.
+    """
+    def __init__(self, title='', kind='bar', color=None, height=180):
         super().__init__()
         self.title = title
         self.kind = kind
         self.color = color or hex_to_rgb(ACCENT)
         self.data = []
-        self.set_size_request(260, 180)
+        self.set_size_request(220, height)
         self.connect('draw', self.on_draw)
 
     def set_data(self, data):
-        self.data = data
+        self.data = data or []
         self.queue_draw()
 
     def on_draw(self, widget, cr):
         w = widget.get_allocated_width()
         h = widget.get_allocated_height()
-        surface_rgb = hex_to_rgb(SURFACE)
-        border_rgb = hex_to_rgb(BORDER)
-        muted_rgb = hex_to_rgb(FG_MUTED)
+        surface_rgb  = hex_to_rgb(SURFACE)
+        border_rgb   = hex_to_rgb(BORDER)
+        muted_rgb    = hex_to_rgb(FG_MUTED)
+        dim_rgb      = hex_to_rgb(FG_DIM)
 
+        # Fondo redondeado (Adwaita card style)
         cr.set_source_rgb(*surface_rgb)
-        cr.paint()
+        self._round_rect(cr, 0, 0, w, h, 8)
+        cr.fill()
         cr.set_source_rgb(*border_rgb)
         cr.set_line_width(1)
-        cr.rectangle(0.5, 0.5, w - 1, h - 1)
+        self._round_rect(cr, 0.5, 0.5, w - 1, h - 1, 8)
         cr.stroke()
 
-        cr.set_source_rgb(*muted_rgb)
-        cr.select_font_face('Sans', 0, 0)
-        cr.set_font_size(11)
-        cr.move_to(14, 20)
-        cr.show_text(self.title.upper())
+        # Título
+        if self.title:
+            cr.set_source_rgb(*muted_rgb)
+            cr.select_font_face('Sans', 0, 1)
+            cr.set_font_size(10)
+            cr.move_to(14, 20)
+            cr.show_text(self.title.upper())
 
-        if not any(v for _, v in self.data):
-            cr.set_source_rgba(*muted_rgb, 0.8)
+        if self.kind == 'donut':
+            return self._draw_donut(cr, w, h, muted_rgb, dim_rgb)
+        if not self.data or not any(v for _, v in self.data):
+            cr.set_source_rgba(*dim_rgb, 0.7)
+            cr.select_font_face('Sans', 0, 0)
             cr.set_font_size(11)
             cr.move_to(14, h / 2)
-            cr.show_text('Sin datos todavia — apareceran con el primer pedido')
+            cr.show_text('Sin datos todavía')
             return
+        if self.kind == 'bar':
+            return self._draw_bars(cr, w, h, muted_rgb, dim_rgb, border_rgb)
+        if self.kind == 'line':
+            return self._draw_line(cr, w, h, muted_rgb, dim_rgb)
+        if self.kind == 'sparkline':
+            return self._draw_sparkline(cr, w, h)
 
+    @staticmethod
+    def _round_rect(cr, x, y, w, h, r):
+        cr.move_to(x + r, y)
+        cr.arc(x + w - r, y + r, r, -1.5708, 0)
+        cr.arc(x + w - r, y + h - r, r, 0, 1.5708)
+        cr.arc(x + r, y + h - r, r, 1.5708, 3.14159)
+        cr.arc(x + r, y + r, r, 3.14159, 4.71239)
+        cr.close_path()
+
+    def _draw_bars(self, cr, w, h, muted_rgb, dim_rgb, border_rgb):
         pad_left, pad_bottom, pad_top = 14, 26, 34
         chart_h = h - pad_bottom - pad_top
         chart_w = w - pad_left - 14
@@ -304,7 +700,7 @@ class Chart(Gtk.DrawingArea):
         n = len(self.data) or 1
         bw = chart_w / n
 
-        # Gridlines sutiles horizontales (referencia visual, no compiten con datos)
+        # Gridlines horizontales sutiles
         for frac in (0.25, 0.5, 0.75, 1.0):
             gy = pad_top + chart_h * (1 - frac)
             cr.set_source_rgba(*border_rgb, 0.5)
@@ -313,324 +709,1299 @@ class Chart(Gtk.DrawingArea):
             cr.line_to(pad_left + chart_w, gy)
             cr.stroke()
 
-        if self.kind == 'bar':
-            for i, (label, val) in enumerate(self.data):
-                bh = (val / maxval) * chart_h if maxval else 0
-                x = pad_left + i * bw + bw * 0.2
-                y = pad_top + (chart_h - bh)
-                cr.set_source_rgb(*self.color)
-                cr.rectangle(x, y, bw * 0.6, bh)
-                cr.fill()
+        # Valor máximo arriba a la derecha
+        cr.set_source_rgb(*dim_rgb)
+        cr.select_font_face('Sans', 0, 0)
+        cr.set_font_size(9)
+        cr.move_to(w - 14 - len(str(maxval)) * 5, pad_top - 6)
+        cr.show_text(str(maxval))
+
+        # Barras con gradiente sutil
+        for i, (label, val) in enumerate(self.data):
+            bh = (val / maxval) * chart_h if maxval else 0
+            x = pad_left + i * bw + bw * 0.18
+            y = pad_top + (chart_h - bh)
+            bar_w = bw * 0.64
+
+            # Gradiente vertical (Adwaita usa fills sólidos pero un sutil gradiente
+            # da profundidad sin romper la HIG)
+            pat = cairo.LinearGradient(0, y, 0, y + bh)
+            r, g, b = self.color
+            pat.add_color_stop_rgb(0, min(r + 0.08, 1), min(g + 0.08, 1), min(b + 0.08, 1))
+            pat.add_color_stop_rgb(1, r, g, b)
+            cr.set_source(pat)
+            self._round_rect(cr, x, y, bar_w, max(bh, 1), 3)
+            cr.fill()
+
+            # Valor encima de la barra si hay espacio
+            if bh > 24 and val > 0:
                 cr.set_source_rgb(*muted_rgb)
                 cr.set_font_size(9)
-                cr.move_to(x, h - pad_bottom + 13)
-                cr.show_text(label)
-        else:  # line
-            pts = []
-            for i, (label, val) in enumerate(self.data):
-                x = pad_left + i * bw + bw / 2
-                y = pad_top + (chart_h - (val / maxval) * chart_h if maxval else chart_h)
-                pts.append((x, y, label))
-            cr.set_source_rgb(*self.color)
-            cr.set_line_width(2)
-            for i, (x, y, _) in enumerate(pts):
-                cr.line_to(x, y) if i else cr.move_to(x, y)
+                txt = str(val)
+                cr.move_to(x + bar_w / 2 - len(txt) * 2.5, y - 3)
+                cr.show_text(txt)
+
+            # Etiqueta eje X
+            cr.set_source_rgb(*dim_rgb)
+            cr.set_font_size(9)
+            cr.move_to(x + bar_w / 2 - len(label) * 2.2, h - pad_bottom + 14)
+            cr.show_text(label)
+
+    def _draw_line(self, cr, w, h, muted_rgb, dim_rgb):
+        pad_left, pad_bottom, pad_top = 14, 26, 34
+        chart_h = h - pad_bottom - pad_top
+        chart_w = w - pad_left - 14
+        maxval = max((v for _, v in self.data), default=1) or 1
+        n = len(self.data) or 1
+        bw = chart_w / n
+
+        # Gridlines
+        border_rgb = hex_to_rgb(BORDER)
+        for frac in (0.25, 0.5, 0.75, 1.0):
+            gy = pad_top + chart_h * (1 - frac)
+            cr.set_source_rgba(*border_rgb, 0.5)
+            cr.set_line_width(1)
+            cr.move_to(pad_left, gy)
+            cr.line_to(pad_left + chart_w, gy)
             cr.stroke()
-            for x, y, label in pts:
-                cr.arc(x, y, 2.5, 0, 2 * 3.14159)
-                cr.fill()
-                cr.set_source_rgb(*muted_rgb)
-                cr.set_font_size(9)
-                cr.move_to(x - 8, h - pad_bottom + 13)
-                cr.show_text(label)
-                cr.set_source_rgb(*self.color)
+
+        pts = []
+        for i, (label, val) in enumerate(self.data):
+            x = pad_left + i * bw + bw / 2
+            y = pad_top + (chart_h - (val / maxval) * chart_h if maxval else chart_h)
+            pts.append((x, y, label))
+
+        # Área bajo la línea (fill sutil)
+        if len(pts) >= 2:
+            r, g, b = self.color
+            cr.set_source_rgba(r, g, b, 0.12)
+            cr.move_to(pts[0][0], pad_top + chart_h)
+            for x, y, _ in pts:
+                cr.line_to(x, y)
+            cr.line_to(pts[-1][0], pad_top + chart_h)
+            cr.close_path()
+            cr.fill()
+
+        # Línea
+        cr.set_source_rgb(*self.color)
+        cr.set_line_width(2)
+        for i, (x, y, _) in enumerate(pts):
+            if i == 0:
+                cr.move_to(x, y)
+            else:
+                cr.line_to(x, y)
+        cr.stroke()
+
+        # Puntos + labels
+        for x, y, label in pts:
+            cr.set_source_rgb(*self.color)
+            cr.arc(x, y, 3, 0, 6.2832)
+            cr.fill()
+            cr.set_source_rgb(*dim_rgb)
+            cr.set_font_size(9)
+            cr.move_to(x - len(label) * 2.2, h - pad_bottom + 14)
+            cr.show_text(label)
+
+    def _draw_sparkline(self, cr, w, h):
+        """Sparkline compacta sin ejes — para cabeceras de cards."""
+        if not self.data:
+            return
+        pad = 4
+        chart_w = w - 2 * pad
+        chart_h = h - 2 * pad
+        maxval = max((v for _, v in self.data), default=1) or 1
+        n = len(self.data) or 1
+        bw = chart_w / n
+
+        pts = []
+        for i, (_, val) in enumerate(self.data):
+            x = pad + i * bw + bw / 2
+            y = pad + (chart_h - (val / maxval) * chart_h if maxval else chart_h)
+            pts.append((x, y))
+
+        if len(pts) >= 2:
+            r, g, b = self.color
+            cr.set_source_rgba(r, g, b, 0.15)
+            cr.move_to(pts[0][0], pad + chart_h)
+            for x, y in pts:
+                cr.line_to(x, y)
+            cr.line_to(pts[-1][0], pad + chart_h)
+            cr.close_path()
+            cr.fill()
+
+        cr.set_source_rgb(*self.color)
+        cr.set_line_width(1.5)
+        for i, (x, y) in enumerate(pts):
+            if i == 0:
+                cr.move_to(x, y)
+            else:
+                cr.line_to(x, y)
+        cr.stroke()
+        if pts:
+            cr.arc(pts[-1][0], pts[-1][1], 2, 0, 6.2832)
+            cr.fill()
+
+    def _draw_donut(self, cr, w, h, muted_rgb, dim_rgb):
+        """Donut chart — data = [(label, value, color_rgb), ...]"""
+        if not self.data:
+            cr.set_source_rgba(*dim_rgb, 0.7)
+            cr.set_font_size(11)
+            cr.move_to(14, h / 2)
+            cr.show_text('Sin datos')
+            return
+        # Acepta data con o sin color; si no tiene color, usa paleta rotatoria
+        palette = [hex_to_rgb(BRAND), hex_to_rgb(INFO), hex_to_rgb(SUCCESS),
+                   hex_to_rgb(WARNING), hex_to_rgb(DANGER), hex_to_rgb('#9c27b0'),
+                   hex_to_rgb('#00bcd4'), hex_to_rgb('#ff5722')]
+        clean = []
+        for i, item in enumerate(self.data):
+            if len(item) >= 3:
+                clean.append((item[0], item[1], item[2]))
+            else:
+                clean.append((item[0], item[1], palette[i % len(palette)]))
+
+        total = sum(v for _, v, _ in clean) or 1
+        cx, cy = w / 2, h / 2 + 4
+        radius = min(w, h) / 2 - 24
+        inner = radius * 0.62
+
+        # Anillos
+        start = -1.5708  # 12 en punto
+        for label, val, color in clean:
+            angle = (val / total) * 6.2832
+            cr.set_source_rgb(*color)
+            cr.move_to(cx, cy)
+            cr.arc(cx, cy, radius, start, start + angle)
+            cr.close_path()
+            cr.fill()
+            start += angle
+
+        # Agujero central
+        cr.set_source_rgb(*hex_to_rgb(SURFACE))
+        cr.arc(cx, cy, inner, 0, 6.2832)
+        cr.fill()
+
+        # Texto central: total
+        cr.set_source_rgb(*muted_rgb)
+        cr.select_font_face('Sans', 0, 1)
+        cr.set_font_size(10)
+        total_str = str(total)
+        cr.move_to(cx - len(total_str) * 3, cy - 2)
+        cr.show_text(total_str)
+        cr.set_source_rgb(*dim_rgb)
+        cr.set_font_size(8)
+        cr.move_to(cx - 13, cy + 12)
+        cr.show_text('TOTAL')
+
+        # Leyenda lateral derecha
+        ly = 24
+        for label, val, color in clean[:6]:  # máximo 6 entradas en leyenda
+            cr.set_source_rgb(*color)
+            cr.rectangle(w - 110, ly, 8, 8)
+            cr.fill()
+            cr.set_source_rgb(*muted_rgb)
+            cr.set_font_size(9)
+            txt = label[:14] + ('…' if len(label) > 14 else '')
+            cr.move_to(w - 98, ly + 7)
+            cr.show_text(txt)
+            cr.set_source_rgb(*dim_rgb)
+            val_str = str(val)
+            cr.move_to(w - 32, ly + 7)
+            cr.show_text(val_str)
+            ly += 14
 
 
-def stat_card(label, value_widget_holder, dot_holder=None):
-    """Card estilo admin-console: etiqueta muted + valor grande. Si dot_holder
-    se pasa (una lista), se agrega un indicador de estado circular editable
-    via clase CSS (dot-active/dot-inactive/dot-failed) en vez de un emoji."""
-    box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-    box.get_style_context().add_class('stat-card')
+# ─── Widgets reutilizables ──────────────────────────────────────────────────────
 
-    lbl_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-    lbl = Gtk.Label(label=label.upper(), xalign=0)
-    lbl.get_style_context().add_class('stat-label')
-    lbl_row.pack_start(lbl, True, True, 0)
-    if dot_holder is not None:
-        dot = Gtk.Box()
-        dot.set_size_request(8, 8)
-        dot.get_style_context().add_class('status-dot')
-        dot.get_style_context().add_class('dot-inactive')
-        lbl_row.pack_start(dot, False, False, 2)
-        dot_holder.append(dot)
-    box.pack_start(lbl_row, False, False, 0)
+class StatCard(Gtk.Box):
+    """Card de estadística: label pequeño + valor grande + subtexto opcional."""
+    def __init__(self, label, value='—', sub='', trend=None):
+        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        self.get_style_context().add_class('stat-card')
 
-    val = Gtk.Label(label='—', xalign=0)
-    val.get_style_context().add_class('stat-value')
-    val.get_style_context().add_class('mono')
-    box.pack_start(val, False, False, 0)
-    value_widget_holder.append(val)
-    return box
+        lbl = Gtk.Label(label=label.upper(), xalign=0)
+        lbl.get_style_context().add_class('stat-label')
+        self.pack_start(lbl, False, False, 0)
+
+        self.value_lbl = Gtk.Label(label=value, xalign=0)
+        self.value_lbl.get_style_context().add_class('stat-value')
+        self.value_lbl.get_style_context().add_class('mono')
+        self.pack_start(self.value_lbl, False, False, 0)
+
+        self.sub_row = Gtk.Box(spacing=6)
+        self.pack_start(self.sub_row, False, False, 0)
+        if sub:
+            self.sub_lbl = Gtk.Label(label=sub, xalign=0)
+            self.sub_lbl.get_style_context().add_class('stat-sub')
+            self.sub_row.pack_start(self.sub_lbl, False, False, 0)
+        if trend:
+            t_lbl = Gtk.Label(label=trend)
+            t_lbl.get_style_context().add_class('stat-trend-up' if trend.startswith('+') else 'stat-trend-down')
+            self.sub_row.pack_start(t_lbl, False, False, 0)
+
+    def set_value(self, v):
+        self.value_lbl.set_text(str(v))
+
+    def set_sub(self, s):
+        if hasattr(self, 'sub_lbl'):
+            self.sub_lbl.set_text(s)
 
 
-class DashboardWindow(Gtk.Window):
-    def __init__(self):
-        super().__init__(title='Concentrados Monserrath — Panel del Servidor')
-        self.set_default_size(920, 640)
-        self.set_resizable(True)
-        self.set_size_request(720, 480)  # minimo -- evita que las cards/graficos se aplasten y se vean corruptos
+class SectionHeader(Gtk.Box):
+    """Título de sección: section-title pequeño + optional action a la derecha."""
+    def __init__(self, title, subtitle=None, action_widget=None):
+        super().__init__(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        lbl = Gtk.Label(label=title, xalign=0)
+        lbl.get_style_context().add_class('section-h')
+        vbox.pack_start(lbl, False, False, 0)
+        if subtitle:
+            sub = Gtk.Label(label=subtitle, xalign=0)
+            sub.get_style_context().add_class('label-muted')
+            vbox.pack_start(sub, False, False, 0)
+        self.pack_start(vbox, False, False, 0)
+        if action_widget:
+            self.pack_end(action_widget, False, False, 0)
 
-        screen = Gdk.Screen.get_default()
-        provider = Gtk.CssProvider()
-        provider.load_from_data(CSS.encode())
-        Gtk.StyleContext.add_provider_for_screen(
-            screen, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 
-        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        self.add(vbox)
+def make_btn(label, css_class='btn-flat', small=False, on_click=None, icon=None):
+    """Crea un botón estilizado. css_class: btn-primary|btn-brand|btn-warn|btn-danger|btn-flat."""
+    btn = Gtk.Button(label=label)
+    ctx = btn.get_style_context()
+    ctx.add_class('action-btn')
+    ctx.add_class(css_class)
+    if small:
+        ctx.add_class('btn-small')
+    if on_click:
+        btn.connect('clicked', on_click)
+    return btn
 
-        header = Gtk.HeaderBar()
-        header.set_title('CONCENTRADOS MONSERRATH')
-        header.set_subtitle('Panel de administracion del servidor')
-        header.set_show_close_button(True)
-        refresh_btn = Gtk.Button(label='ACTUALIZAR')
-        refresh_btn.connect('clicked', lambda *_: self.refresh_all())
-        header.pack_end(refresh_btn)
-        self.set_titlebar(header)
 
-        notebook = Gtk.Notebook()
-        vbox.pack_start(notebook, True, True, 0)
 
-        notebook.append_page(self._scrollable(self.build_monitor_tab()), Gtk.Label(label='MONITOREO'))
-        notebook.append_page(self._scrollable(self.build_sales_tab()), Gtk.Label(label='VENTAS'))
-        notebook.append_page(self._scrollable(self.build_brand_tab()), Gtk.Label(label='MARCA'))
-        notebook.append_page(self._scrollable(self.build_config_tab()), Gtk.Label(label='CONFIGURACION'))
-        notebook.append_page(self.build_security_tab(), Gtk.Label(label='SEGURIDAD'))
-        notebook.append_page(self.build_logs_tab(), Gtk.Label(label='LOGS'))
+# ══════════════════════════════════════════════════════════════════════════════
+# MÓDULO: MONITOREO
+# ══════════════════════════════════════════════════════════════════════════════
 
-        self._pulse_on = True
-        self.refresh_all()
-        GLib.timeout_add_seconds(5, self._tick)
-        GLib.timeout_add(700, self._pulse)
+class MonitorModule:
+    """Estado en vivo del servidor: servicios systemd, memoria, pedidos/mensajes
+    del día, gráficos de actividad 7 días, sparklines y acciones de control."""
 
-    def _tick(self):
-        self.refresh_all()
-        return True
+    def __init__(self, parent):
+        self.parent = parent
+        self.box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
 
-    def _pulse(self):
-        # Sutil respiracion de opacidad en el indicador de estado cuando el
-        # servicio esta activo -- unica animacion del panel, discreta.
-        self._pulse_on = not self._pulse_on
-        if hasattr(self, 'dot_status') and getattr(self, '_status_class', '') == 'pulse-active':
-            self.dot_status.set_opacity(1.0 if self._pulse_on else 0.5)
-        elif hasattr(self, 'dot_status'):
-            self.dot_status.set_opacity(1.0)
-        return True
+        # Header del módulo
+        header = SectionHeader('Estado en vivo',
+                               'Servicios, recursos y actividad de las últimas 24 horas',
+                               make_btn('↻ Actualizar', 'btn-flat', small=True, on_click=lambda *_: self.parent.refresh_all()))
+        self.box.pack_start(header, False, False, 0)
 
-    def _scrollable(self, widget):
-        """Envuelve una pestaña en scroll vertical -- si la ventana se achica,
-        el contenido no se aplasta ni se superpone, simplemente aparece scroll."""
-        scroll = Gtk.ScrolledWindow()
-        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scroll.add(widget)
-        return scroll
+        # ─── Cards de estado de servicios (3 columnas) ───────────────
+        cards_box = Gtk.Box(spacing=12)
+        self.box.pack_start(cards_box, False, False, 0)
 
-    # ── Tab: Monitoreo ────────────────────────────────────────
-    def build_monitor_tab(self):
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
-        box.set_border_width(18)
+        # Servicio Node
+        self.card_node = StatCard('Servicio Node', sub='systemd ' + SERVICE)
+        self.dot_node = Gtk.Box()
+        self.dot_node.set_size_request(9, 9)
+        self.dot_node.get_style_context().add_class('status-dot')
+        self.dot_node.get_style_context().add_class('dot-inactive')
+        self.card_node.pack_start(self.dot_node, False, False, 0)
+        cards_box.pack_start(self.card_node, True, True, 0)
 
-        title = Gtk.Label(label='ESTADO EN VIVO', xalign=0)
-        title.get_style_context().add_class('section-title')
-        box.pack_start(title, False, False, 0)
+        # Tunel Cloudflare
+        self.card_tunnel = StatCard('Túnel Cloudflare', sub= TUNNEL_SERVICE)
+        self.dot_tunnel = Gtk.Box()
+        self.dot_tunnel.set_size_request(9, 9)
+        self.dot_tunnel.get_style_context().add_class('status-dot')
+        self.dot_tunnel.get_style_context().add_class('dot-inactive')
+        self.card_tunnel.pack_start(self.dot_tunnel, False, False, 0)
+        cards_box.pack_start(self.card_tunnel, True, True, 0)
 
-        cards = Gtk.FlowBox()
-        cards.set_selection_mode(Gtk.SelectionMode.NONE)
-        cards.set_max_children_per_line(3)
-        cards.set_row_spacing(10)
-        cards.set_column_spacing(10)
-        box.pack_start(cards, False, False, 0)
+        # Bot WhatsApp
+        self.card_bot = StatCard('Bot WhatsApp', sub='Conexión')
+        self.dot_bot = Gtk.Box()
+        self.dot_bot.set_size_request(9, 9)
+        self.dot_bot.get_style_context().add_class('status-dot')
+        self.dot_bot.get_style_context().add_class('dot-inactive')
+        self.card_bot.pack_start(self.dot_bot, False, False, 0)
+        cards_box.pack_start(self.card_bot, True, True, 0)
 
-        holders = {}
-        dots = {}
-        specs = [
-            ('status', 'Servicio Node', True), ('tunnel', 'Tunel Cloudflare', True),
-            ('uptime', 'Activo desde', False), ('mem', 'Memoria', False),
-            ('orders', 'Pedidos (hoy / total)', False), ('msgs', 'Mensajes (hoy / total)', False),
-        ]
-        for key, label, has_dot in specs:
-            hold, dot_hold = [], ([] if has_dot else None)
-            cards.add(stat_card(label, hold, dot_hold))
-            holders[key] = hold[0]
-            if has_dot:
-                dots[key] = dot_hold[0]
-        self.lbl_status, self.lbl_tunnel = holders['status'], holders['tunnel']
-        self.lbl_uptime, self.lbl_mem = holders['uptime'], holders['mem']
-        self.lbl_orders, self.lbl_msgs = holders['orders'], holders['msgs']
-        self.dot_status, self.dot_tunnel = dots['status'], dots['tunnel']
+        # ─── Cards de métricas (4 columnas) ──────────────────────────
+        metrics_box = Gtk.Box(spacing=12)
+        self.box.pack_start(metrics_box, False, False, 0)
 
-        charts_title = Gtk.Label(label='ACTIVIDAD (ULTIMOS 7 DIAS)', xalign=0)
+        self.card_uptime   = StatCard('Activo desde',  sub='Último inicio del servicio')
+        self.card_mem      = StatCard('Memoria RSS',   sub='Consumo del proceso Node')
+        self.card_orders   = StatCard('Pedidos hoy',   sub='Hoy / total histórico')
+        self.card_msgs     = StatCard('Mensajes hoy',  sub='Hoy / total histórico')
+        for c in (self.card_uptime, self.card_mem, self.card_orders, self.card_msgs):
+            metrics_box.pack_start(c, True, True, 0)
+
+        # ─── Gráficos de actividad 7 días ────────────────────────────
+        charts_title = Gtk.Label(label='ACTIVIDAD — ÚLTIMOS 7 DÍAS', xalign=0)
         charts_title.get_style_context().add_class('section-title')
-        box.pack_start(charts_title, False, False, 0)
+        self.box.pack_start(charts_title, False, False, 0)
 
-        charts = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        box.pack_start(charts, True, True, 0)
-        self.chart_orders = Chart('Pedidos por dia', 'bar', hex_to_rgb(ACCENT))
-        self.chart_msgs = Chart('Mensajes por dia', 'line', hex_to_rgb(INFO))
-        charts.pack_start(self.chart_orders, True, True, 0)
-        charts.pack_start(self.chart_msgs, True, True, 0)
+        charts_box = Gtk.Box(spacing=12, homogeneous=True)
+        self.box.pack_start(charts_box, True, True, 0)
+
+        self.chart_orders = Chart('Pedidos por día', 'bar', hex_to_rgb(BRAND), height=200)
+        self.chart_msgs   = Chart('Mensajes por día', 'line', hex_to_rgb(INFO), height=200)
+        charts_box.pack_start(self.chart_orders, True, True, 0)
+        charts_box.pack_start(self.chart_msgs,   True, True, 0)
+
+        # ─── Acciones de control systemd ─────────────────────────────
+        actions_title = Gtk.Label(label='CONTROL DEL SERVICIO', xalign=0)
+        actions_title.get_style_context().add_class('section-title')
+        self.box.pack_start(actions_title, False, False, 0)
 
         actions = Gtk.Box(spacing=8)
-        box.pack_start(actions, False, False, 0)
+        self.box.pack_start(actions, False, False, 0)
         for label, cmd, css in [
-            ('REINICIAR', f'systemctl restart {SERVICE}', 'btn-primary'),
-            ('DETENER', f'systemctl stop {SERVICE}', 'btn-warn'),
-            ('INICIAR', f'systemctl start {SERVICE}', 'btn-primary'),
+            ('↻ Reiniciar', f'systemctl restart {SERVICE}', 'btn-primary'),
+            ('⏸ Detener',   f'systemctl stop {SERVICE}',    'btn-warn'),
+            ('▶ Iniciar',   f'systemctl start {SERVICE}',   'btn-primary'),
         ]:
-            btn = Gtk.Button(label=label)
-            btn.get_style_context().add_class('action-btn')
-            btn.get_style_context().add_class(css)
-            btn.connect('clicked', lambda _w, c=cmd: self._run_and_refresh(c))
-            actions.pack_start(btn, False, False, 0)
+            actions.pack_start(make_btn(label, css, on_click=lambda _w, c=cmd: self._run(c)), False, False, 0)
 
-        return box
+        actions.pack_start(Gtk.Label(label=''), True, True, 0)  # spacer
 
-    def _run_and_refresh(self, cmd):
+        # Túnel control
+        for label, cmd, css in [
+            ('⇄ Reiniciar túnel', f'systemctl restart {TUNNEL_SERVICE}', 'btn-flat'),
+        ]:
+            actions.pack_start(make_btn(label, css, small=True,
+                                        on_click=lambda _w, c=cmd: self._run(c)), False, False, 0)
+
+    def _run(self, cmd):
         sh(cmd)
-        GLib.timeout_add(1500, lambda: (self.refresh_all(), False)[1])
+        GLib.timeout_add(1500, lambda: (self.parent.refresh_all(), False)[1])
 
-    # ── Tab: Ventas ───────────────────────────────────────────
-    def build_sales_tab(self):
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
-        box.set_border_width(18)
+    def refresh(self):
+        # Servicio Node
+        active = sh(f'systemctl is-active {SERVICE} 2>/dev/null') or 'inactivo'
+        self.card_node.set_value(active.upper() if active != 'inactivo' else 'INACTIVO')
+        self._set_dot(self.dot_node, active == 'active', failed=(active == 'failed'))
 
-        title = Gtk.Label(label='RESUMEN DE VENTAS', xalign=0)
-        title.get_style_context().add_class('section-title')
-        box.pack_start(title, False, False, 0)
+        # Túnel
+        tactive = sh(f'systemctl is-active {TUNNEL_SERVICE} 2>/dev/null') or 'no instalado'
+        self.card_tunnel.set_value(tactive.upper())
+        self._set_dot(self.dot_tunnel, tactive == 'active', failed=(tactive == 'failed'))
 
-        cards = Gtk.FlowBox()
-        cards.set_selection_mode(Gtk.SelectionMode.NONE)
-        cards.set_max_children_per_line(4)
-        cards.set_row_spacing(10)
-        cards.set_column_spacing(10)
-        box.pack_start(cards, False, False, 0)
+        # Bot WhatsApp (vía API HTTP)
+        bot = http_get('/api/bot/status')
+        if bot:
+            ready = bot.get('ready', False)
+            self.card_bot.set_value('CONECTADO' if ready else ('QR PENDIENTE' if bot.get('hasQR') else 'INACTIVO'))
+            self._set_dot(self.dot_bot, ready, failed=bot.get('reconnectExhausted', False))
+            pending_q = bot.get('pendingQueue', 0)
+            if pending_q:
+                self.card_bot.set_sub(f'Cola: {pending_q} mensaje(s) en espera')
+            else:
+                self.card_bot.set_sub('Sin cola pendiente')
+        else:
+            self.card_bot.set_value('— API no disponible')
+            self.card_bot.set_sub('El servidor no responde o credenciales inválidas')
+            self._set_dot(self.dot_bot, False)
 
-        holders = {}
-        for key, label in [
-            ('sales_today', 'Ventas hoy'), ('avg_ticket', 'Ticket promedio'),
-            ('cancelled', '% Cancelados'), ('delivered', 'Entregados (total)'),
-        ]:
-            hold = []
-            cards.add(stat_card(label, hold))
-            holders[key] = hold[0]
-        self.lbl_sales_today = holders['sales_today']
-        self.lbl_avg_ticket = holders['avg_ticket']
-        self.lbl_cancelled = holders['cancelled']
-        self.lbl_delivered = holders['delivered']
+        # Uptime
+        since = sh(f"systemctl show {SERVICE} -p ActiveEnterTimestamp --value")
+        self.card_uptime.set_value(since or '—')
 
-        chart_title = Gtk.Label(label='INGRESOS POR DIA (ULTIMOS 7)', xalign=0)
-        chart_title.get_style_context().add_class('section-title')
-        box.pack_start(chart_title, False, False, 0)
-        self.chart_sales = Chart('Ingresos ($)', 'bar', hex_to_rgb(ACCENT))
-        box.pack_start(self.chart_sales, False, False, 0)
+        # Memoria
+        mem = sh(f"systemctl show {SERVICE} -p MemoryCurrent --value")
+        try:
+            self.card_mem.set_value(f'{int(mem) / 1024 / 1024:.1f} MB')
+        except Exception:
+            self.card_mem.set_value('—')
 
-        top_title = Gtk.Label(label='TOP PRODUCTOS VENDIDOS', xalign=0)
+        # Pedidos
+        orders_today = query("SELECT COUNT(*) FROM orders WHERE date(requested_at)=date('now')")
+        orders_total = query("SELECT COUNT(*) FROM orders")
+        today = orders_today[0][0] if orders_today else 0
+        total = orders_total[0][0] if orders_total else 0
+        self.card_orders.set_value(f'{today} / {total}')
+
+        # Mensajes
+        msgs_today = query("SELECT COUNT(*) FROM messages WHERE date(created_at)=date('now')")
+        msgs_total = query("SELECT COUNT(*) FROM messages")
+        today_m = msgs_today[0][0] if msgs_today else 0
+        total_m = msgs_total[0][0] if msgs_total else 0
+        self.card_msgs.set_value(f'{today_m} / {total_m}')
+
+        # Gráficos
+        self._refresh_chart(self.chart_orders, 'orders', 'requested_at')
+        self._refresh_chart(self.chart_msgs, 'messages', 'created_at')
+
+    def _set_dot(self, dot, active, failed=False):
+        ctx = dot.get_style_context()
+        for cls in ('dot-active', 'dot-inactive', 'dot-failed', 'dot-warning'):
+            ctx.remove_class(cls)
+        ctx.add_class('dot-failed' if failed else ('dot-active' if active else 'dot-inactive'))
+
+    def _refresh_chart(self, chart, table, date_col):
+        rows = query(f"""
+            SELECT date({date_col}) d, COUNT(*) c FROM {table}
+            WHERE {date_col} >= date('now', '-6 days')
+            GROUP BY d ORDER BY d
+        """)
+        by_date = {r[0]: r[1] for r in rows}
+        data = []
+        for i in range(6, -1, -1):
+            d = (datetime.date.today() - datetime.timedelta(days=i))
+            data.append((d.strftime('%d/%m'), by_date.get(d.isoformat(), 0)))
+        chart.set_data(data)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MÓDULO: VENTAS
+# ══════════════════════════════════════════════════════════════════════════════
+
+class SalesModule:
+    """Resumen de ventas: ingresos hoy, ticket promedio, % cancelados, entregados,
+    gráfico de ingresos 7 días, dona de estados de pedidos y top productos."""
+
+    def __init__(self, parent):
+        self.parent = parent
+        self.box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
+
+        header = SectionHeader('Resumen de ventas',
+                               'Ingresos, ticket promedio y productos más vendidos',
+                               make_btn('↻ Actualizar', 'btn-flat', small=True, on_click=lambda *_: self.parent.refresh_all()))
+        self.box.pack_start(header, False, False, 0)
+
+        # ─── Cards de KPIs ───────────────────────────────────────────
+        cards = Gtk.Box(spacing=12)
+        self.box.pack_start(cards, False, False, 0)
+
+        self.card_today     = StatCard('Ventas hoy',       sub='Entregados hoy')
+        self.card_avg       = StatCard('Ticket promedio',  sub='Histórico entregados')
+        self.card_cancelled = StatCard('% Cancelados',     sub='Sobre el total de pedidos')
+        self.card_delivered = StatCard('Entregados',       sub='Total histórico')
+        for c in (self.card_today, self.card_avg, self.card_cancelled, self.card_delivered):
+            cards.pack_start(c, True, True, 0)
+
+        # ─── Fila: gráfico ingresos + dona estados ───────────────────
+        charts_row = Gtk.Box(spacing=12, homogeneous=False)
+        self.box.pack_start(charts_row, True, True, 0)
+
+        # Gráfico de barras 7 días (más ancho)
+        left_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        left_title = Gtk.Label(label='INGRESOS POR DÍA — ÚLTIMOS 7 DÍAS', xalign=0)
+        left_title.get_style_context().add_class('section-title')
+        left_box.pack_start(left_title, False, False, 0)
+        self.chart_sales = Chart('Ingresos ($)', 'bar', hex_to_rgb(BRAND), height=220)
+        left_box.pack_start(self.chart_sales, True, True, 0)
+        charts_row.pack_start(left_box, True, True, 0)
+
+        # Dona de estados
+        right_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        right_title = Gtk.Label(label='DISTRIBUCIÓN DE PEDIDOS', xalign=0)
+        right_title.get_style_context().add_class('section-title')
+        right_box.pack_start(right_title, False, False, 0)
+        self.chart_states = Chart('', 'donut', height=220)
+        right_box.pack_start(self.chart_states, True, True, 0)
+        charts_row.pack_start(right_box, False, False, 0)
+        right_box.set_size_request(360, -1)
+
+        # ─── Top productos ───────────────────────────────────────────
+        top_title = Gtk.Label(label='TOP 10 PRODUCTOS VENDIDOS', xalign=0)
         top_title.get_style_context().add_class('section-title')
-        box.pack_start(top_title, False, False, 0)
+        self.box.pack_start(top_title, False, False, 0)
 
-        self.top_products_store = Gtk.ListStore(str, str)
-        tree = Gtk.TreeView(model=self.top_products_store)
-        for i, colname in enumerate(['Producto', 'Unidades vendidas']):
-            col = Gtk.TreeViewColumn(colname, Gtk.CellRendererText(), text=i)
+        self.top_store = Gtk.ListStore(int, str, int, str)
+        tree = Gtk.TreeView(model=self.top_store)
+        tree.get_style_context().add_class('mono')
+        for i, (colname, _) in enumerate([('#', 40), ('Producto', 280), ('Unidades', 100), ('Ingresos estimado', 140)]):
+            renderer = Gtk.CellRendererText()
+            col = Gtk.TreeViewColumn(colname, renderer, text=i)
+            if i in (0, 2):
+                renderer.set_property('xalign', 1.0)
+            col.set_resizable(True)
             tree.append_column(col)
         scroll = Gtk.ScrolledWindow()
-        scroll.set_size_request(-1, 140)
+        scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
         scroll.add(tree)
-        box.pack_start(scroll, True, True, 0)
-        return box
+        scroll.set_min_content_height(200)
+        self.box.pack_start(scroll, True, True, 0)
 
-    # ── Tab: Marca ────────────────────────────────────────────
-    def build_brand_tab(self):
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
-        box.set_border_width(18)
+    def refresh(self):
+        # Ventas hoy
+        sales_today = query("""
+            SELECT COALESCE(SUM(oi.product_price*oi.quantity),0) FROM orders o
+            JOIN order_items oi ON oi.order_id=o.id
+            WHERE o.status IN ('entregado','delivered') AND date(o.delivered_at)=date('now')
+        """)
+        self.card_today.set_value(fmt_money(sales_today[0][0] if sales_today else 0))
 
-        title = Gtk.Label(label='PERSONALIZACION DE MARCA', xalign=0)
-        title.get_style_context().add_class('section-title')
-        box.pack_start(title, False, False, 0)
+        # Ticket promedio
+        avg = query("""
+            SELECT COALESCE(AVG(t),0) FROM (
+              SELECT SUM(oi.product_price*oi.quantity) t FROM orders o
+              JOIN order_items oi ON oi.order_id=o.id
+              WHERE o.status IN ('entregado','delivered') GROUP BY o.id)
+        """)
+        self.card_avg.set_value(fmt_money(avg[0][0] if avg else 0))
 
-        info = Gtk.Label(
-            label='Cambia la paleta y el nombre que ven tus clientes en la app — se aplica al instante, sin reiniciar el servidor.',
-            xalign=0, wrap=True)
-        box.pack_start(info, False, False, 0)
+        # Conteos
+        counts = query("""
+            SELECT COUNT(*) FILTER (WHERE status='cancelled'),
+                   COUNT(*) FILTER (WHERE status IN ('entregado','delivered')),
+                   COUNT(*) FROM orders
+        """)
+        if counts:
+            cancelled, delivered, total = counts[0]
+            pct = round((cancelled / total) * 100) if total else 0
+            self.card_cancelled.set_value(f'{pct}%')
+            self.card_delivered.set_value(str(delivered))
+        else:
+            self.card_cancelled.set_value('0%')
+            self.card_delivered.set_value('0')
 
-        name_box = Gtk.Box(spacing=8)
-        box.pack_start(name_box, False, False, 4)
+        # Gráfico de ingresos 7 días
+        rows = query("""
+            SELECT date(o.delivered_at) d, SUM(oi.product_price*oi.quantity) t
+            FROM orders o JOIN order_items oi ON oi.order_id=o.id
+            WHERE o.status IN ('entregado','delivered') AND o.delivered_at >= date('now','-6 days')
+            GROUP BY d ORDER BY d
+        """)
+        by_date = {r[0]: r[1] for r in rows}
+        data = []
+        for i in range(6, -1, -1):
+            d = (datetime.date.today() - datetime.timedelta(days=i))
+            data.append((d.strftime('%d/%m'), int(by_date.get(d.isoformat(), 0) or 0)))
+        self.chart_sales.set_data(data)
+
+        # Dona de estados
+        states = query("""
+            SELECT status, COUNT(*) FROM orders
+            WHERE status IN ('pending','claimed','en_camino','entregado','delivered','cancelled')
+            GROUP BY status
+        """)
+        status_colors = {
+            'pending':   hex_to_rgb(WARNING),
+            'claimed':   hex_to_rgb(INFO),
+            'en_camino': hex_to_rgb(BRAND),
+            'entregado': hex_to_rgb(SUCCESS),
+            'delivered': hex_to_rgb(SUCCESS),
+            'cancelled': hex_to_rgb(DANGER),
+        }
+        status_labels = {
+            'pending': 'Pendiente', 'claimed': 'Reclamado', 'en_camino': 'En camino',
+            'entregado': 'Entregado', 'delivered': 'Entregado', 'cancelled': 'Cancelado'
+        }
+        donut_data = [(status_labels.get(s, s), c, status_colors.get(s, hex_to_rgb(FG_DIM)))
+                      for s, c in states if c > 0]
+        self.chart_states.set_data(donut_data)
+
+        # Top productos
+        top = query("""
+            SELECT oi.product_name, SUM(oi.quantity) q, SUM(oi.product_price*oi.quantity) v
+            FROM order_items oi
+            JOIN orders o ON o.id=oi.order_id
+            WHERE o.status IN ('entregado','delivered')
+            GROUP BY oi.product_name ORDER BY q DESC LIMIT 10
+        """)
+        self.top_store.clear()
+        for i, (name, qty, val) in enumerate(top, 1):
+            self.top_store.append([i, name, qty, fmt_money(val)])
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MÓDULO: PEDIDOS ACTIVOS (NUEVO)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class OrdersModule:
+    """Lista en vivo de pedidos activos (pending/claimed/en_camino) con acciones:
+    reclamar, liberar, marcar en camino, entregar, cancelar (admin)."""
+
+    def __init__(self, parent):
+        self.parent = parent
+        self.box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
+
+        header = SectionHeader('Pedidos activos',
+                               'Gestión en tiempo real del flujo de pedidos',
+                               make_btn('↻ Actualizar', 'btn-flat', small=True, on_click=lambda *_: self.refresh()))
+        self.box.pack_start(header, False, False, 0)
+
+        # ─── KPIs rápidos ────────────────────────────────────────────
+        cards = Gtk.Box(spacing=12)
+        self.box.pack_start(cards, False, False, 0)
+        self.card_pending   = StatCard('Pendientes',   sub='Esperando ser reclamados')
+        self.card_claimed   = StatCard('Reclamados',   sub='En proceso por un empleado')
+        self.card_camino    = StatCard('En camino',    sub='En proceso por un empleado')
+        self.card_today     = StatCard('Entregados hoy', sub='Total del día')
+        for c in (self.card_pending, self.card_claimed, self.card_camino, self.card_today):
+            cards.pack_start(c, True, True, 0)
+
+        # ─── Lista de pedidos ────────────────────────────────────────
+        list_title = Gtk.Label(label='PEDIDOS EN GESTIÓN', xalign=0)
+        list_title.get_style_context().add_class('section-title')
+        self.box.pack_start(list_title, False, False, 0)
+
+        self.orders_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroll.add(self.orders_box)
+        self.box.pack_start(scroll, True, True, 0)
+
+        self.empty_label = Gtk.Label(label='No hay pedidos activos — todo al día ✓')
+        self.empty_label.get_style_context().add_class('empty-state')
+        self.orders_box.pack_start(self.empty_label, False, False, 0)
+
+    def refresh(self):
+        # KPIs
+        stats = query("""
+            SELECT
+              COUNT(*) FILTER (WHERE status='pending') AS pending,
+              COUNT(*) FILTER (WHERE status='claimed') AS claimed,
+              COUNT(*) FILTER (WHERE status='en_camino') AS en_camino,
+              COUNT(*) FILTER (WHERE status IN ('entregado','delivered')
+                               AND date(delivered_at)=date('now')) AS today
+            FROM orders
+        """)
+        if stats:
+            p, c, e, t = stats[0]
+            self.card_pending.set_value(str(p))
+            self.card_claimed.set_value(str(c))
+            self.card_camino.set_value(str(e))
+            self.card_today.set_value(str(t))
+
+        # Lista de pedidos activos
+        for w in self.orders_box.get_children():
+            self.orders_box.remove(w)
+
+        rows = query("""
+            SELECT o.id, o.status, o.product_name, o.delivery_address,
+                   o.requested_at, o.is_fiado, o.claimed_at,
+                   c.phone, c.name AS customer_name,
+                   u.display_name AS claimed_by_name
+            FROM orders o
+            LEFT JOIN customers c ON o.customer_id = c.id
+            LEFT JOIN users u ON o.claimed_by = u.id
+            WHERE o.status IN ('pending','claimed','en_camino')
+            ORDER BY o.requested_at ASC
+            LIMIT 50
+        """)
+
+        if not rows:
+            self.empty_label = Gtk.Label(label='No hay pedidos activos — todo al día ✓')
+            self.empty_label.get_style_context().add_class('empty-state')
+            self.orders_box.pack_start(self.empty_label, False, False, 0)
+            return
+
+        for r in rows:
+            card = self._build_order_card(r)
+            self.orders_box.pack_start(card, False, False, 0)
+
+    def _build_order_card(self, row):
+        oid, status, product, address, requested_at, is_fiado, claimed_at, phone, customer, claimed_by = row
+
+        card = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        card.get_style_context().add_class('order-card')
+        status_class = {
+            'pending': 'order-pending', 'claimed': 'order-claimed', 'en_camino': 'order-en_camino'
+        }.get(status, '')
+        if status_class:
+            card.get_style_context().add_class(status_class)
+        card.set_margin_start(0)
+        card.set_margin_end(0)
+
+        # Columna izquierda: ID + estado
+        left = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        id_lbl = Gtk.Label(label=f'#{oid}')
+        id_lbl.get_style_context().add_class('mono')
+        id_lbl.get_style_context().add_class('label-bold')
+        left.pack_start(id_lbl, False, False, 0)
+
+        status_map = {
+            'pending': ('PENDIENTE', 'pill-warning'),
+            'claimed': ('RECLAMADO', 'pill-info'),
+            'en_camino': ('EN CAMINO', 'pill-brand'),
+        }
+        pill_text, pill_kind = status_map.get(status, (status.upper(), 'pill-muted'))
+        left.pack_start(status_pill(pill_text, pill_kind), False, False, 0)
+        card.pack_start(left, False, False, 0)
+
+        # Columna central: producto + dirección + cliente
+        center = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
+        prod_lbl = Gtk.Label(label=product or '(sin producto)', xalign=0)
+        prod_lbl.get_style_context().add_class('label-bold')
+        prod_lbl.set_line_wrap(True)
+        center.pack_start(prod_lbl, False, False, 0)
+
+        if address:
+            addr_lbl = Gtk.Label(label='📍 ' + address, xalign=0)
+            addr_lbl.get_style_context().add_class('label-muted')
+            addr_lbl.set_line_wrap(True)
+            center.pack_start(addr_lbl, False, False, 0)
+
+        cust_text = customer or '(sin nombre)'
+        if phone:
+            cust_text += f' · 📱 {phone}'
+        if is_fiado:
+            cust_text += ' · FIADO'
+        cust_lbl = Gtk.Label(label=cust_text, xalign=0)
+        cust_lbl.get_style_context().add_class('label-dim')
+        center.pack_start(cust_lbl, False, False, 0)
+
+        card.pack_start(center, True, True, 0)
+
+        # Columna derecha: tiempos + acciones
+        right = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        req_lbl = Gtk.Label(label='Pedido: ' + fmt_relative(requested_at))
+        req_lbl.get_style_context().add_class('label-dim')
+        right.pack_start(req_lbl, False, False, 0)
+
+        if claimed_by:
+            cl_lbl = Gtk.Label(label='Asignado a: ' + (claimed_by or '?'))
+            cl_lbl.get_style_context().add_class('label-dim')
+            right.pack_start(cl_lbl, False, False, 0)
+
+        # Botones de acción según estado
+        actions = Gtk.Box(spacing=4)
+        if status == 'pending':
+            actions.pack_start(make_btn('Reclamar', 'btn-primary', small=True, on_click=lambda _w, id=oid: self._action(id, 'claim')), False, False, 0)
+        elif status == 'claimed':
+            actions.pack_start(make_btn('Liberar', 'btn-warn', small=True, on_click=lambda _w, id=oid: self._action(id, 'unclaim')), False, False, 0)
+            actions.pack_start(make_btn('En camino', 'btn-brand', small=True, on_click=lambda _w, id=oid: self._action(id, 'en_camino')), False, False, 0)
+        elif status == 'en_camino':
+            actions.pack_start(make_btn('Entregado ✓', 'btn-primary', small=True, on_click=lambda _w, id=oid: self._action(id, 'deliver')), False, False, 0)
+
+        actions.pack_start(make_btn('Cancelar', 'btn-danger', small=True, on_click=lambda _w, id=oid: self._action_cancel(id)), False, False, 0)
+        right.pack_start(actions, False, False, 0)
+
+        card.pack_start(right, False, False, 0)
+        return card
+
+    def _action(self, oid, action):
+        """Ejecuta acción sobre pedido vía API HTTP."""
+        result = http_put(f'/api/orders/{oid}/{action}', {})
+        if result is None:
+            self._toast(f'Error: no se pudo {action} el pedido #{oid}')
+        else:
+            self._toast(f'Pedido #{oid} → {action} OK' if 'id' in result or 'ok' in result
+                        else f'Pedido #{oid}: {result.get("error", "ok")}')
+        GLib.timeout_add(800, lambda: (self.refresh(), False)[1])
+
+    def _action_cancel(self, oid):
+        """Cancelar requiere motivo — diálogo de entrada."""
+        dialog = Gtk.Dialog(title='Cancelar pedido', transient_for=self.parent,
+                            modal=True, destroy_with_parent=True)
+        dialog.add_buttons('Cancelar', Gtk.ResponseType.CANCEL,
+                           'Confirmar', Gtk.ResponseType.OK)
+        dialog.set_default_size(360, 140)
+        box = dialog.get_content_area()
+        box.set_spacing(8)
+        box.set_border_width(14)
+        box.pack_start(Gtk.Label(label='Motivo de cancelación:'), False, False, 0)
+        entry = Gtk.Entry()
+        entry.set_placeholder_text('Ej: cliente no respondió, sin stock…')
+        box.pack_start(entry, False, False, 0)
+        box.show_all()
+        if dialog.run() == Gtk.ResponseType.OK:
+            reason = entry.get_text().strip()
+            if reason:
+                result = http_put(f'/api/orders/{oid}/cancel', {'reason': reason})
+                self._toast(f'#{oid} cancelado' if result else f'Error al cancelar #{oid}')
+                GLib.timeout_add(800, lambda: (self.refresh(), False)[1])
+        dialog.destroy()
+
+    def _toast(self, msg):
+        # Usamos la barra de estado del parent
+        self.parent.show_toast(msg)
+
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MÓDULO: BOT WHATSAPP (NUEVO)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class BotModule:
+    """Estado del bot WhatsApp: conexión, QR de vinculación, cola de mensajes,
+    tasa de envío/hora, reconexiones, historial de último mensaje y reinicio."""
+
+    def __init__(self, parent):
+        self.parent = parent
+        self.box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
+        self._qr_pixbuf = None
+
+        header = SectionHeader('Bot de WhatsApp',
+                               'Estado de la conexión, QR de vinculación y cola de mensajes',
+                               make_btn('↻ Actualizar', 'btn-flat', small=True, on_click=lambda *_: self.refresh()))
+        self.box.pack_start(header, False, False, 0)
+
+        # ─── Cards de estado (4 KPIs) ───────────────────────────────
+        cards = Gtk.Box(spacing=12)
+        self.box.pack_start(cards, False, False, 0)
+
+        self.card_status  = StatCard('Estado conexión',  sub='Cliente WhatsApp')
+        self.card_phone   = StatCard('Número vinculado', sub='BOT_PHONE')
+        self.card_queue   = StatCard('Cola de envío',    sub='Mensajes pendientes')
+        self.card_rate    = StatCard('Enviados/hora',    sub='Anti-baneo WhatsApp')
+        for c in (self.card_status, self.card_phone, self.card_queue, self.card_rate):
+            cards.pack_start(c, True, True, 0)
+
+        # ─── Fila principal: estado detallado + QR ──────────────────
+        main_row = Gtk.Box(spacing=16, homogeneous=False)
+        self.box.pack_start(main_row, True, True, 0)
+
+        # Panel izquierdo: estado detallado
+        left_frame = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        left_frame.get_style_context().add_class('bot-frame')
+        main_row.pack_start(left_frame, True, True, 0)
+
+        left_title = Gtk.Label(label='DETALLE DE CONEXIÓN', xalign=0)
+        left_title.get_style_context().add_class('section-title')
+        left_frame.pack_start(left_title, False, False, 0)
+
+        self.detail_grid = Gtk.Grid(column_spacing=14, row_spacing=10)
+        left_frame.pack_start(self.detail_grid, False, False, 0)
+
+        self.detail_labels = {}
+        rows_spec = [
+            ('connected_since', 'Conectado desde'),
+            ('last_message',    'Último mensaje'),
+            ('reconnects',      'Reintentos reconexión'),
+            ('max_reconnects',  'Máximo configurado'),
+            ('reconnect_state', 'Estado reconexión'),
+            ('bot_enabled',     'Bot habilitado'),
+        ]
+        for i, (key, label) in enumerate(rows_spec):
+            lbl = Gtk.Label(label=label, xalign=0)
+            lbl.get_style_context().add_class('label-muted')
+            val = Gtk.Label(label='—', xalign=0)
+            val.get_style_context().add_class('mono')
+            self.detail_grid.attach(lbl, 0, i, 1, 1)
+            self.detail_grid.attach(val, 1, i, 1, 1)
+            self.detail_labels[key] = val
+
+        # Acciones
+        actions_title = Gtk.Label(label='ACCIONES', xalign=0)
+        actions_title.get_style_context().add_class('section-title')
+        left_frame.pack_start(actions_title, False, False, 8)
+
+        actions = Gtk.Box(spacing=8)
+        left_frame.pack_start(actions, False, False, 0)
+        actions.pack_start(make_btn('↻ Reiniciar bot', 'btn-primary', on_click=lambda *_: self._restart_bot()), False, False, 0)
+        actions.pack_start(make_btn('Re-vincular (borra sesión)', 'btn-warn', on_click=lambda *_: self._relink()), False, False, 0)
+        actions.pack_start(make_btn('Forzar refresco QR', 'btn-flat', on_click=lambda *_: self.refresh()), False, False, 0)
+
+        self.bot_status_label = Gtk.Label(label='')
+        self.bot_status_label.get_style_context().add_class('label-dim')
+        left_frame.pack_start(self.bot_status_label, False, False, 8)
+
+        # Panel derecho: QR
+        right_frame = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        right_frame.get_style_context().add_class('frame')
+        right_frame.set_size_request(320, -1)
+        main_row.pack_start(right_frame, False, False, 0)
+
+        qr_title = Gtk.Label(label='CÓDIGO DE VINCULACIÓN', xalign=0)
+        qr_title.get_style_context().add_class('section-title')
+        right_frame.pack_start(qr_title, False, False, 0)
+
+        qr_info = Gtk.Label(label='Escanea con WhatsApp → Dispositivos vinculados')
+        qr_info.get_style_context().add_class('label-dim')
+        qr_info.set_line_wrap(True)
+        right_frame.pack_start(qr_info, False, False, 0)
+
+        self.qr_image = Gtk.Image()
+        self.qr_image.set_size_request(260, 260)
+        right_frame.pack_start(self.qr_image, True, True, 0)
+
+        self.qr_status = Gtk.Label(label='')
+        self.qr_status.get_style_context().add_class('label-muted')
+        right_frame.pack_start(self.qr_status, False, False, 0)
+
+    def refresh(self):
+        bot = http_get('/api/bot/status')
+        if bot is None:
+            self.card_status.set_value('API no disponible')
+            self.card_phone.set_value('—')
+            self.card_queue.set_value('—')
+            self.card_rate.set_value('—')
+            self.bot_status_label.set_text('No se pudo conectar al servidor. ¿Está corriendo?')
+            self._set_qr_status('Sin conexión al servidor', is_error=True)
+            return
+
+        ready = bot.get('ready', False)
+        has_qr = bot.get('hasQR', False)
+
+        # Status
+        if ready:
+            self.card_status.set_value('CONECTADO')
+        elif has_qr:
+            self.card_status.set_value('QR PENDIENTE')
+        else:
+            self.card_status.set_value('DESCONECTADO')
+
+        # Phone
+        phone = bot.get('phone')
+        self.card_phone.set_value(phone or 'No configurado')
+
+        # Queue
+        queue = bot.get('pendingQueue', 0)
+        self.card_queue.set_value(str(queue))
+
+        # Rate
+        sent = bot.get('sentLastHour', 0)
+        max_msgs = bot.get('maxMsgsPerHour', 200)
+        self.card_rate.set_value(f'{sent} / {max_msgs}')
+
+        # Detalle
+        self.detail_labels['connected_since'].set_text(
+            fmt_relative(bot.get('connectedSince')) if ready else '—')
+        self.detail_labels['last_message'].set_text(
+            fmt_relative(bot.get('lastMessageAt')))
+        self.detail_labels['reconnects'].set_text(
+            f"{bot.get('reconnectAttempts', 0)} intentos")
+        self.detail_labels['max_reconnects'].set_text(
+            f"{bot.get('maxReconnectAttempts', 10)} máximo")
+
+        exhausted = bot.get('reconnectExhausted', False)
+        if exhausted:
+            self.detail_labels['reconnect_state'].set_text('AGOTADO — reinicio manual')
+            self.detail_labels['reconnect_state'].get_style_context().add_class('label-bold')
+        elif ready:
+            self.detail_labels['reconnect_state'].set_text('OK — conectado')
+        else:
+            self.detail_labels['reconnect_state'].set_text('En progreso…')
+
+        bot_enabled = env_get('BOT_ENABLED') == 'true'
+        self.detail_labels['bot_enabled'].set_text('Sí' if bot_enabled else 'No (BOT_ENABLED=false)')
+
+        # QR
+        if has_qr:
+            self._load_qr()
+        else:
+            self._set_qr_status('Bot conectado o sin QR pendiente' if ready
+                                else 'Iniciando… esperando QR')
+
+    def _load_qr(self):
+        """Descarga el QR como PNG desde /api/bot/qr y lo muestra."""
+        url = API_BASE + '/api/bot/qr'
+        api_key = env_get('API_KEY')
+        req = urllib.request.Request(url, headers={
+            'X-API-Key': api_key,
+            'Authorization': 'Bearer ' + _get_admin_token(),
+        })
+        try:
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                png_data = resp.read()
+            loader = GdkPixbuf.PixbufLoader()
+            loader.write(png_data)
+            loader.close()
+            pixbuf = loader.get_pixbuf()
+            if pixbuf:
+                # Escalar a 260x260 manteniendo proporción
+                scaled = pixbuf.scale_simple(260, 260, GdkPixbuf.InterpType.BILINEAR)
+                self.qr_image.set_from_pixbuf(scaled)
+                self._set_qr_status('QR listo — escanea pronto (expira en ~20s)')
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                self._set_qr_status('No hay QR pendiente — bot ya conectado', is_error=False)
+            else:
+                self._set_qr_status(f'Error HTTP {e.code} al descargar QR', is_error=True)
+        except Exception as e:
+            self._set_qr_status(f'Error: {str(e)[:60]}', is_error=True)
+
+    def _set_qr_status(self, text, is_error=False):
+        self.qr_status.set_text(text)
+        ctx = self.qr_status.get_style_context()
+        ctx.remove_class('label-muted')
+        if is_error:
+            ctx.add_class('pill-danger')
+        else:
+            ctx.add_class('label-muted')
+
+    def _restart_bot(self):
+        self.bot_status_label.set_text('Reiniciando bot…')
+        result = http_post('/api/bot/restart', {})
+        if result is None:
+            self.bot_status_label.set_text('Error: no se pudo reiniciar el bot')
+        else:
+            self.bot_status_label.set_text('Bot reiniciado. Esperando conexión…')
+        GLib.timeout_add(3000, lambda: (self.refresh(), False)[1])
+
+    def _relink(self):
+        """Borra la sesión de WhatsApp y reinicia el servicio."""
+        dialog = Gtk.MessageDialog(
+            transient_for=self.parent, flags=0,
+            message_type=Gtk.MessageType.WARNING,
+            buttons=Gtk.ButtonsType.YES_NO,
+            text='Esto borrará la sesión actual de WhatsApp y pedirá un nuevo código de vinculación. '
+                 'Los clientes no podrán escribir al bot hasta que re-vincules. ¿Continuar?')
+        resp = dialog.run()
+        dialog.destroy()
+        if resp == Gtk.ResponseType.YES:
+            appdata = self.parent._appdata_dir()
+            if appdata:
+                sh(f'rm -rf "{appdata}/pedidos-bot/auth" && mkdir -p "{appdata}/pedidos-bot/auth"')
+            sh(f'systemctl restart {SERVICE}')
+            self.bot_status_label.set_text('Sesión borrada. Revisa el QR en unos segundos.')
+            GLib.timeout_add(5000, lambda: (self.refresh(), False)[1])
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MÓDULO: EMPLEADOS (NUEVO)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class EmployeesModule:
+    """Desempeño por empleado: pedidos entregados, tiempo promedio de entrega,
+    ranking y sparkline de actividad reciente."""
+
+    def __init__(self, parent):
+        self.parent = parent
+        self.box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
+
+        header = SectionHeader('Desempeño de empleados',
+                               'Pedidos entregados y tiempos de entrega por colaborador',
+                               make_btn('↻ Actualizar', 'btn-flat', small=True, on_click=lambda *_: self.refresh()))
+        self.box.pack_start(header, False, False, 0)
+
+        # ─── KPIs globales ──────────────────────────────────────────
+        cards = Gtk.Box(spacing=12)
+        self.box.pack_start(cards, False, False, 0)
+
+        self.card_total_emp   = StatCard('Empleados activos', sub='Con pedidos entregados')
+        self.card_total_del   = StatCard('Pedidos entregados', sub='Total histórico')
+        self.card_avg_time    = StatCard('Tiempo promedio',    sub='De pedido a entrega')
+        self.card_best         = StatCard('Top empleado',       sub='Por pedidos entregados')
+        for c in (self.card_total_emp, self.card_total_del, self.card_avg_time, self.card_best):
+            cards.pack_start(c, True, True, 0)
+
+        # ─── Tabla de empleados ─────────────────────────────────────
+        table_title = Gtk.Label(label='RANKING DE EMPLEADOS', xalign=0)
+        table_title.get_style_context().add_class('section-title')
+        self.box.pack_start(table_title, False, False, 0)
+
+        self.store = Gtk.ListStore(int, str, str, int, str, str)
+        tree = Gtk.TreeView(model=self.store)
+        for i, (colname, w) in enumerate([
+            ('#', 40), ('Usuario', 140), ('Nombre', 200),
+            ('Entregados', 110), ('Tiempo prom.', 120), ('Eficiencia', 110)
+        ]):
+            renderer = Gtk.CellRendererText()
+            col = Gtk.TreeViewColumn(colname, renderer, text=i)
+            col.set_resizable(True)
+            col.set_min_width(w)
+            if i in (0, 3):
+                renderer.set_property('xalign', 1.0)
+            tree.append_column(col)
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        scroll.add(tree)
+        scroll.set_min_content_height(200)
+        self.box.pack_start(scroll, True, True, 0)
+
+        # ─── Gráfico: barras de pedidos por empleado ────────────────
+        chart_title = Gtk.Label(label='PEDIDOS ENTREGADOS POR EMPLEADO', xalign=0)
+        chart_title.get_style_context().add_class('section-title')
+        self.box.pack_start(chart_title, False, False, 0)
+
+        self.chart_employees = Chart('', 'bar', hex_to_rgb(BRAND), height=180)
+        self.box.pack_start(self.chart_employees, False, False, 0)
+
+        # ─── Top productos reclamados ───────────────────────────────
+        info_box = Gtk.Box(spacing=12, homogeneous=True)
+        self.box.pack_start(info_box, False, False, 0)
+
+        # Tiempos por día (sparkline)
+        time_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        time_title = Gtk.Label(label='TIEMPO PROMEDIO DE ENTREGA (7 DÍAS)', xalign=0)
+        time_title.get_style_context().add_class('section-title')
+        time_box.pack_start(time_title, False, False, 0)
+        self.chart_time = Chart('', 'line', hex_to_rgb(INFO), height=140)
+        time_box.pack_start(self.chart_time, True, True, 0)
+        info_box.pack_start(time_box, True, True, 0)
+
+        # Pedidos por día
+        deliv_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        deliv_title = Gtk.Label(label='ENTREGAS POR DÍA (7 DÍAS)', xalign=0)
+        deliv_title.get_style_context().add_class('section-title')
+        deliv_box.pack_start(deliv_title, False, False, 0)
+        self.chart_deliv = Chart('', 'bar', hex_to_rgb(SUCCESS), height=140)
+        deliv_box.pack_start(self.chart_deliv, True, True, 0)
+        info_box.pack_start(deliv_box, True, True, 0)
+
+    def refresh(self):
+        # Empleados
+        employees = query("""
+            SELECT u.id, u.username, COALESCE(u.display_name, u.username),
+                   COUNT(*) AS delivered_count,
+                   ROUND(AVG((julianday(o.delivered_at) - julianday(o.requested_at)) * 24 * 60)) AS avg_minutes
+            FROM orders o
+            JOIN users u ON u.id = o.claimed_by
+            WHERE o.status IN ('entregado','delivered')
+            GROUP BY u.id
+            ORDER BY delivered_count DESC
+        """)
+
+        # KPIs
+        if employees:
+            self.card_total_emp.set_value(str(len(employees)))
+            total_del = sum(r[3] for r in employees)
+            self.card_total_del.set_value(str(total_del))
+            # Promedio de tiempos
+            times = [r[4] for r in employees if r[4]]
+            if times:
+                avg_t = int(sum(times) / len(times))
+                self.card_avg_time.set_value(f'{avg_t} min')
+            else:
+                self.card_avg_time.set_value('—')
+            top = employees[0]
+            self.card_best.set_value(top[2][:20])
+        else:
+            self.card_total_emp.set_value('0')
+            self.card_total_del.set_value('0')
+            self.card_avg_time.set_value('—')
+            self.card_best.set_value('—')
+
+        # Tabla
+        self.store.clear()
+        chart_data = []
+        for i, (uid, username, name, count, avg_min) in enumerate(employees, 1):
+            avg_str = f'{int(avg_min)} min' if avg_min else '—'
+            # Eficiencia: pedidos/min (más alto = mejor)
+            if avg_min and avg_min > 0:
+                eff = count / (avg_min / 60)  # pedidos por hora
+                eff_str = f'{eff:.1f} ped/h'
+            else:
+                eff_str = '—'
+            self.store.append([i, username, name, count, avg_str, eff_str])
+            chart_data.append((name.split()[0] if name else username, count))
+
+        self.chart_employees.set_data(chart_data)
+
+        # Tiempos por día (7 días)
+        time_rows = query("""
+            SELECT date(o.delivered_at) d,
+                   ROUND(AVG((julianday(o.delivered_at) - julianday(o.requested_at)) * 24 * 60)) AS mins
+            FROM orders o
+            WHERE o.status IN ('entregado','delivered')
+              AND o.delivered_at >= date('now','-6 days')
+            GROUP BY d ORDER BY d
+        """)
+        by_date = {r[0]: r[1] for r in time_rows}
+        data_t = []
+        for i in range(6, -1, -1):
+            d = (datetime.date.today() - datetime.timedelta(days=i))
+            data_t.append((d.strftime('%d/%m'), int(by_date.get(d.isoformat(), 0) or 0)))
+        self.chart_time.set_data(data_t)
+
+        # Entregas por día (7 días)
+        deliv_rows = query("""
+            SELECT date(delivered_at) d, COUNT(*) c
+            FROM orders
+            WHERE status IN ('entregado','delivered')
+              AND delivered_at >= date('now','-6 days')
+            GROUP BY d ORDER BY d
+        """)
+        by_date_d = {r[0]: r[1] for r in deliv_rows}
+        data_d = []
+        for i in range(6, -1, -1):
+            d = (datetime.date.today() - datetime.timedelta(days=i))
+            data_d.append((d.strftime('%d/%m'), by_date_d.get(d.isoformat(), 0)))
+        self.chart_deliv.set_data(data_d)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MÓDULO: MARCA
+# ══════════════════════════════════════════════════════════════════════════════
+
+class BrandModule:
+    """Personalización de marca: nombre, paleta (presets + HEX custom),
+    vista previa en vivo y carga de logo. Se aplica al instante en la app."""
+
+    def __init__(self, parent):
+        self.parent = parent
+        self.box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
+
+        header = SectionHeader('Personalización de marca',
+                               'Paleta, nombre y logo que ven tus clientes en la app')
+        self.box.pack_start(header, False, False, 0)
+
+        info = Gtk.Label(label='Los cambios se aplican al instante — la app los toma en el próximo login del cliente. '
+                               'No es necesario reiniciar el servidor.')
+        info.get_style_context().add_class('label-muted')
+        info.set_line_wrap(True)
+        info.set_xalign(0)
+        self.box.pack_start(info, False, False, 0)
+
+        # ─── Nombre de marca ────────────────────────────────────────
+        name_box = Gtk.Box(spacing=10)
+        self.box.pack_start(name_box, False, False, 4)
         name_box.pack_start(Gtk.Label(label='Nombre de marca:'), False, False, 0)
-        self.entry_brand_name = Gtk.Entry()
-        self.entry_brand_name.set_width_chars(28)
-        name_box.pack_start(self.entry_brand_name, False, False, 0)
+        self.entry_name = Gtk.Entry()
+        self.entry_name.set_width_chars(30)
+        self.entry_name.set_placeholder_text('Ej: Concentrados Monserrath')
+        name_box.pack_start(self.entry_name, False, False, 0)
 
-        presets_title = Gtk.Label(label='PALETAS', xalign=0)
+        # ─── Presets ────────────────────────────────────────────────
+        presets_title = Gtk.Label(label='PALETAS PREDEFINIDAS', xalign=0)
         presets_title.get_style_context().add_class('section-title')
-        box.pack_start(presets_title, False, False, 0)
+        self.box.pack_start(presets_title, False, False, 0)
 
         self.preset_buttons = []
         presets_box = Gtk.FlowBox()
         presets_box.set_selection_mode(Gtk.SelectionMode.NONE)
         presets_box.set_max_children_per_line(6)
-        box.pack_start(presets_box, False, False, 0)
+        presets_box.set_row_spacing(8)
+        presets_box.set_column_spacing(8)
+        self.box.pack_start(presets_box, False, False, 0)
         for name, primary, accent in PRESETS:
             btn = self._make_preset_swatch(name, primary, accent)
             presets_box.add(btn)
 
-        custom_title = Gtk.Label(label='PERSONALIZADO (HEX)', xalign=0)
+        # ─── Custom HEX ─────────────────────────────────────────────
+        custom_title = Gtk.Label(label='COLOR PERSONALIZADO (HEX)', xalign=0)
         custom_title.get_style_context().add_class('section-title')
-        box.pack_start(custom_title, False, False, 0)
-        custom_box = Gtk.Box(spacing=8)
-        box.pack_start(custom_box, False, False, 0)
+        self.box.pack_start(custom_title, False, False, 0)
+
+        custom_box = Gtk.Box(spacing=10)
+        self.box.pack_start(custom_box, False, False, 0)
         custom_box.pack_start(Gtk.Label(label='Primario'), False, False, 0)
         self.entry_primary = Gtk.Entry()
         self.entry_primary.set_width_chars(10)
+        self.entry_primary.set_placeholder_text('#2D5016')
         custom_box.pack_start(self.entry_primary, False, False, 0)
         custom_box.pack_start(Gtk.Label(label='Acento'), False, False, 0)
         self.entry_accent = Gtk.Entry()
         self.entry_accent.set_width_chars(10)
+        self.entry_accent.set_placeholder_text('#D4800A')
         custom_box.pack_start(self.entry_accent, False, False, 0)
 
+        # ─── Vista previa ───────────────────────────────────────────
         preview_title = Gtk.Label(label='VISTA PREVIA', xalign=0)
         preview_title.get_style_context().add_class('section-title')
-        box.pack_start(preview_title, False, False, 0)
-        self.brand_preview = Gtk.DrawingArea()
-        self.brand_preview.set_size_request(-1, 70)
-        self.brand_preview.connect('draw', self._draw_brand_preview)
-        box.pack_start(self.brand_preview, False, False, 0)
+        self.box.pack_start(preview_title, False, False, 0)
+        self.preview = Gtk.DrawingArea()
+        self.preview.set_size_request(-1, 80)
+        self.preview.connect('draw', self._draw_preview)
+        self.box.pack_start(self.preview, False, False, 0)
 
-        logo_box = Gtk.Box(spacing=8)
-        box.pack_start(logo_box, False, False, 4)
-        logo_btn = Gtk.Button(label='CAMBIAR LOGO')
-        logo_btn.get_style_context().add_class('action-btn')
-        logo_btn.get_style_context().add_class('btn-flat')
-        logo_btn.connect('clicked', self.on_pick_logo)
-        logo_box.pack_start(logo_btn, False, False, 0)
+        # ─── Logo ───────────────────────────────────────────────────
+        logo_box = Gtk.Box(spacing=10)
+        self.box.pack_start(logo_box, False, False, 4)
+        logo_box.pack_start(make_btn('🖼 Cambiar logo', 'btn-flat', on_click=lambda *_: self._pick_logo()), False, False, 0)
         self.logo_status = Gtk.Label(label='')
+        self.logo_status.get_style_context().add_class('label-muted')
         logo_box.pack_start(self.logo_status, False, False, 0)
 
-        save_btn = Gtk.Button(label='GUARDAR MARCA')
-        save_btn.get_style_context().add_class('action-btn')
-        save_btn.get_style_context().add_class('btn-primary')
-        save_btn.connect('clicked', self.on_save_brand)
-        box.pack_start(save_btn, False, False, 8)
+        # ─── Botón guardar ──────────────────────────────────────────
+        self.box.pack_start(make_btn('💾 Guardar marca', 'btn-brand', on_click=lambda *_: self._save()), False, False, 8)
 
-        self.entry_primary.connect('changed', lambda *_: self.brand_preview.queue_draw())
-        self.entry_accent.connect('changed', lambda *_: self.brand_preview.queue_draw())
-        return box
+        # Refrescar preview al editar
+        for entry in (self.entry_primary, self.entry_accent, self.entry_name):
+            entry.connect('changed', lambda *_: self.preview.queue_draw())
 
     def _make_preset_swatch(self, name, primary, accent):
         btn = Gtk.Button()
         btn.get_style_context().add_class('preset-swatch')
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-        box.set_size_request(72, 60)
+        box.set_size_request(78, 64)
         swatch = Gtk.DrawingArea()
         swatch.set_size_request(64, 32)
 
@@ -650,6 +2021,7 @@ class DashboardWindow(Gtk.Window):
         lbl = Gtk.Label(label=name)
         lbl.set_line_wrap(True)
         lbl.set_justify(Gtk.Justification.CENTER)
+        lbl.get_style_context().add_class('label-dim')
         box.pack_start(lbl, False, False, 0)
         btn.add(box)
         btn.connect('clicked', lambda *_: self._apply_preset(primary, accent))
@@ -659,44 +2031,69 @@ class DashboardWindow(Gtk.Window):
         self.entry_primary.set_text(primary)
         self.entry_accent.set_text(accent)
 
-    def _draw_brand_preview(self, widget, cr):
+    def _draw_preview(self, widget, cr):
         w = widget.get_allocated_width()
         h = widget.get_allocated_height()
         primary = self.entry_primary.get_text() or PRIMARY_DEFAULT
         accent = self.entry_accent.get_text() or ACCENT_DEFAULT
+
+        # Fondo redondeado con el color primario
         r, g, b = hex_to_rgb(primary)
         cr.set_source_rgb(r, g, b)
-        cr.rectangle(0, 0, w, h)
+        self._round_rect(cr, 0, 0, w, h, 10)
         cr.fill()
+
+        # Borde sutil
+        cr.set_source_rgba(0, 0, 0, 0.15)
+        cr.set_line_width(1)
+        self._round_rect(cr, 0.5, 0.5, w - 1, h - 1, 10)
+        cr.stroke()
+
+        # Nombre de marca a la izquierda
         cr.set_source_rgb(1, 1, 1)
         cr.select_font_face('Sans', 0, 1)
-        cr.set_font_size(14)
-        cr.move_to(14, h / 2 - 6)
-        cr.show_text(self.entry_brand_name.get_text() or 'Nombre de tu negocio')
+        cr.set_font_size(16)
+        name = self.entry_name.get_text() or 'Nombre de tu negocio'
+        cr.move_to(18, h / 2 + 5)
+        cr.show_text(name)
+
+        # Botón "Pedir ahora" a la derecha
         ra, ga, ba = hex_to_rgb(accent)
         cr.set_source_rgb(ra, ga, ba)
-        cr.rectangle(w - 90, h / 2 - 4, 76, 24)
+        btn_w, btn_h = 110, 32
+        self._round_rect(cr, w - btn_w - 16, h / 2 - btn_h / 2, btn_w, btn_h, 6)
         cr.fill()
-        cr.set_source_rgb(1, 1, 1)
-        cr.set_font_size(11)
-        cr.move_to(w - 82, h / 2 + 12)
-        cr.show_text('Boton')
 
-    def on_pick_logo(self, _btn):
+        cr.set_source_rgb(1, 1, 1)
+        cr.select_font_face('Sans', 0, 1)
+        cr.set_font_size(12)
+        cr.move_to(w - btn_w - 16 + 22, h / 2 + 4)
+        cr.show_text('Pedir ahora')
+
+    @staticmethod
+    def _round_rect(cr, x, y, w, h, r):
+        cr.move_to(x + r, y)
+        cr.arc(x + w - r, y + r, r, -1.5708, 0)
+        cr.arc(x + w - r, y + h - r, r, 0, 1.5708)
+        cr.arc(x + r, y + h - r, r, 1.5708, 3.14159)
+        cr.arc(x + r, y + r, r, 3.14159, 4.71239)
+        cr.close_path()
+
+    def _pick_logo(self, _btn=None):
         dialog = Gtk.FileChooserDialog(
-            title='Elegi un logo', parent=self,
+            title='Elegí un logo', parent=self.parent,
             action=Gtk.FileChooserAction.OPEN)
         dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
-                            Gtk.STOCK_OPEN, Gtk.ResponseType.OK)
+                           Gtk.STOCK_OPEN, Gtk.ResponseType.OK)
         filt = Gtk.FileFilter()
-        filt.set_name('Imagenes')
+        filt.set_name('Imágenes')
         filt.add_mime_type('image/png')
         filt.add_mime_type('image/jpeg')
         dialog.add_filter(filt)
         if dialog.run() == Gtk.ResponseType.OK:
             src = dialog.get_filename()
             ext = 'png' if src.lower().endswith('png') else 'jpg'
-            appdata = self._appdata_dir()
+            appdata = self.parent._appdata_dir()
             if appdata:
                 dest_dir = os.path.join(appdata, 'pedidos-bot', 'branding')
                 os.makedirs(dest_dir, exist_ok=True)
@@ -704,72 +2101,109 @@ class DashboardWindow(Gtk.Window):
                 dest = os.path.join(dest_dir, fname)
                 sh(f'cp "{src}" "{dest}"')
                 setting_set('theme_logo_url', fname)
-                self.logo_status.set_text(f'Logo actualizado: {fname}')
+                self.logo_status.set_text(f'✓ Logo actualizado: {fname}')
             else:
-                self.logo_status.set_text('No se encontro APPDATA del servicio')
+                self.logo_status.set_text('No se encontró APPDATA del servicio')
         dialog.destroy()
 
-    def _appdata_dir(self):
-        env = sh(f"systemctl show {SERVICE} -p Environment --value")
-        m = re.search(r'APPDATA=(\S+)', env)
-        return m.group(1) if m else None
-
-    def on_save_brand(self, _btn):
+    def _save(self, _btn=None):
         primary = self.entry_primary.get_text().strip() or PRIMARY_DEFAULT
         accent = self.entry_accent.get_text().strip() or ACCENT_DEFAULT
-        name = self.entry_brand_name.get_text().strip()
+        name = self.entry_name.get_text().strip()
         setting_set('theme_primary', primary)
         setting_set('theme_accent', accent)
         if name:
             setting_set('theme_name', name)
-        self.logo_status.set_text('Marca guardada — la app la toma en el proximo login.')
+        self.logo_status.set_text('✓ Marca guardada — la app la toma en el próximo login.')
 
-    # ── Tab: Configuracion ────────────────────────────────────
-    def build_config_tab(self):
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
-        box.set_border_width(18)
+    def refresh(self):
+        if not self.entry_primary.get_text():
+            self.entry_primary.set_text(setting_get('theme_primary', PRIMARY_DEFAULT))
+        if not self.entry_accent.get_text():
+            self.entry_accent.set_text(setting_get('theme_accent', ACCENT_DEFAULT))
+        if not self.entry_name.get_text():
+            self.entry_name.set_text(setting_get('theme_name', 'Concentrados Monserrath'))
+        self.preview.queue_draw()
 
-        title = Gtk.Label(label='CONEXION Y ACCESO', xalign=0)
-        title.get_style_context().add_class('section-title')
-        box.pack_start(title, False, False, 0)
 
-        grid = Gtk.Grid(column_spacing=12, row_spacing=10)
-        box.pack_start(grid, False, False, 0)
 
-        self.entry_port = self._config_field(grid, 0, 'Puerto', env_get('PORT') or '3000')
-        self.entry_phone = self._config_field(grid, 1, 'Numero WhatsApp (BOT_PHONE)', env_get('BOT_PHONE'))
-        self.entry_domain = self._config_field(grid, 2, 'Dominio propio (nginx+HTTPS)', env_get('SERVER_DOMAIN'))
+# ══════════════════════════════════════════════════════════════════════════════
+# MÓDULO: CONFIGURACIÓN
+# ══════════════════════════════════════════════════════════════════════════════
 
-        save_btn = Gtk.Button(label='GUARDAR Y REINICIAR SERVICIO')
-        save_btn.get_style_context().add_class('action-btn')
-        save_btn.get_style_context().add_class('btn-primary')
-        save_btn.connect('clicked', self.on_save_config)
-        box.pack_start(save_btn, False, False, 8)
+class ConfigModule:
+    """Configuración de conexión (puerto, teléfono, dominio) y acciones sensibles
+    (regenerar secretos, re-vincular WhatsApp, toggle de bot)."""
 
+    def __init__(self, parent):
+        self.parent = parent
+        self.box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
+
+        header = SectionHeader('Configuración y acceso',
+                               'Parámetros de red del servidor y acciones sensibles')
+        self.box.pack_start(header, False, False, 0)
+
+        # ─── Conexión ───────────────────────────────────────────────
+        conn_title = Gtk.Label(label='CONEXIÓN Y RED', xalign=0)
+        conn_title.get_style_context().add_class('section-title')
+        self.box.pack_start(conn_title, False, False, 0)
+
+        grid = Gtk.Grid(column_spacing=14, row_spacing=10)
+        self.box.pack_start(grid, False, False, 0)
+
+        self.entry_port   = self._field(grid, 0, 'Puerto del servidor', env_get('PORT') or '3000')
+        self.entry_phone  = self._field(grid, 1, 'Número WhatsApp (BOT_PHONE)', env_get('BOT_PHONE'))
+        self.entry_domain = self._field(grid, 2, 'Dominio propio (HTTPS)', env_get('SERVER_DOMAIN'))
+        self.entry_host   = self._field(grid, 3, 'Bind de host (recomendado 127.0.0.1)',
+                                        env_get('HOST') or '127.0.0.1')
+        self.entry_bot_enabled = self._field(grid, 4, 'Bot habilitado (true/false)',
+                                             env_get('BOT_ENABLED') or 'false')
+
+        self.box.pack_start(make_btn('💾 Guardar y reiniciar servicio', 'btn-primary', on_click=lambda *_: self._save_config()), False, False, 8)
+
+        # ─── Acciones sensibles ─────────────────────────────────────
         sec_title = Gtk.Label(label='ACCIONES SENSIBLES', xalign=0)
         sec_title.get_style_context().add_class('section-title')
-        box.pack_start(sec_title, False, False, 8)
+        self.box.pack_start(sec_title, False, False, 8)
 
-        row2 = Gtk.Box(spacing=8)
-        box.pack_start(row2, False, False, 0)
-        regen_btn = Gtk.Button(label='REGENERAR SECRETOS')
-        regen_btn.get_style_context().add_class('action-btn')
-        regen_btn.get_style_context().add_class('btn-warn')
-        regen_btn.connect('clicked', self.on_regen_secrets)
-        row2.pack_start(regen_btn, False, False, 0)
+        sensitive = Gtk.Box(spacing=8)
+        self.box.pack_start(sensitive, False, False, 0)
+        sensitive.pack_start(make_btn('🔑 Regenerar secretos', 'btn-warn', on_click=lambda *_: self._regen_secrets()), False, False, 0)
+        sensitive.pack_start(make_btn('📱 Re-vincular WhatsApp', 'btn-warn', on_click=lambda *_: self._relink()), False, False, 0)
+        sensitive.pack_start(make_btn('🧹 Limpiar media antiguos', 'btn-flat', on_click=lambda *_: self._clean_media()), False, False, 0)
 
-        relink_btn = Gtk.Button(label='RE-VINCULAR WHATSAPP')
-        relink_btn.get_style_context().add_class('action-btn')
-        relink_btn.get_style_context().add_class('btn-warn')
-        relink_btn.connect('clicked', self.on_relink_whatsapp)
-        row2.pack_start(relink_btn, False, False, 0)
+        # ─── Estado ─────────────────────────────────────────────────
+        self.status_label = Gtk.Label(label='')
+        self.status_label.get_style_context().add_class('label-muted')
+        self.box.pack_start(self.status_label, False, False, 8)
 
-        self.config_status = Gtk.Label(label='')
-        box.pack_start(self.config_status, False, False, 8)
-        return box
+        # ─── Información del sistema ────────────────────────────────
+        info_title = Gtk.Label(label='INFORMACIÓN DEL SISTEMA', xalign=0)
+        info_title.get_style_context().add_class('section-title')
+        self.box.pack_start(info_title, False, False, 8)
 
-    def _config_field(self, grid, row, label_text, value):
+        self.info_grid = Gtk.Grid(column_spacing=14, row_spacing=8)
+        self.box.pack_start(self.info_grid, False, False, 0)
+        self.info_labels = {}
+        for i, (key, label) in enumerate([
+            ('service_user', 'Usuario del servicio'),
+            ('node_version', 'Versión de Node.js'),
+            ('db_path',      'Ruta de la base de datos'),
+            ('appdata',      'Directorio APPDATA'),
+            ('log_dir',      'Directorio de logs'),
+        ]):
+            lbl = Gtk.Label(label=label, xalign=0)
+            lbl.get_style_context().add_class('label-muted')
+            val = Gtk.Label(label='—', xalign=0)
+            val.get_style_context().add_class('mono')
+            val.set_selectable(True)
+            self.info_grid.attach(lbl, 0, i, 1, 1)
+            self.info_grid.attach(val, 1, i, 1, 1)
+            self.info_labels[key] = val
+
+    def _field(self, grid, row, label_text, value):
         lbl = Gtk.Label(label=label_text, xalign=0)
+        lbl.get_style_context().add_class('label-muted')
         entry = Gtk.Entry()
         entry.set_text(value or '')
         entry.set_width_chars(30)
@@ -777,217 +2211,544 @@ class DashboardWindow(Gtk.Window):
         grid.attach(entry, 1, row, 1, 1)
         return entry
 
-    def on_save_config(self, _btn):
+    def _save_config(self, _btn=None):
         env_set('PORT', self.entry_port.get_text().strip() or '3000')
         env_set('BOT_PHONE', re.sub(r'\D', '', self.entry_phone.get_text()))
         env_set('SERVER_DOMAIN', self.entry_domain.get_text().strip())
+        env_set('HOST', self.entry_host.get_text().strip() or '127.0.0.1')
+        env_set('BOT_ENABLED', self.entry_bot_enabled.get_text().strip().lower() in ('true', '1', 'yes'))
         sh(f'systemctl restart {SERVICE}')
-        self.config_status.set_text('Guardado. Servicio reiniciando…')
-        GLib.timeout_add(1500, lambda: (self.refresh_all(), False)[1])
+        self.status_label.set_text('✓ Guardado. Servicio reiniciando…')
+        GLib.timeout_add(2000, lambda: (self.parent.refresh_all(), False)[1])
 
-    def on_regen_secrets(self, _btn):
-        env_set('API_KEY', secrets.token_hex(32))
-        env_set('JWT_SECRET', secrets.token_hex(32))
-        sh(f'systemctl restart {SERVICE}')
-        self.config_status.set_text('Secretos regenerados — la app movil debera reloguearse.')
-
-    def on_relink_whatsapp(self, _btn):
+    def _regen_secrets(self, _btn=None):
         dialog = Gtk.MessageDialog(
-            transient_for=self, flags=0, message_type=Gtk.MessageType.QUESTION,
+            transient_for=self.parent, flags=0,
+            message_type=Gtk.MessageType.WARNING,
             buttons=Gtk.ButtonsType.YES_NO,
-            text='Esto borra la sesion de WhatsApp actual y pedira un nuevo codigo de vinculacion. Continuar?')
+            text='Esto regenerará API_KEY y JWT_SECRET. La app móvil y el bot deberán '
+                 'reautenticarse. ¿Continuar?')
         resp = dialog.run()
         dialog.destroy()
         if resp == Gtk.ResponseType.YES:
-            appdata = self._appdata_dir()
+            env_set('API_KEY', secrets.token_hex(32))
+            env_set('JWT_SECRET', secrets.token_hex(32))
+            sh(f'systemctl restart {SERVICE}')
+            self.status_label.set_text('✓ Secretos regenerados. La app móvil debe reloguearse.')
+
+    def _relink(self, _btn=None):
+        dialog = Gtk.MessageDialog(
+            transient_for=self.parent, flags=0,
+            message_type=Gtk.MessageType.QUESTION,
+            buttons=Gtk.ButtonsType.YES_NO,
+            text='Esto borra la sesión de WhatsApp actual. El bot pedirá un nuevo código '
+                 'de vinculación. ¿Continuar?')
+        resp = dialog.run()
+        dialog.destroy()
+        if resp == Gtk.ResponseType.YES:
+            appdata = self.parent._appdata_dir()
             if appdata:
                 sh(f'rm -rf "{appdata}/pedidos-bot/auth" && mkdir -p "{appdata}/pedidos-bot/auth"')
             sh(f'systemctl restart {SERVICE}')
-            self.config_status.set_text('Sesion borrada. Revisa la pestaña Logs para el nuevo codigo.')
+            self.status_label.set_text('✓ Sesión borrada. Revisa el módulo Bot WhatsApp para el QR.')
 
-    # ── Tab: Seguridad ────────────────────────────────────────
-    def build_security_tab(self):
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        box.set_border_width(18)
-        title = Gtk.Label(label='AUDITORIA DE SEGURIDAD', xalign=0)
-        title.get_style_context().add_class('section-title')
-        box.pack_start(title, False, False, 0)
-        self.security_view = Gtk.TextView(editable=False, cursor_visible=False)
-        self.security_view.set_wrap_mode(Gtk.WrapMode.WORD)
-        self.security_view.set_left_margin(8)
-        self.security_view.set_top_margin(8)
-        scroll = Gtk.ScrolledWindow()
-        scroll.add(self.security_view)
-        box.pack_start(scroll, True, True, 0)
-        btn = Gtk.Button(label='EJECUTAR AUDITORIA')
-        btn.get_style_context().add_class('action-btn')
-        btn.get_style_context().add_class('btn-flat')
-        btn.connect('clicked', lambda *_: self.refresh_security())
-        box.pack_start(btn, False, False, 0)
-        return box
+    def _clean_media(self, _btn=None):
+        appdata = self.parent._appdata_dir()
+        if appdata:
+            media_dir = os.path.join(appdata, 'pedidos-bot', 'media')
+            docs_dir = os.path.join(appdata, 'pedidos-bot', 'docs')
+            for d in (media_dir, docs_dir):
+                sh(f'find "{d}" -type f -mtime +30 -delete 2>/dev/null')
+        self.status_label.set_text('✓ Media antiguos (>30 días) eliminados.')
 
-    def refresh_security(self):
-        lines = []
+    def refresh(self):
+        # Información del sistema
         user = sh(f"systemctl show {SERVICE} -p User --value")
-        lines.append(f"Servicio corre como: {user or '?'} " + ("(OK, no-root)" if user and user != 'root' else "(RIESGO: root)"))
+        self.info_labels['service_user'].set_text(user or '—')
+        node_ver = sh('node --version 2>/dev/null') or sh('/opt/nodejs/bin/node --version 2>/dev/null')
+        self.info_labels['node_version'].set_text(node_ver or '—')
+        self.info_labels['db_path'].set_text(db_path())
+        appdata = self.parent._appdata_dir()
+        self.info_labels['appdata'].set_text(appdata or '—')
+        self.info_labels['log_dir'].set_text(LOG_DIR)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MÓDULO: SEGURIDAD
+# ══════════════════════════════════════════════════════════════════════════════
+
+class SecurityModule:
+    """Auditoría de seguridad: usuario del servicio, permisos .env, bind de host,
+    firewall, fail2ban, servicios activos y recomendaciones."""
+
+    def __init__(self, parent):
+        self.parent = parent
+        self.box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
+
+        header = SectionHeader('Auditoría de seguridad',
+                               'Verificación de configuración de seguridad del servidor',
+                               make_btn('↻ Reauditar', 'btn-flat', small=True, on_click=lambda *_: self.refresh()))
+        self.box.pack_start(header, False, False, 0)
+
+        # ─── Cards de estado rápido ─────────────────────────────────
+        cards = Gtk.Box(spacing=12)
+        self.box.pack_start(cards, False, False, 0)
+        self.card_user  = StatCard('Usuario servicio',  sub='Debe ser no-root')
+        self.card_env   = StatCard('Permisos .env',     sub='Recomendado 600')
+        self.card_bind  = StatCard('Bind de host',      sub='Recomendado 127.0.0.1')
+        self.card_fw    = StatCard('Firewall',          sub='Estado del filtro')
+        self.card_f2b   = StatCard('fail2ban',          sub='Protección SSH')
+        for c in (self.card_user, self.card_env, self.card_bind, self.card_fw, self.card_f2b):
+            cards.pack_start(c, True, True, 0)
+
+        # ─── Detalle extendido ──────────────────────────────────────
+        detail_title = Gtk.Label(label='DETALLE DE LA AUDITORÍA', xalign=0)
+        detail_title.get_style_context().add_class('section-title')
+        self.box.pack_start(detail_title, False, False, 0)
+
+        self.view = Gtk.TextView(editable=False, cursor_visible=False)
+        self.view.set_wrap_mode(Gtk.WrapMode.WORD)
+        self.view.set_left_margin(10)
+        self.view.set_top_margin(10)
+        self.view.set_right_margin(10)
+        self.view.set_bottom_margin(10)
+        scroll = Gtk.ScrolledWindow()
+        scroll.add(self.view)
+        scroll.set_min_content_height(200)
+        self.box.pack_start(scroll, True, True, 0)
+
+    def refresh(self):
+        lines = []
+        issues = 0
+
+        # Usuario
+        user = sh(f"systemctl show {SERVICE} -p User --value")
+        ok_user = user and user != 'root'
+        if ok_user:
+            self.card_user.set_value(user)
+        else:
+            self.card_user.set_value(user or '—')
+            issues += 1
+        lines.append(f"• Servicio corre como: {user or '?'} " +
+                     ("✓ (OK, no-root)" if ok_user else "✗ (RIESGO: root)"))
+
+        # Permisos .env
         try:
             perms = oct(os.stat(ENV_FILE).st_mode)[-3:] if os.path.exists(ENV_FILE) else '?'
         except Exception:
             perms = '?'
-        lines.append(f"Permisos .env: {perms} (recomendado: 600)")
-        lines.append(f"HOST bind: {env_get('HOST') or '(no seteado)'} (recomendado: 127.0.0.1)")
-        fw = 'ufw' if sh('command -v ufw') else ('firewalld' if sh('command -v firewall-cmd') else 'iptables')
-        lines.append(f"Firewall detectado: {fw}")
+        ok_env = perms in ('600',)
+        self.card_env.set_value(perms)
+        if not ok_env:
+            issues += 1
+        lines.append(f"• Permisos .env: {perms} " +
+                     ("✓" if ok_env else "(recomendado: 600)"))
+
+        # Bind
+        host = env_get('HOST') or '127.0.0.1'
+        ok_bind = host in ('127.0.0.1', 'localhost')
+        self.card_bind.set_value(host)
+        if not ok_bind:
+            issues += 1
+        lines.append(f"• HOST bind: {host} " +
+                     ("✓" if ok_bind else "(expuesto a la red — revisa firewall)"))
+
+        # Firewall
+        fw = 'ufw' if sh('command -v ufw') else (
+             'firewalld' if sh('command -v firewall-cmd') else
+             'iptables' if sh('command -v iptables') else 'ninguno')
+        fw_active = False
+        if fw == 'ufw':
+            fw_active = 'active' in sh('ufw status 2>/dev/null')
+        elif fw == 'firewalld':
+            fw_active = 'running' in sh('firewall-cmd --state 2>/dev/null')
+        self.card_fw.set_value(fw.upper() if fw != 'ninguno' else 'NINGUNO')
+        if fw == 'ninguno':
+            issues += 1
+        lines.append(f"• Firewall: {fw} " +
+                     ("(activo)" if fw_active else "(inactivo o no instalado)" if fw != 'ninguno' else "✗ (NINGUNO)"))
+
+        # fail2ban
         f2b = sh('systemctl is-active fail2ban 2>/dev/null') or 'no instalado'
-        lines.append(f"fail2ban: {f2b}")
-        lines.append(f"Servicio Node: {sh(f'systemctl is-active {SERVICE} 2>/dev/null') or 'no instalado'}")
-        lines.append(f"Tunel Cloudflare: {sh(f'systemctl is-active {TUNNEL_SERVICE} 2>/dev/null') or 'no instalado'}")
-        buf = self.security_view.get_buffer()
-        buf.set_text('\n'.join(f'• {l}' for l in lines))
+        self.card_f2b.set_value(f2b.upper())
+        if f2b != 'active':
+            issues += 1
+        lines.append(f"• fail2ban: {f2b}")
 
-    # ── Tab: Logs ─────────────────────────────────────────────
-    def build_logs_tab(self):
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        box.set_border_width(18)
-        title = Gtk.Label(label='LOGS DEL SERVIDOR (EN VIVO)', xalign=0)
-        title.get_style_context().add_class('section-title')
-        box.pack_start(title, False, False, 0)
-        self.logs_view = Gtk.TextView(editable=False, cursor_visible=False)
-        self.logs_view.set_wrap_mode(Gtk.WrapMode.WORD)
-        self.logs_view.set_monospace(True)
-        self.logs_view.set_left_margin(8)
+        lines.append("")
+        lines.append("─ SERVICIOS ─")
+        lines.append(f"• Servicio Node: {sh(f'systemctl is-active {SERVICE} 2>/dev/null') or 'no instalado'}")
+        lines.append(f"• Túnel Cloudflare: {sh(f'systemctl is-active {TUNNEL_SERVICE} 2>/dev/null') or 'no instalado'}")
+
+        # Recomendaciones
+        lines.append("")
+        lines.append("─ RECOMENDACIONES ─")
+        if issues == 0:
+            lines.append("✓ Todo en orden. No se detectaron problemas críticos.")
+        else:
+            lines.append(f"Se detectaron {issues} punto(s) a revisar arriba.")
+
+        buf = self.view.get_buffer()
+        buf.set_text('\n'.join(lines))
+
+    def _set_card_pill(self, card, ok):
+        """(Reservado para futuras mejoras visuales)"""
+        pass
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MÓDULO: LOGS
+# ══════════════════════════════════════════════════════════════════════════════
+
+class LogsModule:
+    """Visor de logs del servidor en vivo con auto-scroll y filtros básicos."""
+
+    def __init__(self, parent):
+        self.parent = parent
+        self.box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+
+        header = SectionHeader('Logs del servidor',
+                               'Salida en vivo del log del servicio systemd',
+                               make_btn('↻ Refrescar', 'btn-flat', small=True, on_click=lambda *_: self.refresh()))
+        self.box.pack_start(header, False, False, 0)
+
+        # ─── Info bar ───────────────────────────────────────────────
+        info = Gtk.Box(spacing=12)
+        self.box.pack_start(info, False, False, 0)
+        info.pack_start(Gtk.Label(label='📁 ' + LOG_DIR), False, False, 0)
+        info.pack_start(Gtk.Label(label='·'), False, False, 0)
+        self.tail_label = Gtk.Label(label='Últimas 200 líneas · server.log')
+        self.tail_label.get_style_context().add_class('label-dim')
+        info.pack_start(self.tail_label, False, False, 0)
+
+        # ─── Visor ──────────────────────────────────────────────────
+        self.view = Gtk.TextView(editable=False, cursor_visible=False)
+        self.view.set_wrap_mode(Gtk.WrapMode.WORD)
+        self.view.set_monospace(True)
+        self.view.set_left_margin(10)
+        self.view.set_top_margin(10)
+        self.view.set_right_margin(10)
+        self.view.set_bottom_margin(10)
         scroll = Gtk.ScrolledWindow()
-        scroll.add(self.logs_view)
-        box.pack_start(scroll, True, True, 0)
-        return box
+        scroll.add(self.view)
+        self.box.pack_start(scroll, True, True, 0)
 
-    def refresh_logs(self):
+        # ─── Botones inferiores ─────────────────────────────────────
+        bottom = Gtk.Box(spacing=8)
+        self.box.pack_start(bottom, False, False, 0)
+        bottom.pack_start(make_btn('📋 Copiar', 'btn-flat', small=True, on_click=lambda *_: self._copy()), False, False, 0)
+        bottom.pack_start(make_btn('🗑 Limpiar log', 'btn-danger', small=True, on_click=lambda *_: self._clear()), False, False, 0)
+        bottom.pack_start(Gtk.Label(label=''), True, True, 0)
+        bottom.pack_start(make_btn('📂 Abrir carpeta', 'btn-flat', small=True, on_click=lambda *_: self._open_dir()), False, False, 0)
+
+    def refresh(self):
         p = os.path.join(LOG_DIR, 'server.log')
-        content = sh(f'tail -c 8000 "{p}" 2>/dev/null') if os.path.exists(p) else '(sin logs todavia)'
-        buf = self.logs_view.get_buffer()
+        if os.path.exists(p):
+            content = sh(f'tail -n 200 "{p}" 2>/dev/null')
+            size = sh(f'stat -c %s "{p}" 2>/dev/null')
+            if size:
+                try:
+                    sz = int(size)
+                    self.tail_label.set_text(f'Últimas 200 líneas · {sz/1024:.1f} KB · server.log')
+                except Exception:
+                    pass
+        else:
+            content = '(sin logs todavía — el servicio aún no ha escrito nada)'
+        buf = self.view.get_buffer()
         buf.set_text(content)
-        mark = buf.create_mark(None, buf.get_end_iter(), False)
-        self.logs_view.scroll_to_mark(mark, 0, False, 0, 0)
+        # Auto-scroll al final
+        end = buf.get_end_iter()
+        mark = buf.create_mark(None, end, False)
+        self.view.scroll_to_mark(mark, 0, False, 0, 0)
 
-    # ── Refresco general ──────────────────────────────────────
-    def _set_dot(self, dot, active, failed=False):
-        ctx = dot.get_style_context()
-        for cls in ('dot-active', 'dot-inactive', 'dot-failed'):
-            ctx.remove_class(cls)
-        ctx.add_class('dot-failed' if failed else ('dot-active' if active else 'dot-inactive'))
+    def _copy(self):
+        buf = self.view.get_buffer()
+        start, end = buf.get_bounds()
+        text = buf.get_text(start, end, True)
+        clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
+        clipboard.set_text(text, -1)
+        self.parent.show_toast('Logs copiados al portapapeles')
+
+    def _clear(self):
+        dialog = Gtk.MessageDialog(
+            transient_for=self.parent, flags=0,
+            message_type=Gtk.MessageType.QUESTION,
+            buttons=Gtk.ButtonsType.YES_NO,
+            text='¿Vaciar el archivo server.log? Esto borra el historial de logs.')
+        if dialog.run() == Gtk.ResponseType.YES:
+            sh(f'> "{os.path.join(LOG_DIR, "server.log")}" 2>/dev/null')
+            self.refresh()
+        dialog.destroy()
+
+    def _open_dir(self):
+        sh(f'xdg-open "{LOG_DIR}" 2>/dev/null &')
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# VENTANA PRINCIPAL — Sidebar + Área de contenido
+# ══════════════════════════════════════════════════════════════════════════════
+
+class DashboardWindow(Gtk.ApplicationWindow):
+    """Ventana principal con sidebar lateral colapsable y área de contenido
+    que intercambia entre los 9 módulos disponibles."""
+
+    def __init__(self, app):
+        super().__init__(application=app, title='Concentrados Monserrath — Panel del Servidor')
+        self.set_default_size(1200, 800)
+        self.set_size_request(900, 600)
+
+        # CSS provider global
+        provider = Gtk.CssProvider()
+        provider.load_from_data(CSS.encode())
+        Gtk.StyleContext.add_provider_for_screen(
+            Gdk.Screen.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+
+        # ─── Header bar ─────────────────────────────────────────────
+        header = Gtk.HeaderBar()
+        header.set_title('Concentrados Monserrath')
+        header.set_subtitle('Panel de administración del servidor')
+        header.set_show_close_button(True)
+        header.props.spacing = 8
+
+        # Botón colapsar sidebar
+        self.toggle_btn = Gtk.Button(label='☰')
+        self.toggle_btn.set_tooltip_text('Mostrar/ocultar menú lateral')
+        self.toggle_btn.connect('clicked', lambda *_: self._toggle_sidebar())
+        header.pack_start(self.toggle_btn)
+
+        # Botón actualizar global
+        self.refresh_btn = Gtk.Button(label='↻ Actualizar')
+        self.refresh_btn.set_tooltip_text('Refrescar todos los módulos')
+        self.refresh_btn.connect('clicked', lambda *_: self.refresh_all())
+        header.pack_end(self.refresh_btn)
+
+        # Indicador de conexión
+        self.conn_indicator = Gtk.Box(spacing=6)
+        self.conn_dot = Gtk.Box()
+        self.conn_dot.set_size_request(9, 9)
+        self.conn_dot.get_style_context().add_class('status-dot')
+        self.conn_dot.get_style_context().add_class('dot-inactive')
+        self.conn_label = Gtk.Label(label='Desconectado')
+        self.conn_label.get_style_context().add_class('label-muted')
+        self.conn_indicator.pack_start(self.conn_dot, False, False, 0)
+        self.conn_indicator.pack_start(self.conn_label, False, False, 0)
+        header.pack_end(self.conn_indicator)
+
+        self.set_titlebar(header)
+
+        # ─── Layout principal: sidebar | contenido ──────────────────
+        self.main_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        self.add(self.main_box)
+
+        # Sidebar
+        self.sidebar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        self.sidebar.get_style_context().add_class('sidebar')
+        self.sidebar.set_size_request(220, -1)
+        self.main_box.pack_start(self.sidebar, False, False, 0)
+
+        # Branding en sidebar
+        brand_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        brand_box.set_margin_top(8)
+        brand_box.set_margin_bottom(8)
+        brand_box.set_margin_start(12)
+        brand_box.set_margin_end(12)
+        brand_lbl = Gtk.Label(label='GESTIÓN')
+        brand_lbl.get_style_context().add_class('label-bold')
+        brand_lbl.set_xalign(0)
+        brand_box.pack_start(brand_lbl, False, False, 0)
+        sub = Gtk.Label(label='Panel v3.0')
+        sub.get_style_context().add_class('label-dim')
+        sub.set_xalign(0)
+        brand_box.pack_start(sub, False, False, 0)
+        self.sidebar.pack_start(brand_box, False, False, 0)
+
+        # Divider
+        divider = Gtk.Box()
+        divider.get_style_context().add_class('sidebar-divider')
+        self.sidebar.pack_start(divider, False, False, 0)
+
+        # Botones de módulos
+        self.module_buttons = {}
+        self.modules = {}
+
+        # Sección: OPERACIÓN
+        op_label = Gtk.Label(label='OPERACIÓN')
+        op_label.get_style_context().add_class('sidebar-section')
+        op_label.set_xalign(0)
+        self.sidebar.pack_start(op_label, False, False, 0)
+
+        self._add_module('monitor', 'Monitoreo', MonitorModule)
+        self._add_module('orders',  'Pedidos activos', OrdersModule, badge_key='orders')
+        self._add_module('bot',     'Bot WhatsApp', BotModule)
+        self._add_module('sales',   'Ventas', SalesModule)
+        self._add_module('employees','Empleados', EmployeesModule)
+
+        # Sección: CONFIGURACIÓN
+        cfg_label = Gtk.Label(label='CONFIGURACIÓN')
+        cfg_label.get_style_context().add_class('sidebar-section')
+        cfg_label.set_xalign(0)
+        self.sidebar.pack_start(cfg_label, False, False, 0)
+
+        self._add_module('brand',  'Marca', BrandModule)
+        self._add_module('config', 'Configuración', ConfigModule)
+        self._add_module('security', 'Seguridad', SecurityModule)
+        self._add_module('logs',   'Logs', LogsModule)
+
+        # Spacer
+        self.sidebar.pack_start(Gtk.Box(), True, True, 0)
+
+        # Footer del sidebar con info de versión
+        footer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        footer.set_margin_top(8)
+        footer.set_margin_bottom(8)
+        footer.set_margin_start(12)
+        footer.set_margin_end(12)
+        ver = Gtk.Label(label='v3.0 · GTK3 nativo')
+        ver.get_style_context().add_class('label-dim')
+        ver.set_xalign(0)
+        footer.pack_start(ver, False, False, 0)
+        svc_label = Gtk.Label(label='systemd: ' + SERVICE)
+        svc_label.get_style_context().add_class('label-dim')
+        svc_label.set_xalign(0)
+        footer.pack_start(svc_label, False, False, 0)
+        self.sidebar.pack_start(footer, False, False, 0)
+
+        # ─── Área de contenido ──────────────────────────────────────
+        self.content_scroll = Gtk.ScrolledWindow()
+        self.content_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        self.content_scroll.get_style_context().add_class('content-scrolled')
+        self.main_box.pack_start(self.content_scroll, True, True, 0)
+
+        self.content_area = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.content_area.get_style_context().add_class('content')
+        self.content_scroll.add(self.content_area)
+
+        # ─── Toast / status bar ─────────────────────────────────────
+        self.status_bar = Gtk.Box()
+        self.status_bar.get_style_context().add_class('sidebar')
+        self.status_bar.set_size_request(-1, 28)
+        self.status_label = Gtk.Label(label='')
+        self.status_label.get_style_context().add_class('label-dim')
+        self.status_label.set_xalign(0)
+        self.status_label.set_margin_start(12)
+        self.status_bar.pack_start(self.status_label, False, False, 0)
+
+        # ─── Estado interno ─────────────────────────────────────────
+        self.current_module = None
+        self._sidebar_visible = True
+        self._pulse_on = True
+
+        # Los módulos ya fueron inicializados en _add_module()
+
+        # Switch al primer módulo
+        self.switch_module('monitor')
+
+        # Auto-refresh cada 10s
+        GLib.timeout_add_seconds(10, self._tick)
+        # Pulse cada 800ms en indicadores
+        GLib.timeout_add(800, self._pulse)
+
+        # Refresh inicial
+        GLib.idle_add(self.refresh_all)
+
+    def _add_module(self, key, label, ModuleClass, badge_key=None):
+        """Agrega un botón al sidebar y registra el módulo instanciado."""
+        btn = Gtk.Button(label=label)
+        btn.get_style_context().add_class('sidebar-btn')
+        btn.set_relief(Gtk.ReliefStyle.NONE)
+        btn.connect('clicked', lambda *_: self.switch_module(key))
+        self.sidebar.pack_start(btn, False, False, 1)
+        self.module_buttons[key] = btn
+        # Instanciar módulo — su .box será el contenido del área principal
+        self.modules[key] = ModuleClass(self)
+
+    def switch_module(self, name):
+        """Cambia el módulo visible en el área de contenido."""
+        if name not in self.modules:
+            return
+        # Limpiar actual
+        for child in self.content_area.get_children():
+            self.content_area.remove(child)
+        # Marcar botón activo
+        for key, btn in self.module_buttons.items():
+            if key == name:
+                btn.get_style_context().add_class('active')
+            else:
+                btn.get_style_context().remove_class('active')
+        # Mostrar nuevo
+        mod = self.modules[name]
+        self.content_area.pack_start(mod.box, True, True, 0)
+        mod.box.show_all()
+        self.current_module = name
+        # Refrescar el módulo recién mostrado
+        try:
+            mod.refresh()
+        except Exception as e:
+            print(f'[dashboard] refresh {name}: {e}', file=sys.stderr)
+
+    def _toggle_sidebar(self):
+        """Colapsa/expande el sidebar lateral."""
+        self._sidebar_visible = not self._sidebar_visible
+        self.sidebar.set_visible(self._sidebar_visible)
+        # Reajustar tamaño mínimo cuando está oculto
+        if self._sidebar_visible:
+            self.sidebar.set_size_request(220, -1)
+        else:
+            self.sidebar.set_size_request(0, -1)
+
+    def _tick(self):
+        """Refresh automático cada 10s."""
+        self.refresh_all()
+        return True
+
+    def _pulse(self):
+        """Sutil respiración en el dot de conexión cuando el servicio está activo."""
+        self._pulse_on = not self._pulse_on
+        ctx = self.conn_dot.get_style_context()
+        if ctx.has_class('dot-active'):
+            self.conn_dot.set_opacity(1.0 if self._pulse_on else 0.55)
+        else:
+            self.conn_dot.set_opacity(1.0)
+        return True
 
     def refresh_all(self):
-        active = sh(f'systemctl is-active {SERVICE} 2>/dev/null') or 'inactivo'
-        self._status_class = 'pulse-active' if active == 'active' else 'pulse-inactive'
-        self.lbl_status.set_text(active.upper())
-        self._set_dot(self.dot_status, active == 'active', failed=(active == 'failed'))
+        """Refresca el módulo actual + indicador de conexión."""
+        # Indicador de conexión al servidor
+        active = sh(f'systemctl is-active {SERVICE} 2>/dev/null') == 'active'
+        ctx = self.conn_dot.get_style_context()
+        for cls in ('dot-active', 'dot-inactive', 'dot-failed'):
+            ctx.remove_class(cls)
+        ctx.add_class('dot-active' if active else 'dot-failed')
+        self.conn_label.set_text('En línea' if active else 'Servicio caído')
 
-        tactive = sh(f'systemctl is-active {TUNNEL_SERVICE} 2>/dev/null') or 'no instalado'
-        self.lbl_tunnel.set_text(tactive.upper())
-        self._set_dot(self.dot_tunnel, tactive == 'active', failed=(tactive == 'failed'))
+        # Refrescar módulo actual
+        if self.current_module:
+            try:
+                self.modules[self.current_module].refresh()
+            except Exception as e:
+                print(f'[dashboard] refresh_all {self.current_module}: {e}', file=sys.stderr)
 
-        since = sh(f"systemctl show {SERVICE} -p ActiveEnterTimestamp --value")
-        self.lbl_uptime.set_text(since or '—')
+    def show_toast(self, msg):
+        """Muestra un mensaje temporal en la barra de estado."""
+        self.status_label.set_text(msg)
+        GLib.timeout_add_seconds(4, lambda: (self.status_label.set_text(''), False)[1])
 
-        mem = sh(f"systemctl show {SERVICE} -p MemoryCurrent --value")
-        try:
-            self.lbl_mem.set_text(f'{int(mem) / 1024 / 1024:.1f} MB')
-        except Exception:
-            self.lbl_mem.set_text('—')
+    def _appdata_dir(self):
+        """Devuelve el APPDATA configurado en el servicio systemd."""
+        env = sh(f"systemctl show {SERVICE} -p Environment --value")
+        m = re.search(r'APPDATA=(\S+)', env)
+        return m.group(1) if m else None
 
-        orders_today = query("SELECT COUNT(*) FROM orders WHERE date(requested_at)=date('now')")
-        orders_total = query("SELECT COUNT(*) FROM orders")
-        self.lbl_orders.set_text(
-            f"{orders_today[0][0] if orders_today else 0} / {orders_total[0][0] if orders_total else 0}")
 
-        msgs_today = query("SELECT COUNT(*) FROM messages WHERE date(created_at)=date('now')")
-        msgs_total = query("SELECT COUNT(*) FROM messages")
-        self.lbl_msgs.set_text(
-            f"{msgs_today[0][0] if msgs_today else 0} / {msgs_total[0][0] if msgs_total else 0}")
-
-        self._refresh_chart(self.chart_orders, 'orders', 'requested_at')
-        self._refresh_chart(self.chart_msgs, 'messages', 'created_at')
-        self._refresh_sales()
-        self.refresh_security()
-        self.refresh_logs()
-        self._load_brand()
-
-    def _refresh_chart(self, chart, table, date_col):
-        rows = query(f"""
-            SELECT date({date_col}) d, COUNT(*) c FROM {table}
-            WHERE {date_col} >= date('now', '-6 days')
-            GROUP BY d ORDER BY d
-        """)
-        by_date = {r[0]: r[1] for r in rows}
-        data = []
-        for i in range(6, -1, -1):
-            d = (datetime.date.today() - datetime.timedelta(days=i))
-            data.append((d.strftime('%d/%m'), by_date.get(d.isoformat(), 0)))
-        chart.set_data(data)
-
-    def _refresh_sales(self):
-        sales_today = query("""
-            SELECT COALESCE(SUM(oi.product_price*oi.quantity),0) FROM orders o
-            JOIN order_items oi ON oi.order_id=o.id
-            WHERE o.status IN ('entregado','delivered') AND date(o.delivered_at)=date('now')
-        """)
-        self.lbl_sales_today.set_text(f"${sales_today[0][0]:,.0f}" if sales_today else "$0")
-
-        avg = query("""
-            SELECT COALESCE(AVG(t),0) FROM (
-              SELECT SUM(oi.product_price*oi.quantity) t FROM orders o
-              JOIN order_items oi ON oi.order_id=o.id
-              WHERE o.status IN ('entregado','delivered') GROUP BY o.id)
-        """)
-        self.lbl_avg_ticket.set_text(f"${avg[0][0]:,.0f}" if avg else "$0")
-
-        counts = query("""
-            SELECT COUNT(*) FILTER (WHERE status='cancelled'),
-                   COUNT(*) FILTER (WHERE status IN ('entregado','delivered')),
-                   COUNT(*) FROM orders
-        """)
-        if counts:
-            cancelled, delivered, total = counts[0]
-            pct = round((cancelled / total) * 100) if total else 0
-            self.lbl_cancelled.set_text(f"{pct}%")
-            self.lbl_delivered.set_text(str(delivered))
-
-        rows = query("""
-            SELECT date(o.delivered_at) d, SUM(oi.product_price*oi.quantity) t
-            FROM orders o JOIN order_items oi ON oi.order_id=o.id
-            WHERE o.status IN ('entregado','delivered') AND o.delivered_at >= date('now','-6 days')
-            GROUP BY d ORDER BY d
-        """)
-        by_date = {r[0]: r[1] for r in rows}
-        data = []
-        for i in range(6, -1, -1):
-            d = (datetime.date.today() - datetime.timedelta(days=i))
-            data.append((d.strftime('%d/%m'), int(by_date.get(d.isoformat(), 0) or 0)))
-        self.chart_sales.set_data(data)
-
-        top = query("""
-            SELECT oi.product_name, SUM(oi.quantity) q FROM order_items oi
-            JOIN orders o ON o.id=oi.order_id
-            WHERE o.status IN ('entregado','delivered')
-            GROUP BY oi.product_name ORDER BY q DESC LIMIT 10
-        """)
-        self.top_products_store.clear()
-        for name, qty in top:
-            self.top_products_store.append([name, str(qty)])
-
-    def _load_brand(self):
-        if self.entry_primary.get_text():
-            return  # no pisar lo que el usuario esta editando
-        self.entry_primary.set_text(setting_get('theme_primary', PRIMARY_DEFAULT))
-        self.entry_accent.set_text(setting_get('theme_accent', ACCENT_DEFAULT))
-        self.entry_brand_name.set_text(setting_get('theme_name', 'Concentrados Monserrath'))
-
+# ══════════════════════════════════════════════════════════════════════════════
+# ENTRY POINT
+# ══════════════════════════════════════════════════════════════════════════════
 
 def main():
-    win = DashboardWindow()
-    win.connect('destroy', Gtk.main_quit)
-    win.show_all()
-    Gtk.main()
+    app = Gtk.Application(application_id='com.concentrados.monserrath.dashboard',
+                          flags=0)
+    app.connect('activate', lambda a: DashboardWindow(a).show_all())
+    app.run(None)
 
 
 if __name__ == '__main__':
