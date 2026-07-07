@@ -71,8 +71,23 @@ pkg_install() {
 }
 
 # ================================================================
-#  GUI (whiptail) — menu interactivo de gestion
+#  GUI — ventana de escritorio real (zenity/GTK) con fallback a
+#  whiptail (terminal) y a texto plano si no hay ninguno disponible.
 # ================================================================
+# El script corre como root (auto-elevado), pero los dialogos deben
+# dibujarse en la sesion X del usuario que lo invoco, no en la de root
+# -- root normalmente no tiene permiso sobre el Xauthority del usuario.
+# Se ejecuta zenity como REAL_USER preservando DISPLAY/XAUTHORITY.
+REAL_USER_HOME=$(getent passwd "$REAL_USER" | cut -d: -f6)
+export DISPLAY="${DISPLAY:-:0.0}"
+export XAUTHORITY="${XAUTHORITY:-$REAL_USER_HOME/.Xauthority}"
+
+HAS_ZENITY=false
+if [ "${DEPLOY_NO_GUI:-}" != "1" ] && has_cmd zenity && [ -n "${DISPLAY:-}" ] && [ "$REAL_USER" != "root" ]; then
+    HAS_ZENITY=true
+fi
+gui() { sudo -u "$REAL_USER" env DISPLAY="$DISPLAY" XAUTHORITY="$XAUTHORITY" zenity "$@"; }
+
 HAS_WHIPTAIL=false
 has_cmd whiptail && HAS_WHIPTAIL=true
 # Sesiones sin terminal real (cron, CI, SSH sin pty) no pueden dibujar whiptail
@@ -109,28 +124,45 @@ fullscale=,green
 TITLE="🌾 Concentrados Monserrath — Panel de Servidor"
 
 splash() {
-    $HAS_WHIPTAIL || return 0
-    whiptail --title "$TITLE" --infobox "\n   +==============================================+\n   |                                                |\n   |     CONCENTRADOS MONSERRATH  -  v2.0          |\n   |     Panel de despliegue y gestion del server  |\n   |                                                |\n   +==============================================+\n" 12 62
-    sleep 2
+    if $HAS_ZENITY; then
+        gui --info --title="$TITLE" --width=420 --timeout=2 \
+            --text="<b>CONCENTRADOS MONSERRATH v2.0</b>\n\nPanel de despliegue y gestion del servidor" &>/dev/null
+    elif $HAS_WHIPTAIL; then
+        whiptail --title "$TITLE" --infobox "\n   +==============================================+\n   |                                                |\n   |     CONCENTRADOS MONSERRATH  -  v2.0          |\n   |     Panel de despliegue y gestion del server  |\n   |                                                |\n   +==============================================+\n" 12 62
+        sleep 2
+    fi
 }
 
 ui_msg() {
-    if $HAS_WHIPTAIL; then whiptail --title "$TITLE" --msgbox "$1" 16 74
+    if $HAS_ZENITY; then gui --info --title="$TITLE" --width=560 --text="$1" 2>/dev/null
+    elif $HAS_WHIPTAIL; then whiptail --title "$TITLE" --msgbox "$1" 16 74
     else echo -e "\n$1\n"; read -rp "Enter para continuar..." _; fi
 }
 ui_input() {
     # ui_input "titulo" "default" -> stdout
-    if $HAS_WHIPTAIL; then whiptail --title "$TITLE" --inputbox "$1" 10 70 "$2" 3>&1 1>&2 2>&3
+    if $HAS_ZENITY; then gui --entry --title="$TITLE" --width=480 --text="$1" --entry-text="$2" 2>/dev/null
+    elif $HAS_WHIPTAIL; then whiptail --title "$TITLE" --inputbox "$1" 10 70 "$2" 3>&1 1>&2 2>&3
     else read -rp "$1 [$2]: " _v; echo "${_v:-$2}"; fi
 }
 ui_yesno() {
-    if $HAS_WHIPTAIL; then whiptail --title "$TITLE" --yesno "$1" 10 70
+    if $HAS_ZENITY; then gui --question --title="$TITLE" --width=480 --text="$1" 2>/dev/null
+    elif $HAS_WHIPTAIL; then whiptail --title "$TITLE" --yesno "$1" 10 70
     else read -rp "$1 [s/N]: " _v; [[ "$_v" =~ ^[sSyY] ]]; fi
 }
 ui_menu() {
     # ui_menu "titulo" opt1 desc1 opt2 desc2 ... -> stdout = opcion elegida
     local title="$1"; shift
-    if $HAS_WHIPTAIL; then
+    if $HAS_ZENITY; then
+        local rows=() first=true
+        while [ $# -gt 0 ]; do
+            if $first; then rows+=(TRUE "$1" "$2"); first=false
+            else rows+=(FALSE "$1" "$2"); fi
+            shift 2
+        done
+        gui --list --radiolist --title="$TITLE" --width=680 --height=560 \
+            --text="$title" --column="" --column="Opcion" --column="Accion" \
+            --print-column=2 --hide-column=2 "${rows[@]}" 2>/dev/null
+    elif $HAS_WHIPTAIL; then
         whiptail --title "$TITLE" --menu "$title" 24 78 14 "$@" 3>&1 1>&2 2>&3
     else
         echo "$title"
@@ -176,37 +208,36 @@ load_conf() { grep "^${1}=" "$DEPLOY_CONF" 2>/dev/null | head -1 | cut -d= -f2- 
 # ================================================================
 install_node() {
     step "Node.js $NODE_MAJOR LTS"
+    # Match EXACTO de major version, no ">=". better-sqlite3 (modulo nativo,
+    # compila contra los headers de V8) rompe en tiempo de compilacion con
+    # versiones de Node mas nuevas que las que soporta esa release del
+    # paquete -- un Node 24 "mas nuevo" no sirve, hace falta el mismo major
+    # que usa el resto del proyecto.
     if has_cmd node; then
         local v; v=$(node --version 2>/dev/null | grep -oE '^v[0-9]+' | tr -d v)
-        if [ "${v:-0}" -ge "$NODE_MAJOR" ]; then ok "Node.js $(node --version) ya instalado"; return 0; fi
-        warn "Node.js instalado es v$v, se requiere >= $NODE_MAJOR"
+        if [ "${v:-0}" -eq "$NODE_MAJOR" ]; then ok "Node.js $(node --version) ya instalado"; return 0; fi
+        warn "Node.js instalado es v$v, se requiere exactamente v$NODE_MAJOR (modulos nativos como better-sqlite3 no compilan con otras majors)"
     fi
 
-    if [ "$PKG_MGR" = "apt" ]; then
-        warn "Instalando Node.js $NODE_MAJOR via NodeSource..."
-        curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash - &>/dev/null || true
-        pkg_install nodejs || true
-    elif [ -n "$PKG_MGR" ]; then
-        pkg_install nodejs npm || true
-    fi
-
-    if ! has_cmd node || [ "$(node --version 2>/dev/null | grep -oE '^v[0-9]+' | tr -d v || echo 0)" -lt "$NODE_MAJOR" ]; then
-        warn "Instalando Node.js $NODE_MAJOR standalone en /opt/nodejs..."
-        local arch; arch=$(uname -m); case "$arch" in x86_64) arch=x64;; aarch64) arch=arm64;; esac
-        local url="https://nodejs.org/dist/latest-v${NODE_MAJOR}.x/"
-        local fname; fname=$(curl -fsSL "$url" | grep -oE "node-v${NODE_MAJOR}\.[0-9.]+-linux-${arch}\.tar\.xz" | head -1)
-        [ -n "$fname" ] || die "No se pudo determinar la version de Node $NODE_MAJOR para descargar."
-        mkdir -p /opt/nodejs
-        curl -fsSL "${url}${fname}" -o /tmp/node.tar.xz || die "Descarga de Node.js fallo."
-        tar xf /tmp/node.tar.xz -C /opt/nodejs
-        rm -f /tmp/node.tar.xz
-        local nodedir; nodedir=$(find /opt/nodejs -maxdepth 1 -iname "node-v${NODE_MAJOR}*" | head -1)
-        ln -sfn "$nodedir" /opt/nodejs/current
-        ln -sf /opt/nodejs/current/bin/node /usr/local/bin/node
-        ln -sf /opt/nodejs/current/bin/npm  /usr/local/bin/npm
-        ln -sf /opt/nodejs/current/bin/npx  /usr/local/bin/npx
-        export PATH="/opt/nodejs/current/bin:$PATH"
-    fi
+    # Instalacion standalone en /opt (no se toca el Node del sistema si
+    # existe uno de otra version -- evita romper otras herramientas que
+    # dependan de el).
+    warn "Instalando Node.js $NODE_MAJOR standalone en /opt/nodejs..."
+    local arch; arch=$(uname -m); case "$arch" in x86_64) arch=x64;; aarch64) arch=arm64;; esac
+    local url="https://nodejs.org/dist/latest-v${NODE_MAJOR}.x/"
+    local fname; fname=$(curl -fsSL "$url" | grep -oE "node-v${NODE_MAJOR}\.[0-9.]+-linux-${arch}\.tar\.xz" | head -1)
+    [ -n "$fname" ] || die "No se pudo determinar la version de Node $NODE_MAJOR para descargar."
+    mkdir -p /opt/nodejs
+    curl -fsSL "${url}${fname}" -o /tmp/node.tar.xz || die "Descarga de Node.js fallo."
+    tar xf /tmp/node.tar.xz -C /opt/nodejs
+    rm -f /tmp/node.tar.xz
+    local nodedir; nodedir=$(find /opt/nodejs -maxdepth 1 -iname "node-v${NODE_MAJOR}*" | head -1)
+    ln -sfn "$nodedir" /opt/nodejs/current
+    ln -sf /opt/nodejs/current/bin/node /usr/local/bin/node
+    ln -sf /opt/nodejs/current/bin/npm  /usr/local/bin/npm
+    ln -sf /opt/nodejs/current/bin/npx  /usr/local/bin/npx
+    export PATH="/opt/nodejs/current/bin:$PATH"
+    hash -r
     has_cmd node || die "Node.js no se pudo instalar."
     ok "Node.js $(node --version)"
 }
@@ -224,11 +255,31 @@ setup_service_user() {
         ok "Usuario '$SERVICE_USER' ya existe"
     fi
     for d in "$APPDATA_BOT" "$APPDATA_BOT/media" "$APPDATA_BOT/docs" "$APPDATA_BOT/product-images" \
-             "$APPDATA_BOT/estados" "$APPDATA_BOT/auth" "$APPDATA_BOT/branding" "$LOG_DIR"; do
+             "$APPDATA_BOT/estados" "$APPDATA_BOT/auth" "$APPDATA_BOT/branding" "$APPDATA_BOT/reports" \
+             "$APPDATA_BOT/profile-pics" "$LOG_DIR"; do
         as_root mkdir -p "$d"
         as_root chown -R "$SERVICE_USER" "$d" 2>/dev/null || true
         as_root chmod 750 "$d" 2>/dev/null || true
     done
+
+    # El repo suele vivir dentro del home de quien lo clono (ej. /home/kali/...),
+    # y los home directories normalmente son 700 -- el usuario de servicio no
+    # puede ni atravesarlos. Se otorga SOLO permiso de transito (x, sin lectura
+    # ni listado) al home del usuario real, nunca al resto de su contenido.
+    case "$PROJ" in
+        "$REAL_USER_HOME"/*)
+            if [ "$SERVICE_USER" != "$REAL_USER" ]; then
+                has_cmd setfacl || pkg_install acl
+                if has_cmd setfacl; then
+                    setfacl -m "u:${SERVICE_USER}:x" "$REAL_USER_HOME" 2>/dev/null \
+                        && ok "ACL: '$SERVICE_USER' puede atravesar $REAL_USER_HOME (sin leer/listar su contenido)" \
+                        || warn "No se pudo aplicar ACL de transito en $REAL_USER_HOME"
+                else
+                    warn "setfacl no disponible — el servicio podria fallar con 'Permission denied' al iniciar (instala el paquete 'acl')"
+                fi
+            fi
+            ;;
+    esac
 }
 
 # ================================================================
@@ -243,6 +294,16 @@ install_npm_deps() {
         ok "Dependencias instaladas"
     else
         ok "Dependencias npm OK (cache)"
+    fi
+    # better-sqlite3 es un modulo nativo (ABI ligado a la version exacta de
+    # Node) -- si el binario ya en disco fue compilado para otro Node (ej.
+    # el sistema tenia una version distinta antes), recompilar para evitar
+    # el clasico "NODE_MODULE_VERSION X vs Y" al arrancar el servicio.
+    if ! node -e "require('better-sqlite3')" &>/dev/null; then
+        warn "better-sqlite3 no coincide con este Node — recompilando..."
+        npm rebuild better-sqlite3 2>&1 | tail -5
+        node -e "require('better-sqlite3')" &>/dev/null && ok "better-sqlite3 recompilado OK" \
+            || warn "better-sqlite3 sigue fallando — revisa manualmente (build-essential/python3 instalados?)"
     fi
     restore_repo_ownership
 }
@@ -272,6 +333,11 @@ configure_env() {
             echo "JWT_SECRET=$(gen_secret)"
             echo "BOT_ENABLED=true"
             echo "BOT_PHONE="
+            # Estado persistente (DB, PDFs) vive en APPDATA_BOT, nunca dentro
+            # del arbol de codigo -- asi el directorio del server puede quedar
+            # 100% solo-lectura para el servicio systemd (ProtectHome=read-only).
+            echo "DB_PATH=$APPDATA_BOT/pedidos.db"
+            echo "REPORTS_DIR=$APPDATA_BOT/reports"
         } > "$ENV_FILE"
         chmod 600 "$ENV_FILE"
         ok ".env creado (permisos 600, HOST=127.0.0.1 — el puerto de Node NUNCA se expone directo a internet)"
@@ -281,6 +347,8 @@ configure_env() {
     fi
     [ -n "$(env_get API_KEY)" ]    || env_set API_KEY "$(gen_secret)"
     [ -n "$(env_get JWT_SECRET)" ] || env_set JWT_SECRET "$(gen_secret)"
+    [ -n "$(env_get DB_PATH)" ]      || env_set DB_PATH "$APPDATA_BOT/pedidos.db"
+    [ -n "$(env_get REPORTS_DIR)" ]  || env_set REPORTS_DIR "$APPDATA_BOT/reports"
     port=$(env_get PORT); port="${port:-$DEFAULT_PORT}"
     save_conf PORT "$port"
     as_root chown "$SERVICE_USER" "$ENV_FILE" 2>/dev/null || true
@@ -298,23 +366,23 @@ install_systemd_service() {
 Description=Concentrados Monserrath - Servidor de pedidos WhatsApp
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
 
 [Service]
 Type=simple
 User=$SERVICE_USER
 WorkingDirectory=$SERVER_DIR
 EnvironmentFile=$ENV_FILE
-Environment=APPDATA=$APPDATA_BOT
+Environment=APPDATA=$(dirname "$APPDATA_BOT")
 ExecStart=$node_bin $SERVER_DIR/src/index.js
 Restart=on-failure
 RestartSec=5
-StartLimitIntervalSec=60
-StartLimitBurst=5
 
 # ── Cyberseguridad: hardening systemd ─────────────────────────
 NoNewPrivileges=yes
 ProtectSystem=strict
-ProtectHome=yes
+ProtectHome=read-only
 PrivateTmp=yes
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
@@ -323,8 +391,9 @@ RestrictSUIDSGID=yes
 RestrictRealtime=yes
 RestrictNamespaces=yes
 LockPersonality=yes
-MemoryDenyWriteExecute=yes
-ReadWritePaths=$APPDATA_BOT $LOG_DIR $SERVER_DIR
+# MemoryDenyWriteExecute=yes NO se usa: rompe el JIT de V8/Node (SIGTRAP al
+# arrancar) -- es un incompatibilidad conocida entre systemd y runtimes JIT.
+ReadWritePaths=$APPDATA_BOT $LOG_DIR
 CapabilityBoundingSet=
 AmbientCapabilities=
 
