@@ -30,96 +30,141 @@ PRESETS = [
     ('Carbon & Lima',    '#22302B', '#8AB833'),
 ]
 
-CSS = """
-window { background-color: #14170f; }
-headerbar {
-    background-image: linear-gradient(to right, #2D5016, #1A3009);
-    color: #ffffff;
-    border: none;
-}
-headerbar label { color: #ffffff; }
-headerbar .title { font-weight: 800; letter-spacing: 0.5px; }
-headerbar .subtitle { color: #D4800A; }
-headerbar button {
-    background: rgba(255,255,255,0.08);
-    border: 1px solid rgba(255,255,255,0.18);
+# Paleta "admin console" — deliberadamente neutra/tecnica (slate + OLED),
+# distinta de la paleta de marca del negocio: esta es una herramienta de
+# operacion interna, no la app que ve el cliente final.
+BG        = '#020617'
+SURFACE   = '#0F172A'
+SURFACE_2 = '#1E293B'
+BORDER    = '#334155'
+FG        = '#F8FAFC'
+FG_MUTED  = '#94A3B8'
+ACCENT    = '#22C55E'   # positivo / activo
+WARNING   = '#F59E0B'
+DANGER    = '#EF4444'
+INFO      = '#3B82F6'
+
+CSS = f"""
+* {{ font-family: 'Inter', 'Fira Sans', 'Cantarell', sans-serif; }}
+.mono {{ font-family: 'Fira Code', 'JetBrains Mono', monospace; }}
+
+window {{ background-color: {BG}; }}
+
+headerbar {{
+    background-color: {SURFACE};
+    border-bottom: 1px solid {BORDER};
+    box-shadow: none;
+    color: {FG};
+}}
+headerbar label {{ color: {FG}; }}
+headerbar .title {{ font-weight: 700; letter-spacing: 0.2px; font-size: 14px; }}
+headerbar .subtitle {{ color: {FG_MUTED}; font-size: 11px; }}
+headerbar button {{
+    background: transparent;
+    border: 1px solid {BORDER};
+    border-radius: 6px;
+    color: {FG};
+    padding: 4px 12px;
+    transition: background 150ms ease, border-color 150ms ease;
+}}
+headerbar button:hover {{ background: {SURFACE_2}; border-color: {FG_MUTED}; }}
+
+notebook > header {{ background-color: {SURFACE}; border-bottom: 1px solid {BORDER}; }}
+notebook > header > tabs > tab {{
+    padding: 10px 18px;
+    color: {FG_MUTED};
+    font-weight: 500;
+    font-size: 12px;
+    letter-spacing: 0.4px;
+    border-bottom: 2px solid transparent;
+    transition: color 150ms ease, border-color 150ms ease;
+}}
+notebook > header > tabs > tab:checked {{
+    color: {FG};
+    border-bottom: 2px solid {ACCENT};
+    background-color: shade({SURFACE}, 1.15);
+}}
+notebook > header > tabs > tab:hover {{ color: {FG}; }}
+notebook stack {{ background-color: {BG}; }}
+
+.section-title {{
+    color: {FG_MUTED};
+    font-weight: 600;
+    font-size: 11px;
+    letter-spacing: 1px;
+}}
+
+.stat-card {{
+    background-color: {SURFACE};
     border-radius: 8px;
-    color: #ffffff;
-    transition: background 200ms ease;
-}
-headerbar button:hover { background: rgba(255,255,255,0.22); }
+    border: 1px solid {BORDER};
+    padding: 14px 16px;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.4);
+    transition: border-color 150ms ease;
+}}
+.stat-card:hover {{ border-color: {FG_MUTED}; }}
+.stat-label {{ color: {FG_MUTED}; font-size: 11px; letter-spacing: 0.3px; }}
+.stat-value {{ color: {FG}; font-size: 22px; font-weight: 700; }}
 
-notebook > header { background-color: #1c2116; border: none; }
-notebook > header > tabs > tab {
-    padding: 8px 14px;
-    color: #b9c2ad;
-    transition: color 200ms ease, background 200ms ease;
-    border-radius: 8px 8px 0 0;
-}
-notebook > header > tabs > tab:checked {
-    background-color: #2D5016;
-    color: #ffffff;
-}
-notebook > header > tabs > tab:hover { background-color: rgba(212,128,10,0.15); }
+.status-dot {{ border-radius: 999px; min-width: 8px; min-height: 8px; }}
+.dot-active   {{ background-color: {ACCENT}; }}
+.dot-inactive {{ background-color: {FG_MUTED}; }}
+.dot-failed   {{ background-color: {DANGER}; }}
 
-.stat-card {
-    background-color: #1c2116;
-    border-radius: 12px;
-    border: 1px solid rgba(212,128,10,0.25);
-    padding: 12px;
-    transition: border 200ms ease, background 200ms ease;
-}
-.stat-card:hover { border: 1px solid rgba(212,128,10,0.6); background-color: #202614; }
-.stat-label { color: #9aa693; font-size: 11px; letter-spacing: 0.3px; }
-.stat-value { color: #ffffff; font-size: 20px; font-weight: 800; }
-.stat-icon { font-size: 22px; }
-
-.section-title {
-    color: #D4800A;
-    font-weight: 800;
-    font-size: 13px;
-    letter-spacing: 0.5px;
-}
-
-.pulse-active { color: #6fd97f; font-size: 16px; }
-.pulse-inactive { color: #666; font-size: 16px; }
-.pulse-failed { color: #e5766a; font-size: 16px; }
-
-button.action-btn {
-    border-radius: 10px;
+button.action-btn {{
+    border-radius: 6px;
     padding: 8px 16px;
-    font-weight: 700;
-    transition: all 200ms ease;
-}
-button.action-btn:hover { border-color: rgba(255,255,255,0.4); }
-.btn-primary { background-color: #2D5016; color: white; border: none; }
-.btn-primary:hover { background-color: #3a6620; }
-.btn-warn { background-color: #B5651D; color: white; border: none; }
-.btn-warn:hover { background-color: #cc7526; }
-.btn-danger { background-color: #B3261E; color: white; border: none; }
-.btn-danger:hover { background-color: #cc3a30; }
-.btn-flat { background-color: #1c2116; color: #e6e6e6; border: 1px solid rgba(255,255,255,0.12); }
-.btn-flat:hover { background-color: #2a3020; }
+    font-weight: 600;
+    font-size: 12px;
+    letter-spacing: 0.3px;
+    transition: background 150ms ease, border-color 150ms ease;
+}}
+.btn-primary {{ background-color: {ACCENT}; color: {BG}; border: 1px solid {ACCENT}; }}
+.btn-primary:hover {{ background-color: shade({ACCENT}, 1.1); }}
+.btn-warn {{ background-color: transparent; color: {WARNING}; border: 1px solid {WARNING}; }}
+.btn-warn:hover {{ background-color: rgba(245,158,11,0.12); }}
+.btn-danger {{ background-color: transparent; color: {DANGER}; border: 1px solid {DANGER}; }}
+.btn-danger:hover {{ background-color: rgba(239,68,68,0.12); }}
+.btn-flat {{ background-color: {SURFACE_2}; color: {FG}; border: 1px solid {BORDER}; }}
+.btn-flat:hover {{ background-color: shade({SURFACE_2}, 1.2); }}
 
-entry {
-    background-color: #1c2116;
-    color: #ffffff;
-    border-radius: 8px;
-    border: 1px solid rgba(255,255,255,0.15);
-    padding: 6px 10px;
-}
-entry:focus { border: 1px solid #D4800A; }
+entry {{
+    background-color: {SURFACE_2};
+    color: {FG};
+    border-radius: 6px;
+    border: 1px solid {BORDER};
+    padding: 7px 10px;
+}}
+entry:focus {{ border: 1px solid {ACCENT}; }}
 
-label { color: #d8ddd0; }
-textview, textview text { background-color: #0f120c; color: #cfd6c4; }
+label {{ color: {FG}; }}
+.label-muted {{ color: {FG_MUTED}; font-size: 12px; }}
 
-.preset-swatch {
-    border-radius: 10px;
-    border: 2px solid rgba(255,255,255,0.15);
-    transition: border 200ms ease;
-}
-.preset-swatch:hover { border: 2px solid #ffffff; }
-.preset-selected { border: 3px solid #ffffff; }
+textview {{ background-color: {SURFACE}; }}
+textview text {{ background-color: {SURFACE}; color: #CBD5E1; }}
+
+scrolledwindow, treeview {{ background-color: {SURFACE}; color: {FG}; }}
+treeview header button {{
+    background-color: {SURFACE_2};
+    color: {FG_MUTED};
+    border: none;
+    border-bottom: 1px solid {BORDER};
+    font-size: 11px;
+    font-weight: 600;
+    padding: 8px;
+}}
+treeview:selected {{ background-color: {SURFACE_2}; }}
+
+separator {{ background-color: {BORDER}; min-height: 1px; }}
+
+.preset-swatch {{
+    border-radius: 6px;
+    border: 1px solid {BORDER};
+    background-color: {SURFACE};
+    transition: border-color 150ms ease;
+}}
+.preset-swatch:hover {{ border-color: {FG_MUTED}; }}
+.preset-selected {{ border: 2px solid {ACCENT}; }}
 """
 
 
@@ -216,9 +261,9 @@ class Chart(Gtk.DrawingArea):
         super().__init__()
         self.title = title
         self.kind = kind
-        self.color = color or (0.831, 0.502, 0.039)
+        self.color = color or hex_to_rgb(ACCENT)
         self.data = []
-        self.set_size_request(260, 170)
+        self.set_size_request(260, 180)
         self.connect('draw', self.on_draw)
 
     def set_data(self, data):
@@ -228,40 +273,57 @@ class Chart(Gtk.DrawingArea):
     def on_draw(self, widget, cr):
         w = widget.get_allocated_width()
         h = widget.get_allocated_height()
-        cr.set_source_rgb(0.11, 0.13, 0.086)
-        cr.paint()
+        surface_rgb = hex_to_rgb(SURFACE)
+        border_rgb = hex_to_rgb(BORDER)
+        muted_rgb = hex_to_rgb(FG_MUTED)
 
-        cr.set_source_rgb(0.831, 0.502, 0.039)
-        cr.select_font_face('Sans', 0, 1)
-        cr.set_font_size(12)
-        cr.move_to(10, 18)
-        cr.show_text(self.title)
+        cr.set_source_rgb(*surface_rgb)
+        cr.paint()
+        cr.set_source_rgb(*border_rgb)
+        cr.set_line_width(1)
+        cr.rectangle(0.5, 0.5, w - 1, h - 1)
+        cr.stroke()
+
+        cr.set_source_rgb(*muted_rgb)
+        cr.select_font_face('Sans', 0, 0)
+        cr.set_font_size(11)
+        cr.move_to(14, 20)
+        cr.show_text(self.title.upper())
 
         if not any(v for _, v in self.data):
-            cr.set_source_rgba(0.7, 0.75, 0.68, 0.6)
+            cr.set_source_rgba(*muted_rgb, 0.8)
             cr.set_font_size(11)
-            cr.move_to(10, h / 2)
+            cr.move_to(14, h / 2)
             cr.show_text('Sin datos todavia — apareceran con el primer pedido')
             return
 
-        pad_left, pad_bottom, pad_top = 12, 24, 30
+        pad_left, pad_bottom, pad_top = 14, 26, 34
         chart_h = h - pad_bottom - pad_top
-        chart_w = w - pad_left - 12
+        chart_w = w - pad_left - 14
         maxval = max((v for _, v in self.data), default=1) or 1
         n = len(self.data) or 1
         bw = chart_w / n
 
+        # Gridlines sutiles horizontales (referencia visual, no compiten con datos)
+        for frac in (0.25, 0.5, 0.75, 1.0):
+            gy = pad_top + chart_h * (1 - frac)
+            cr.set_source_rgba(*border_rgb, 0.5)
+            cr.set_line_width(1)
+            cr.move_to(pad_left, gy)
+            cr.line_to(pad_left + chart_w, gy)
+            cr.stroke()
+
         if self.kind == 'bar':
             for i, (label, val) in enumerate(self.data):
                 bh = (val / maxval) * chart_h if maxval else 0
-                x = pad_left + i * bw + bw * 0.15
+                x = pad_left + i * bw + bw * 0.2
                 y = pad_top + (chart_h - bh)
                 cr.set_source_rgb(*self.color)
-                cr.rectangle(x, y, bw * 0.7, bh)
+                cr.rectangle(x, y, bw * 0.6, bh)
                 cr.fill()
-                cr.set_source_rgba(0.85, 0.88, 0.8, 0.9)
-                cr.set_font_size(8)
-                cr.move_to(x, h - pad_bottom + 11)
+                cr.set_source_rgb(*muted_rgb)
+                cr.set_font_size(9)
+                cr.move_to(x, h - pad_bottom + 13)
                 cr.show_text(label)
         else:  # line
             pts = []
@@ -270,34 +332,44 @@ class Chart(Gtk.DrawingArea):
                 y = pad_top + (chart_h - (val / maxval) * chart_h if maxval else chart_h)
                 pts.append((x, y, label))
             cr.set_source_rgb(*self.color)
-            cr.set_line_width(2.2)
+            cr.set_line_width(2)
             for i, (x, y, _) in enumerate(pts):
                 cr.line_to(x, y) if i else cr.move_to(x, y)
             cr.stroke()
             for x, y, label in pts:
-                cr.arc(x, y, 3, 0, 2 * 3.14159)
+                cr.arc(x, y, 2.5, 0, 2 * 3.14159)
                 cr.fill()
-                cr.set_source_rgba(0.85, 0.88, 0.8, 0.9)
-                cr.set_font_size(8)
-                cr.move_to(x - 8, h - pad_bottom + 11)
+                cr.set_source_rgb(*muted_rgb)
+                cr.set_font_size(9)
+                cr.move_to(x - 8, h - pad_bottom + 13)
                 cr.show_text(label)
                 cr.set_source_rgb(*self.color)
 
 
-def stat_card(icon, label, value_widget_holder):
-    box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+def stat_card(label, value_widget_holder, dot_holder=None):
+    """Card estilo admin-console: etiqueta muted + valor grande. Si dot_holder
+    se pasa (una lista), se agrega un indicador de estado circular editable
+    via clase CSS (dot-active/dot-inactive/dot-failed) en vez de un emoji."""
+    box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
     box.get_style_context().add_class('stat-card')
-    icon_lbl = Gtk.Label(label=icon)
-    icon_lbl.get_style_context().add_class('stat-icon')
-    box.pack_start(icon_lbl, False, False, 0)
-    inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-    lbl = Gtk.Label(label=label, xalign=0)
+
+    lbl_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+    lbl = Gtk.Label(label=label.upper(), xalign=0)
     lbl.get_style_context().add_class('stat-label')
+    lbl_row.pack_start(lbl, True, True, 0)
+    if dot_holder is not None:
+        dot = Gtk.Box()
+        dot.set_size_request(8, 8)
+        dot.get_style_context().add_class('status-dot')
+        dot.get_style_context().add_class('dot-inactive')
+        lbl_row.pack_start(dot, False, False, 2)
+        dot_holder.append(dot)
+    box.pack_start(lbl_row, False, False, 0)
+
     val = Gtk.Label(label='—', xalign=0)
     val.get_style_context().add_class('stat-value')
-    inner.pack_start(lbl, False, False, 0)
-    inner.pack_start(val, False, False, 0)
-    box.pack_start(inner, True, True, 0)
+    val.get_style_context().add_class('mono')
+    box.pack_start(val, False, False, 0)
     value_widget_holder.append(val)
     return box
 
@@ -317,10 +389,10 @@ class DashboardWindow(Gtk.Window):
         self.add(vbox)
 
         header = Gtk.HeaderBar()
-        header.set_title('🌾 Concentrados Monserrath')
-        header.set_subtitle('Panel del servidor — monitoreo en vivo')
+        header.set_title('CONCENTRADOS MONSERRATH')
+        header.set_subtitle('Panel de administracion del servidor')
         header.set_show_close_button(True)
-        refresh_btn = Gtk.Button(label='⟳ Actualizar')
+        refresh_btn = Gtk.Button(label='ACTUALIZAR')
         refresh_btn.connect('clicked', lambda *_: self.refresh_all())
         header.pack_end(refresh_btn)
         self.set_titlebar(header)
@@ -328,12 +400,12 @@ class DashboardWindow(Gtk.Window):
         notebook = Gtk.Notebook()
         vbox.pack_start(notebook, True, True, 0)
 
-        notebook.append_page(self.build_monitor_tab(), Gtk.Label(label='📊  Monitoreo'))
-        notebook.append_page(self.build_sales_tab(), Gtk.Label(label='💰  Ventas'))
-        notebook.append_page(self.build_brand_tab(), Gtk.Label(label='🎨  Marca'))
-        notebook.append_page(self.build_config_tab(), Gtk.Label(label='⚙️  Configuracion'))
-        notebook.append_page(self.build_security_tab(), Gtk.Label(label='🛡️  Seguridad'))
-        notebook.append_page(self.build_logs_tab(), Gtk.Label(label='📜  Logs'))
+        notebook.append_page(self.build_monitor_tab(), Gtk.Label(label='MONITOREO'))
+        notebook.append_page(self.build_sales_tab(), Gtk.Label(label='VENTAS'))
+        notebook.append_page(self.build_brand_tab(), Gtk.Label(label='MARCA'))
+        notebook.append_page(self.build_config_tab(), Gtk.Label(label='CONFIGURACION'))
+        notebook.append_page(self.build_security_tab(), Gtk.Label(label='SEGURIDAD'))
+        notebook.append_page(self.build_logs_tab(), Gtk.Label(label='LOGS'))
 
         self._pulse_on = True
         self.refresh_all()
@@ -345,12 +417,13 @@ class DashboardWindow(Gtk.Window):
         return True
 
     def _pulse(self):
+        # Sutil respiracion de opacidad en el indicador de estado cuando el
+        # servicio esta activo -- unica animacion del panel, discreta.
         self._pulse_on = not self._pulse_on
-        if hasattr(self, 'status_dot'):
-            ctx = self.status_dot.get_style_context()
-            cls = getattr(self, '_status_class', 'pulse-inactive')
-            if cls == 'pulse-active':
-                self.status_dot.set_opacity(1.0 if self._pulse_on else 0.45)
+        if hasattr(self, 'dot_status') and getattr(self, '_status_class', '') == 'pulse-active':
+            self.dot_status.set_opacity(1.0 if self._pulse_on else 0.5)
+        elif hasattr(self, 'dot_status'):
+            self.dot_status.set_opacity(1.0)
         return True
 
     # ── Tab: Monitoreo ────────────────────────────────────────
@@ -370,18 +443,22 @@ class DashboardWindow(Gtk.Window):
         box.pack_start(cards, False, False, 0)
 
         holders = {}
+        dots = {}
         specs = [
-            ('status', '🖥️', 'Servicio Node'), ('tunnel', '☁️', 'Tunel Cloudflare'),
-            ('uptime', '⏱️', 'Activo desde'), ('mem', '🧠', 'Memoria'),
-            ('orders', '📦', 'Pedidos (hoy / total)'), ('msgs', '💬', 'Mensajes (hoy / total)'),
+            ('status', 'Servicio Node', True), ('tunnel', 'Tunel Cloudflare', True),
+            ('uptime', 'Activo desde', False), ('mem', 'Memoria', False),
+            ('orders', 'Pedidos (hoy / total)', False), ('msgs', 'Mensajes (hoy / total)', False),
         ]
-        for key, icon, label in specs:
-            hold = []
-            cards.add(stat_card(icon, label, hold))
+        for key, label, has_dot in specs:
+            hold, dot_hold = [], ([] if has_dot else None)
+            cards.add(stat_card(label, hold, dot_hold))
             holders[key] = hold[0]
+            if has_dot:
+                dots[key] = dot_hold[0]
         self.lbl_status, self.lbl_tunnel = holders['status'], holders['tunnel']
         self.lbl_uptime, self.lbl_mem = holders['uptime'], holders['mem']
         self.lbl_orders, self.lbl_msgs = holders['orders'], holders['msgs']
+        self.dot_status, self.dot_tunnel = dots['status'], dots['tunnel']
 
         charts_title = Gtk.Label(label='ACTIVIDAD (ULTIMOS 7 DIAS)', xalign=0)
         charts_title.get_style_context().add_class('section-title')
@@ -389,17 +466,17 @@ class DashboardWindow(Gtk.Window):
 
         charts = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
         box.pack_start(charts, True, True, 0)
-        self.chart_orders = Chart('Pedidos por dia', 'bar', (0.831, 0.502, 0.039))
-        self.chart_msgs = Chart('Mensajes por dia', 'line', (0.44, 0.72, 0.85))
+        self.chart_orders = Chart('Pedidos por dia', 'bar', hex_to_rgb(ACCENT))
+        self.chart_msgs = Chart('Mensajes por dia', 'line', hex_to_rgb(INFO))
         charts.pack_start(self.chart_orders, True, True, 0)
         charts.pack_start(self.chart_msgs, True, True, 0)
 
         actions = Gtk.Box(spacing=8)
         box.pack_start(actions, False, False, 0)
         for label, cmd, css in [
-            ('🔄 Reiniciar', f'systemctl restart {SERVICE}', 'btn-primary'),
-            ('⏸ Detener', f'systemctl stop {SERVICE}', 'btn-warn'),
-            ('▶ Iniciar', f'systemctl start {SERVICE}', 'btn-primary'),
+            ('REINICIAR', f'systemctl restart {SERVICE}', 'btn-primary'),
+            ('DETENER', f'systemctl stop {SERVICE}', 'btn-warn'),
+            ('INICIAR', f'systemctl start {SERVICE}', 'btn-primary'),
         ]:
             btn = Gtk.Button(label=label)
             btn.get_style_context().add_class('action-btn')
@@ -430,12 +507,12 @@ class DashboardWindow(Gtk.Window):
         box.pack_start(cards, False, False, 0)
 
         holders = {}
-        for key, icon, label in [
-            ('sales_today', '💵', 'Ventas hoy'), ('avg_ticket', '🧾', 'Ticket promedio'),
-            ('cancelled', '❌', '% Cancelados'), ('delivered', '🚚', 'Entregados (total)'),
+        for key, label in [
+            ('sales_today', 'Ventas hoy'), ('avg_ticket', 'Ticket promedio'),
+            ('cancelled', '% Cancelados'), ('delivered', 'Entregados (total)'),
         ]:
             hold = []
-            cards.add(stat_card(icon, label, hold))
+            cards.add(stat_card(label, hold))
             holders[key] = hold[0]
         self.lbl_sales_today = holders['sales_today']
         self.lbl_avg_ticket = holders['avg_ticket']
@@ -445,7 +522,7 @@ class DashboardWindow(Gtk.Window):
         chart_title = Gtk.Label(label='INGRESOS POR DIA (ULTIMOS 7)', xalign=0)
         chart_title.get_style_context().add_class('section-title')
         box.pack_start(chart_title, False, False, 0)
-        self.chart_sales = Chart('Ingresos ($)', 'bar', (0.42, 0.75, 0.4))
+        self.chart_sales = Chart('Ingresos ($)', 'bar', hex_to_rgb(ACCENT))
         box.pack_start(self.chart_sales, False, False, 0)
 
         top_title = Gtk.Label(label='TOP PRODUCTOS VENDIDOS', xalign=0)
@@ -521,7 +598,7 @@ class DashboardWindow(Gtk.Window):
 
         logo_box = Gtk.Box(spacing=8)
         box.pack_start(logo_box, False, False, 4)
-        logo_btn = Gtk.Button(label='🖼️ Cambiar logo…')
+        logo_btn = Gtk.Button(label='CAMBIAR LOGO')
         logo_btn.get_style_context().add_class('action-btn')
         logo_btn.get_style_context().add_class('btn-flat')
         logo_btn.connect('clicked', self.on_pick_logo)
@@ -529,7 +606,7 @@ class DashboardWindow(Gtk.Window):
         self.logo_status = Gtk.Label(label='')
         logo_box.pack_start(self.logo_status, False, False, 0)
 
-        save_btn = Gtk.Button(label='💾 Guardar marca')
+        save_btn = Gtk.Button(label='GUARDAR MARCA')
         save_btn.get_style_context().add_class('action-btn')
         save_btn.get_style_context().add_class('btn-primary')
         save_btn.connect('clicked', self.on_save_brand)
@@ -653,7 +730,7 @@ class DashboardWindow(Gtk.Window):
         self.entry_phone = self._config_field(grid, 1, 'Numero WhatsApp (BOT_PHONE)', env_get('BOT_PHONE'))
         self.entry_domain = self._config_field(grid, 2, 'Dominio propio (nginx+HTTPS)', env_get('SERVER_DOMAIN'))
 
-        save_btn = Gtk.Button(label='💾 Guardar y reiniciar servicio')
+        save_btn = Gtk.Button(label='GUARDAR Y REINICIAR SERVICIO')
         save_btn.get_style_context().add_class('action-btn')
         save_btn.get_style_context().add_class('btn-primary')
         save_btn.connect('clicked', self.on_save_config)
@@ -665,13 +742,13 @@ class DashboardWindow(Gtk.Window):
 
         row2 = Gtk.Box(spacing=8)
         box.pack_start(row2, False, False, 0)
-        regen_btn = Gtk.Button(label='🔑 Regenerar secretos')
+        regen_btn = Gtk.Button(label='REGENERAR SECRETOS')
         regen_btn.get_style_context().add_class('action-btn')
         regen_btn.get_style_context().add_class('btn-warn')
         regen_btn.connect('clicked', self.on_regen_secrets)
         row2.pack_start(regen_btn, False, False, 0)
 
-        relink_btn = Gtk.Button(label='📱 Re-vincular WhatsApp')
+        relink_btn = Gtk.Button(label='RE-VINCULAR WHATSAPP')
         relink_btn.get_style_context().add_class('action-btn')
         relink_btn.get_style_context().add_class('btn-warn')
         relink_btn.connect('clicked', self.on_relink_whatsapp)
@@ -732,7 +809,7 @@ class DashboardWindow(Gtk.Window):
         scroll = Gtk.ScrolledWindow()
         scroll.add(self.security_view)
         box.pack_start(scroll, True, True, 0)
-        btn = Gtk.Button(label='🔍 Ejecutar auditoria ahora')
+        btn = Gtk.Button(label='EJECUTAR AUDITORIA')
         btn.get_style_context().add_class('action-btn')
         btn.get_style_context().add_class('btn-flat')
         btn.connect('clicked', lambda *_: self.refresh_security())
@@ -783,15 +860,21 @@ class DashboardWindow(Gtk.Window):
         self.logs_view.scroll_to_mark(mark, 0, False, 0, 0)
 
     # ── Refresco general ──────────────────────────────────────
+    def _set_dot(self, dot, active, failed=False):
+        ctx = dot.get_style_context()
+        for cls in ('dot-active', 'dot-inactive', 'dot-failed'):
+            ctx.remove_class(cls)
+        ctx.add_class('dot-failed' if failed else ('dot-active' if active else 'dot-inactive'))
+
     def refresh_all(self):
         active = sh(f'systemctl is-active {SERVICE} 2>/dev/null') or 'inactivo'
-        icon = '🟢' if active == 'active' else ('🔴' if active == 'failed' else '⚪')
         self._status_class = 'pulse-active' if active == 'active' else 'pulse-inactive'
-        self.lbl_status.set_text(f'{icon} {active}')
+        self.lbl_status.set_text(active.upper())
+        self._set_dot(self.dot_status, active == 'active', failed=(active == 'failed'))
 
         tactive = sh(f'systemctl is-active {TUNNEL_SERVICE} 2>/dev/null') or 'no instalado'
-        ticon = '🟢' if tactive == 'active' else '⚪'
-        self.lbl_tunnel.set_text(f'{ticon} {tactive}')
+        self.lbl_tunnel.set_text(tactive.upper())
+        self._set_dot(self.dot_tunnel, tactive == 'active', failed=(tactive == 'failed'))
 
         since = sh(f"systemctl show {SERVICE} -p ActiveEnterTimestamp --value")
         self.lbl_uptime.set_text(since or '—')
