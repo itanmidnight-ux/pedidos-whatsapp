@@ -58,7 +58,7 @@ class NotificationService {
           final count = estados.where((e) => e.id > _lastEstadoId).length;
           await _notify(
             id: 1,
-            title: count == 1 ? '¡Nuevo estado en Monserrath! 📸' : '¡$count nuevos estados! 📸',
+            title: count == 1 ? '¡Nuevo estado en Monserrath!' : '¡$count nuevos estados!',
             body: count == 1 ? 'Hay un nuevo contenido disponible — ¡míralo ahora!' : '$count nuevas publicaciones esperan por ti',
           );
         }
@@ -79,7 +79,7 @@ class NotificationService {
           final count = products.where((p) => (p.id ?? 0) > _lastProductId).length;
           await _notify(
             id: 2,
-            title: count == 1 ? '¡Nuevo producto disponible! 🛍️' : '¡$count nuevos productos! 🛍️',
+            title: count == 1 ? '¡Nuevo producto disponible!' : '¡$count nuevos productos!',
             body: count == 1 ? 'Un nuevo producto se agregó a nuestra tienda' : '$count nuevos productos esperan en la tienda',
           );
         }
@@ -120,7 +120,7 @@ class NotificationService {
   static Future<void> notifyNewOrders(int count) async {
     await _notify(
       id: 3,
-      title: count == 1 ? '🛒 ¡Nuevo pedido recibido!' : '🛒 $count nuevos pedidos!',
+      title: count == 1 ? '¡Nuevo pedido recibido!' : '$count nuevos pedidos!',
       body: count == 1
         ? 'Tienes un pedido pendiente por atender'
         : '$count pedidos pendientes por atender',

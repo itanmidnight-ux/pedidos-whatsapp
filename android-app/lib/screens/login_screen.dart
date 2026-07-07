@@ -209,7 +209,7 @@ class _LoginScreenState extends State<LoginScreen>
                               blurRadius: 20, offset: const Offset(0, 8)),
                           ],
                         ),
-                        child: const Center(child: Text('🌾', style: TextStyle(fontSize: 30))),
+                        child: Center(child: Icon(Icons.storefront_rounded, size: 30, color: scheme.secondary)),
                       ),
                     ),
                     const SizedBox(height: 8),

@@ -220,7 +220,7 @@ class ClientCartScreenState extends State<ClientCartScreen> {
           ? Center(child: CircularProgressIndicator(color: scheme.primary))
           : _items.isEmpty
               ? EmptyState(
-                  emoji: '🛒',
+                  icon: Icons.shopping_cart_outlined,
                   title: 'Tu carrito está vacío',
                   action: TextButton(
                     onPressed: () => Navigator.pop(context),

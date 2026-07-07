@@ -564,7 +564,7 @@ class _ChatScreenState extends State<ChatScreen> {
       body: Column(children: [
         Expanded(
           child: _messages.isEmpty
-            ? const EmptyState(emoji: '💬', title: 'Sin mensajes aún')
+            ? const EmptyState(icon: Icons.chat_bubble_outline_rounded, title: 'Sin mensajes aún')
             : ListView.builder(
                 controller: _scroll,
                 reverse: true,

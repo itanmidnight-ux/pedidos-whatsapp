@@ -310,7 +310,7 @@ class _ClientProductsScreenState extends State<ClientProductsScreen>
   }
 
   Widget _emptyState() => EmptyState(
-    emoji: '📦',
+    icon: Icons.inventory_2_rounded,
     title: _searchCtrl.text.isNotEmpty
       ? 'Sin resultados para "${_searchCtrl.text}"'
       : _offline ? 'Sin datos guardados — conecta a internet'
@@ -373,9 +373,9 @@ class _ProductCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 if (product.favorite)
-                  _Badge(label: '⭐ Destacado', color: scheme.secondary),
+                  _Badge(label: 'Destacado', color: scheme.secondary),
                 if (!product.noFiado)
-                  const _Badge(label: '🤝 Fiado', color: Color(0xFF1565C0)),
+                  const _Badge(label: 'Fiado', color: Color(0xFF1565C0)),
               ],
             )),
           ])),

@@ -190,7 +190,7 @@ class _AdminEstadosScreenState extends State<AdminEstadosScreen> {
           ? Center(child: CircularProgressIndicator(color: scheme.primary))
           : _estados.isEmpty
               ? const EmptyState(
-                  emoji: '📸',
+                  icon: Icons.photo_camera_outlined,
                   title: 'No hay estados activos',
                   subtitle: 'Los estados duran 36 horas',
                 )

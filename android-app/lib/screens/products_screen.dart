@@ -356,7 +356,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
     return Scaffold(
       body: products.isEmpty
         ? const EmptyState(
-            emoji: '📦',
+            icon: Icons.inventory_2_rounded,
             title: 'Sin productos',
             subtitle: 'Agrega uno con +',
           )

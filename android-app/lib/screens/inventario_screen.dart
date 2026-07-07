@@ -205,7 +205,7 @@ class _InventarioScreenState extends State<InventarioScreen> {
   Widget _buildProductList() {
     final scheme = Theme.of(context).colorScheme;
     if (_productTotals.isEmpty) {
-      return const EmptyState(emoji: '📦', title: 'No hay pedidos activos');
+      return const EmptyState(icon: Icons.inventory_2_rounded, title: 'No hay pedidos activos');
     }
 
     return Card(

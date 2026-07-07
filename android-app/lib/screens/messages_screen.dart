@@ -343,7 +343,7 @@ class _MessagesScreenState extends State<MessagesScreen> with SingleTickerProvid
         ? Center(child: CircularProgressIndicator(color: scheme.primary))
         : convs.isEmpty
           ? EmptyState(
-              emoji: _query.isNotEmpty ? '🔍' : archived ? '📦' : '💬',
+              icon: _query.isNotEmpty ? Icons.search_off_rounded : archived ? Icons.archive_outlined : Icons.chat_bubble_outline_rounded,
               title: _query.isNotEmpty ? 'Sin resultados'
                   : archived ? 'Sin conversaciones archivadas' : 'Sin conversaciones aún',
             )

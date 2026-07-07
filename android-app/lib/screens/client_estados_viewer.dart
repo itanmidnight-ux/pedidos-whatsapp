@@ -129,7 +129,7 @@ class _ClientEstadosViewerState extends State<ClientEstadosViewer>
     try {
       reply = await ApiService.sendAppMessage(text);
     } catch (_) {
-      reply = '✅ Mensaje enviado. Te responderemos pronto.';
+      reply = 'Mensaje enviado. Te responderemos pronto.';
     }
 
     if (!mounted) return;
@@ -280,7 +280,7 @@ class _ClientEstadosViewerState extends State<ClientEstadosViewer>
               CircleAvatar(
                 radius: 20,
                 backgroundColor: scheme.primary,
-                child: const Text('🌾', style: TextStyle(fontSize: 18)),
+                child: const Icon(Icons.storefront_rounded, size: 18, color: Colors.white),
               ),
               const SizedBox(width: 10),
               Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [

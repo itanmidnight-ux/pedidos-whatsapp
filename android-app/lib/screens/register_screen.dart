@@ -148,7 +148,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
               width: double.infinity,
               padding: const EdgeInsets.fromLTRB(24, 12, 24, 24),
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                const Text('🌾', style: TextStyle(fontSize: 36)),
+                Icon(Icons.storefront_rounded, size: 36, color: scheme.secondary),
                 const SizedBox(height: 8),
                 Text('Concentrados Monserrath',
                   style: TextStyle(color: scheme.secondary, fontSize: 13, fontWeight: FontWeight.w800, letterSpacing: 1)),

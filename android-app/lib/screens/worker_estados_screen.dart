@@ -42,7 +42,7 @@ class _WorkerEstadosScreenState extends State<WorkerEstadosScreen> {
 
     if (_estados.isEmpty) {
       return const EmptyState(
-        emoji: '📸',
+        icon: Icons.photo_camera_outlined,
         title: 'No hay estados activos',
         subtitle: 'El administrador publicará estados aquí',
       );

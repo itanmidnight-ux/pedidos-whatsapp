@@ -45,7 +45,7 @@ class _ClientEstadosScreenState extends State<ClientEstadosScreen> {
           SizedBox(
             height: MediaQuery.of(context).size.height * 0.6,
             child: EmptyState(
-              emoji: '📖',
+              icon: Icons.auto_stories_outlined,
               title: 'No hay estados disponibles',
               subtitle: 'Aquí aparecerán las novedades del negocio',
               action: FilledButton.icon(

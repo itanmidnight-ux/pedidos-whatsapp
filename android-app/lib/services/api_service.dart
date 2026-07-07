@@ -756,7 +756,7 @@ class ApiService {
     ).timeout(const Duration(seconds: 15));
     if (res.statusCode == 200) {
       final body = jsonDecode(res.body) as Map<String, dynamic>;
-      return body['reply'] as String? ?? '✅ Mensaje recibido';
+      return body['reply'] as String? ?? 'Mensaje recibido';
     }
     throw Exception('Error enviando mensaje');
   }

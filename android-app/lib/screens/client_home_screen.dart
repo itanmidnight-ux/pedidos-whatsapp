@@ -145,7 +145,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> with WidgetsBinding
                 color: Colors.white.withValues(alpha: 0.15),
                 shape: BoxShape.circle,
               ),
-              child: const Center(child: Text('🌾', style: TextStyle(fontSize: 20))),
+              child: const Center(child: Icon(Icons.storefront_rounded, size: 20, color: Colors.white)),
             ),
             const SizedBox(width: 10),
             const Expanded(child: Column(

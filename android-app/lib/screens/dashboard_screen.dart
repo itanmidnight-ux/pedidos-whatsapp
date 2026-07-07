@@ -171,7 +171,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
               if (sorted.isEmpty) return ListView(children: [
                 const SizedBox(height: 100),
                 const EmptyState(
-                  emoji: '📦',
+                  icon: Icons.inventory_2_rounded,
                   title: 'No hay pedidos activos',
                   subtitle: 'Desliza para actualizar',
                 ),

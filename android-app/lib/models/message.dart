@@ -69,17 +69,17 @@ class Conversation {
   bool   get hasFlaggedMessages => flaggedCount > 0;
 
   String get lastMsgPreview {
-    if (lastMediaType == 'audio') return '🎵 Mensaje de voz';
-    if (lastMediaType == 'image') return '📷 Imagen';
+    if (lastMediaType == 'audio') return 'Mensaje de voz';
+    if (lastMediaType == 'image') return 'Imagen';
     return lastMsg ?? '';
   }
 
   String get flagLabel {
     switch (flagReason) {
-      case 'reclamo':         return '🚨 Reclamo';
-      case 'fiado_bloqueado': return '⚠️ Fiado bloqueado';
-      case 'fiado_pedido':    return '💳 Pedido fiado';
-      default:                return '🔔 Alerta';
+      case 'reclamo':         return 'Reclamo';
+      case 'fiado_bloqueado': return 'Fiado bloqueado';
+      case 'fiado_pedido':    return 'Pedido fiado';
+      default:                return 'Alerta';
     }
   }
 

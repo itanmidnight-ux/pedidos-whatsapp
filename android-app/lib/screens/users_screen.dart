@@ -469,7 +469,7 @@ class _UsersScreenState extends State<UsersScreen> with SingleTickerProviderStat
                     ? ListView(children: [
                         const SizedBox(height: 100),
                         EmptyState(
-                          emoji: _staffQuery.isNotEmpty ? '🔍' : '👥',
+                          icon: _staffQuery.isNotEmpty ? Icons.search_off_rounded : Icons.people_outline_rounded,
                           title: _staffQuery.isNotEmpty ? 'Sin resultados' : 'No hay personal',
                         ),
                       ])
@@ -492,7 +492,7 @@ class _UsersScreenState extends State<UsersScreen> with SingleTickerProviderStat
                         ? ListView(children: [
                             const SizedBox(height: 100),
                             EmptyState(
-                              emoji: _clientQuery.isNotEmpty ? '🔍' : '🛒',
+                              icon: _clientQuery.isNotEmpty ? Icons.search_off_rounded : Icons.shopping_cart_outlined,
                               title: _clientQuery.isNotEmpty ? 'Sin resultados' : 'No hay clientes registrados',
                               subtitle: _clientQuery.isEmpty ? 'Los clientes se registran desde la app' : null,
                             ),
