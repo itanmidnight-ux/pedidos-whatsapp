@@ -8,6 +8,13 @@ class AppTheme {
   static const warningColor = Color(0xFFB5651D);
   static const errorColor   = Color(0xFFB3261E);
   static const infoColor    = Color(0xFF3B5A73);
+  static const borderColor  = Color(0xFFE4E4DC);
+
+  // Colores fijos de marcas externas -- no dependen de la paleta del negocio.
+  static const whatsappGreen  = Color(0xFF25D366);
+  static const whatsappBubble = Color(0xFFDCF8C6);
+  static const chatBg         = Color(0xFFF0EAD6);
+  static const nequiPurple    = Color(0xFF7B1FA2);
 
   static ThemeData build({
     required Color primary,
