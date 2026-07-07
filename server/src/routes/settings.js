@@ -27,6 +27,7 @@ const ALLOWED_SETTINGS_KEYS = [
   'nequi_phone', 'nequi_name', 'business_name', 'business_phone',
   'delivery_message', 'greeting_message',
   'empresa_nombre', 'empresa_descripcion', 'horario_atencion',
+  'theme_primary', 'theme_accent', 'theme_name',
 ];
 
 // PUT /api/settings — update setting (admin only)
@@ -42,6 +43,37 @@ router.put('/', adminAuth, (req, res) => {
     ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
   `).run(key, strVal);
   res.json({ ok: true });
+});
+
+const multer = require('multer');
+const path   = require('path');
+const fs     = require('fs');
+
+const LOGO_DIR = path.join(process.env.APPDATA || process.env.HOME, 'pedidos-bot', 'branding');
+if (!fs.existsSync(LOGO_DIR)) fs.mkdirSync(LOGO_DIR, { recursive: true });
+
+const logoUpload = multer({
+  dest: LOGO_DIR,
+  limits: { fileSize: 4 * 1024 * 1024 },
+  fileFilter: (_, file, cb) => cb(null, file.mimetype.startsWith('image/')),
+});
+
+// POST /api/settings/logo — subir logo de marca (admin only)
+router.post('/logo', adminAuth, logoUpload.single('logo'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'Archivo requerido' });
+  const ext = req.file.mimetype === 'image/png' ? 'png' : 'jpg';
+  const filename = `logo_${Date.now()}.${ext}`;
+  fs.renameSync(req.file.path, path.join(LOGO_DIR, filename));
+  getDB().prepare(`INSERT INTO settings (key, value) VALUES ('theme_logo_url', ?)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(filename);
+  res.json({ filename });
+});
+
+// GET /api/settings/logo/:filename — servir el logo (publico, no es dato sensible)
+router.get('/logo/:filename', (req, res) => {
+  const filepath = path.join(LOGO_DIR, path.basename(req.params.filename));
+  if (!fs.existsSync(filepath)) return res.status(404).json({ error: 'Logo no encontrado' });
+  res.sendFile(filepath);
 });
 
 module.exports = router;

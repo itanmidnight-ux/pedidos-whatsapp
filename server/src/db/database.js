@@ -1,17 +1,30 @@
 const Database  = require('better-sqlite3');
 const bcrypt    = require('bcrypt');
+const crypto    = require('crypto');
 const path      = require('path');
 const fs        = require('fs');
+const logger    = require('../utils/logger');
+const { runMigrations } = require('./migrations');
 
-const DB_PATH    = path.join(__dirname, '../../pedidos.db');
+const DB_PATH    = process.env.DB_PATH || path.join(__dirname, '../../pedidos.db');
 const SALT_ROUNDS = 10;
 
 const SEED_USERS = [
-  { username: 'jesus',  display_name: 'Jesús',  password: '1234', role: 'admin'  },
-  { username: 'johana', display_name: 'Johana', password: '1234', role: 'worker' },
-  { username: 'felipe', display_name: 'Felipe', password: '1234', role: 'worker' },
-  { username: 'fabian', display_name: 'Fabián', password: '1234', role: 'worker' },
+  { username: 'jesus',  display_name: 'Jesús',  role: 'admin'  },
+  { username: 'johana', display_name: 'Johana', role: 'worker' },
+  { username: 'felipe', display_name: 'Felipe', role: 'worker' },
+  { username: 'fabian', display_name: 'Fabián', role: 'worker' },
 ];
+
+// Password de arranque para cuentas seed: viene de env (SEED_PASSWORD_<USUARIO>),
+// o se genera al azar y se imprime una sola vez — nunca un default '1234' fijo.
+function seedPassword(username) {
+  const envVar = `SEED_PASSWORD_${username.toUpperCase()}`;
+  if (process.env[envVar]) return process.env[envVar];
+  const generated = crypto.randomBytes(9).toString('base64url');
+  logger.warn(`[seed] ${envVar} no definida — password generada para "${username}": ${generated} (cámbiala tras el primer login)`);
+  return generated;
+}
 
 let db;
 
@@ -22,137 +35,15 @@ async function initDB() {
 
   const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
   db.exec(schema);
-
-  // Safe migrations — silently ignored if column/table already exists
-  const migrations = [
-    'ALTER TABLE messages      ADD COLUMN flagged       INTEGER DEFAULT 0',
-    'ALTER TABLE messages      ADD COLUMN flag_reason   TEXT',
-    'ALTER TABLE users         ADD COLUMN pin           TEXT',
-    'ALTER TABLE users         ADD COLUMN display_name  TEXT',
-    'ALTER TABLE orders        ADD COLUMN claimed_by    INTEGER',
-    'ALTER TABLE orders        ADD COLUMN claimed_at    TEXT',
-    'ALTER TABLE orders        ADD COLUMN cancel_reason TEXT',
-    'ALTER TABLE pending_orders ADD COLUMN pending_items TEXT DEFAULT \'[]\'',
-    `CREATE TABLE IF NOT EXISTS order_items (
-       id INTEGER PRIMARY KEY AUTOINCREMENT,
-       order_id INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
-       product_id INTEGER, product_name TEXT NOT NULL,
-       product_price REAL, quantity INTEGER DEFAULT 1
-     )`,
-    'CREATE INDEX IF NOT EXISTS idx_orders_status     ON orders(status)',
-    'CREATE INDEX IF NOT EXISTS idx_orders_claimed_by ON orders(claimed_by)',
-    'CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items(order_id)',
-    // Ensure jesus is admin
-    "UPDATE users SET role='admin' WHERE username='jesus'",
-    // NLP.js migration: message type column + promotional campaigns
-    "ALTER TABLE messages ADD COLUMN type TEXT DEFAULT 'direct'",
-    `CREATE TABLE IF NOT EXISTS promotional_campaigns (
-       id INTEGER PRIMARY KEY AUTOINCREMENT,
-       message TEXT NOT NULL,
-       target_type TEXT DEFAULT 'all',
-       sent_count INTEGER DEFAULT 0,
-       created_by INTEGER REFERENCES users(id),
-       created_at TEXT DEFAULT (datetime('now','localtime'))
-     )`,
-    // Media + profile pic migrations
-    'ALTER TABLE messages   ADD COLUMN media_type TEXT',
-    'ALTER TABLE messages   ADD COLUMN media_url  TEXT',
-    'ALTER TABLE customers  ADD COLUMN profile_pic_url TEXT',
-    'ALTER TABLE customers  ADD COLUMN archived INTEGER DEFAULT 0',
-    // Product images
-    `CREATE TABLE IF NOT EXISTS product_images (
-       id INTEGER PRIMARY KEY AUTOINCREMENT,
-       product_id INTEGER NOT NULL,
-       filename TEXT NOT NULL,
-       created_at DATETIME DEFAULT (datetime('now','localtime')),
-       FOREIGN KEY(product_id) REFERENCES products(id) ON DELETE CASCADE
-     )`,
-    // WhatsApp-style estados (stories) with 32h TTL
-    `CREATE TABLE IF NOT EXISTS estados (
-       id INTEGER PRIMARY KEY AUTOINCREMENT,
-       admin_username TEXT NOT NULL,
-       filename TEXT NOT NULL,
-       media_type TEXT NOT NULL DEFAULT 'image',
-       caption TEXT,
-       created_at DATETIME DEFAULT (datetime('now','localtime')),
-       expires_at DATETIME NOT NULL
-     )`,
-    // Client cart
-    `CREATE TABLE IF NOT EXISTS cart_items (
-       id INTEGER PRIMARY KEY AUTOINCREMENT,
-       client_username TEXT NOT NULL,
-       product_id INTEGER NOT NULL,
-       quantity INTEGER NOT NULL DEFAULT 1,
-       delivery_date TEXT,
-       created_at DATETIME DEFAULT (datetime('now','localtime'))
-     )`,
-    // App settings (key-value)
-    `CREATE TABLE IF NOT EXISTS settings (
-       key TEXT PRIMARY KEY,
-       value TEXT NOT NULL,
-       updated_at DATETIME DEFAULT (datetime('now','localtime'))
-     )`,
-    // Client orders
-    `CREATE TABLE IF NOT EXISTS client_orders (
-       id INTEGER PRIMARY KEY AUTOINCREMENT,
-       client_username TEXT NOT NULL,
-       items_json TEXT NOT NULL,
-       total REAL NOT NULL,
-       payment_method TEXT NOT NULL,
-       nequi_reference TEXT,
-       status TEXT DEFAULT 'pending',
-       delivery_date TEXT,
-       created_at DATETIME DEFAULT (datetime('now','localtime'))
-     )`,
-    // User address for delivery
-    'ALTER TABLE users ADD COLUMN address TEXT',
-    // Estado reactions (hearts) — one per user per estado
-    `CREATE TABLE IF NOT EXISTS estado_reactions (
-       id INTEGER PRIMARY KEY AUTOINCREMENT,
-       estado_id INTEGER NOT NULL,
-       username TEXT NOT NULL,
-       created_at DATETIME DEFAULT (datetime('now','localtime')),
-       UNIQUE(estado_id, username),
-       FOREIGN KEY(estado_id) REFERENCES estados(id) ON DELETE CASCADE
-     )`,
-    // Estado comments from clients
-    `CREATE TABLE IF NOT EXISTS estado_comments (
-       id INTEGER PRIMARY KEY AUTOINCREMENT,
-       estado_id INTEGER NOT NULL,
-       username TEXT NOT NULL,
-       display_name TEXT,
-       comment TEXT NOT NULL,
-       created_at DATETIME DEFAULT (datetime('now','localtime')),
-       FOREIGN KEY(estado_id) REFERENCES estados(id) ON DELETE CASCADE
-     )`,
-    'CREATE INDEX IF NOT EXISTS idx_estado_reactions ON estado_reactions(estado_id)',
-    'CREATE INDEX IF NOT EXISTS idx_estado_comments  ON estado_comments(estado_id)',
-    // Product link on estados
-    'ALTER TABLE estados ADD COLUMN product_id INTEGER',
-    'ALTER TABLE estados ADD COLUMN product_name TEXT',
-    // Client registration fields
-    'ALTER TABLE users ADD COLUMN email TEXT',
-    'ALTER TABLE users ADD COLUMN bio TEXT',
-    'ALTER TABLE users ADD COLUMN nickname TEXT',
-    'ALTER TABLE users ADD COLUMN profile_pic TEXT',
-    // Profile pic for admin/workers
-    `CREATE TABLE IF NOT EXISTS profile_pics (
-       id INTEGER PRIMARY KEY AUTOINCREMENT,
-       username TEXT NOT NULL UNIQUE,
-       filename TEXT NOT NULL,
-       updated_at DATETIME DEFAULT (datetime('now','localtime'))
-     )`,
-  ];
-  for (const sql of migrations) {
-    try { db.exec(sql); } catch { /* already exists */ }
-  }
+  runMigrations(db);
 
   // Seed users — insert if missing, update display_name + role if changed
   for (const u of SEED_USERS) {
     const existing = db.prepare('SELECT id FROM users WHERE username = ?').get(u.username);
     if (!existing) {
-      const hash = await bcrypt.hash(u.password, SALT_ROUNDS);
-      const pin  = await bcrypt.hash(u.password, SALT_ROUNDS);
+      const password = seedPassword(u.username);
+      const hash = await bcrypt.hash(password, SALT_ROUNDS);
+      const pin  = await bcrypt.hash(password, SALT_ROUNDS);
       db.prepare(
         'INSERT OR IGNORE INTO users (username, password_hash, pin, display_name, role) VALUES (?,?,?,?,?)'
       ).run(u.username, hash, pin, u.display_name, u.role);
@@ -168,8 +59,12 @@ async function initDB() {
   db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES ('empresa_nombre', 'Concentrados Monserrath')`).run();
   db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES ('empresa_descripcion', 'Distribuidora de concentrados y alimentos para animales')`).run();
   db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES ('horario_atencion', 'Lunes a Sábado 8:00am - 6:00pm')`).run();
+  db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES ('theme_primary', '#2D5016')`).run();
+  db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES ('theme_accent', '#D4800A')`).run();
+  db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES ('theme_name', 'Concentrados Monserrath')`).run();
+  db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES ('theme_logo_url', '')`).run();
 
-  console.log('DB inicializada en', DB_PATH);
+  logger.info({ path: DB_PATH }, 'DB inicializada');
 }
 
 function getDB() {
@@ -177,4 +72,8 @@ function getDB() {
   return db;
 }
 
-module.exports = { initDB, getDB };
+function closeDB() {
+  if (db) { db.close(); db = null; }
+}
+
+module.exports = { initDB, getDB, closeDB };
