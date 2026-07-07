@@ -4,6 +4,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:intl/intl.dart';
 import '../models/product.dart';
 import '../services/api_service.dart';
+import '../widgets/app_button.dart';
 
 class ClientProductDetail extends StatefulWidget {
   final Product product;
@@ -14,10 +15,6 @@ class ClientProductDetail extends StatefulWidget {
 
 class _ClientProductDetailState extends State<ClientProductDetail>
     with SingleTickerProviderStateMixin {
-  static const _green     = Color(0xFF1A7A35);
-  static const _greenDark = Color(0xFF0F4D20);
-  static const _gold      = Color(0xFFD4800A);
-
   int       _qty      = 1;
   DateTime? _delivDate;
   bool      _adding   = false;
@@ -71,6 +68,7 @@ class _ClientProductDetailState extends State<ClientProductDetail>
   }
 
   void _showSuccessSheet() {
+    final scheme = Theme.of(context).colorScheme;
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
@@ -85,10 +83,10 @@ class _ClientProductDetailState extends State<ClientProductDetail>
           Container(
             width: 72, height: 72,
             decoration: BoxDecoration(
-              color: _green.withValues(alpha: 0.1),
+              color: scheme.primary.withValues(alpha: 0.1),
               shape: BoxShape.circle,
             ),
-            child: const Icon(Icons.check_circle_rounded, color: _green, size: 44),
+            child: Icon(Icons.check_circle_rounded, color: scheme.primary, size: 44),
           ),
           const SizedBox(height: 16),
           const Text('¡Agregado al carrito!',
@@ -101,8 +99,8 @@ class _ClientProductDetailState extends State<ClientProductDetail>
             Expanded(child: OutlinedButton(
               onPressed: () { Navigator.pop(context); Navigator.pop(context); },
               style: OutlinedButton.styleFrom(
-                foregroundColor: _green,
-                side: const BorderSide(color: _green),
+                foregroundColor: scheme.primary,
+                side: BorderSide(color: scheme.primary),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                 padding: const EdgeInsets.symmetric(vertical: 14),
               ),
@@ -116,7 +114,7 @@ class _ClientProductDetailState extends State<ClientProductDetail>
                 // will show cart tab
               },
               style: FilledButton.styleFrom(
-                backgroundColor: _green,
+                backgroundColor: scheme.primary,
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                 padding: const EdgeInsets.symmetric(vertical: 14),
               ),
@@ -137,7 +135,8 @@ class _ClientProductDetailState extends State<ClientProductDetail>
       helpText: 'Fecha de entrega preferida',
       builder: (ctx, child) => Theme(
         data: Theme.of(ctx).copyWith(
-          colorScheme: const ColorScheme.light(primary: _green, onPrimary: Colors.white)),
+          colorScheme: ColorScheme.light(
+            primary: Theme.of(context).colorScheme.primary, onPrimary: Colors.white)),
         child: child!,
       ),
     );
@@ -146,19 +145,20 @@ class _ClientProductDetailState extends State<ClientProductDetail>
 
   @override
   Widget build(BuildContext context) {
-    final p    = widget.product;
-    final size = MediaQuery.of(context).size;
-    final imgH = (size.height * 0.42).clamp(260.0, 380.0);
+    final p     = widget.product;
+    final size  = MediaQuery.of(context).size;
+    final imgH  = (size.height * 0.42).clamp(260.0, 380.0);
+    final scheme = Theme.of(context).colorScheme;
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF8FAF8),
+      backgroundColor: scheme.surface,
       body: Stack(children: [
         CustomScrollView(slivers: [
           // ── Hero image ───────────────────────────────────────
           SliverAppBar(
             expandedHeight: imgH,
             pinned: true,
-            backgroundColor: _greenDark,
+            backgroundColor: Color.lerp(scheme.primary, Colors.black, 0.35),
             elevation: 0,
             leading: Padding(
               padding: const EdgeInsets.all(8),
@@ -184,18 +184,33 @@ class _ClientProductDetailState extends State<ClientProductDetail>
                       itemBuilder: (_, i) => InteractiveViewer(
                         minScale: 1.0,
                         maxScale: 3.0,
-                        child: CachedNetworkImage(
-                          imageUrl: ApiService.productImageUrl(p.images[i]),
-                          httpHeaders: ApiService.imageHeaders,
-                          fit: BoxFit.cover,
-                          width: double.infinity,
-                          height: double.infinity,
-                          placeholder: (_, __) => Container(
-                            color: const Color(0xFFE8F5E9),
-                            child: const Center(child: CircularProgressIndicator(
-                              color: _green, strokeWidth: 2))),
-                          errorWidget: (_, __, ___) => _ImgFallback(),
-                        ),
+                        child: i == 0
+                          ? Hero(
+                              tag: 'product-image-${p.id}',
+                              child: CachedNetworkImage(
+                                imageUrl: ApiService.productImageUrl(p.images[i]),
+                                httpHeaders: ApiService.imageHeaders,
+                                fit: BoxFit.cover,
+                                width: double.infinity,
+                                height: double.infinity,
+                                placeholder: (_, __) => Container(
+                                  color: scheme.primary.withValues(alpha: 0.1),
+                                  child: Center(child: CircularProgressIndicator(
+                                    color: scheme.primary, strokeWidth: 2))),
+                                errorWidget: (_, __, ___) => _ImgFallback(),
+                              ))
+                          : CachedNetworkImage(
+                              imageUrl: ApiService.productImageUrl(p.images[i]),
+                              httpHeaders: ApiService.imageHeaders,
+                              fit: BoxFit.cover,
+                              width: double.infinity,
+                              height: double.infinity,
+                              placeholder: (_, __) => Container(
+                                color: scheme.primary.withValues(alpha: 0.1),
+                                child: Center(child: CircularProgressIndicator(
+                                  color: scheme.primary, strokeWidth: 2))),
+                              errorWidget: (_, __, ___) => _ImgFallback(),
+                            ),
                       ),
                     ),
                     // Dark gradient bottom
@@ -234,7 +249,7 @@ class _ClientProductDetailState extends State<ClientProductDetail>
                           margin: const EdgeInsets.all(12),
                           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                           decoration: BoxDecoration(
-                            color: _gold,
+                            color: scheme.secondary,
                             borderRadius: BorderRadius.circular(20),
                             boxShadow: [BoxShadow(
                               color: Colors.black.withValues(alpha: 0.2),
@@ -273,8 +288,8 @@ class _ClientProductDetailState extends State<ClientProductDetail>
                         style: TextStyle(color: Colors.black38, fontSize: 11)),
                       const SizedBox(height: 2),
                       Text('\$${_fmt(p.price)}',
-                        style: const TextStyle(
-                          fontSize: 32, color: _green,
+                        style: TextStyle(
+                          fontSize: 32, color: scheme.primary,
                           fontWeight: FontWeight.w900, letterSpacing: -0.5)),
                     ]),
                     const Spacer(),
@@ -282,15 +297,15 @@ class _ClientProductDetailState extends State<ClientProductDetail>
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                       decoration: BoxDecoration(
-                        color: _green.withValues(alpha: 0.1),
+                        color: scheme.primary.withValues(alpha: 0.1),
                         borderRadius: BorderRadius.circular(20),
-                        border: Border.all(color: _green.withValues(alpha: 0.3)),
+                        border: Border.all(color: scheme.primary.withValues(alpha: 0.3)),
                       ),
-                      child: const Row(mainAxisSize: MainAxisSize.min, children: [
-                        Icon(Icons.inventory_2_outlined, size: 14, color: _green),
-                        SizedBox(width: 5),
+                      child: Row(mainAxisSize: MainAxisSize.min, children: [
+                        Icon(Icons.inventory_2_outlined, size: 14, color: scheme.primary),
+                        const SizedBox(width: 5),
                         Text('Disponible',
-                          style: TextStyle(color: _green, fontSize: 12,
+                          style: TextStyle(color: scheme.primary, fontSize: 12,
                             fontWeight: FontWeight.w700)),
                       ]),
                     ),
@@ -331,7 +346,7 @@ class _ClientProductDetailState extends State<ClientProductDetail>
                   _BenefitTile(
                     icon: Icons.verified_rounded,
                     label: 'Calidad\ngarantizada',
-                    color: _green),
+                    color: scheme.primary),
                   if (!p.noFiado)
                     _BenefitTile(
                       icon: Icons.handshake_rounded,
@@ -383,8 +398,8 @@ class _ClientProductDetailState extends State<ClientProductDetail>
                       const Text('Subtotal',
                         style: TextStyle(color: Colors.black38, fontSize: 11)),
                       Text('\$${_fmt(_subtotal)}',
-                        style: const TextStyle(
-                          fontSize: 22, fontWeight: FontWeight.w800, color: _green)),
+                        style: TextStyle(
+                          fontSize: 22, fontWeight: FontWeight.w800, color: scheme.primary)),
                     ]),
                   ]),
                 ]),
@@ -408,12 +423,12 @@ class _ClientProductDetailState extends State<ClientProductDetail>
                       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                       decoration: BoxDecoration(
                         color: _delivDate != null
-                          ? _green.withValues(alpha: 0.06)
+                          ? scheme.primary.withValues(alpha: 0.06)
                           : const Color(0xFFF8F8F8),
                         borderRadius: BorderRadius.circular(14),
                         border: Border.all(
                           color: _delivDate != null
-                            ? _green.withValues(alpha: 0.4)
+                            ? scheme.primary.withValues(alpha: 0.4)
                             : const Color(0xFFE0E0E0)),
                       ),
                       child: Row(children: [
@@ -421,7 +436,7 @@ class _ClientProductDetailState extends State<ClientProductDetail>
                           _delivDate != null
                             ? Icons.event_available_rounded
                             : Icons.calendar_today_outlined,
-                          color: _delivDate != null ? _green : Colors.grey.shade400,
+                          color: _delivDate != null ? scheme.primary : Colors.grey.shade400,
                           size: 20),
                         const SizedBox(width: 12),
                         Expanded(child: Text(
@@ -429,7 +444,9 @@ class _ClientProductDetailState extends State<ClientProductDetail>
                             ? DateFormat("EEEE d 'de' MMMM, yyyy", 'es').format(_delivDate!)
                             : 'Seleccionar fecha preferida',
                           style: TextStyle(
-                            color: _delivDate != null ? _greenDark : Colors.grey.shade400,
+                            color: _delivDate != null
+                              ? Color.lerp(scheme.primary, Colors.black, 0.35)
+                              : Colors.grey.shade400,
                             fontWeight: _delivDate != null ? FontWeight.w600 : FontWeight.normal,
                             fontSize: 14),
                         )),
@@ -476,39 +493,19 @@ class _ClientProductDetailState extends State<ClientProductDetail>
                 const Text('Total del pedido',
                   style: TextStyle(color: Colors.black38, fontSize: 11)),
                 Text('\$${_fmt(_subtotal)}',
-                  style: const TextStyle(
-                    fontSize: 22, fontWeight: FontWeight.w900, color: _green)),
+                  style: TextStyle(
+                    fontSize: 22, fontWeight: FontWeight.w900, color: scheme.primary)),
               ]),
               const SizedBox(width: 16),
               Expanded(
                 child: ScaleTransition(
                   scale: _addScale,
                   child: SizedBox(height: 54,
-                    child: ElevatedButton(
+                    child: AppButton(
+                      label: 'Agregar al carrito',
                       onPressed: _adding ? null : _addToCart,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: _green,
-                        disabledBackgroundColor: _green.withValues(alpha: 0.45),
-                        foregroundColor: Colors.white,
-                        elevation: 0,
-                        shadowColor: _green.withValues(alpha: 0.4),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16)),
-                      ),
-                      child: _adding
-                        ? const SizedBox(width: 24, height: 24,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2.5, color: Colors.white))
-                        : const Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(Icons.add_shopping_cart_rounded, size: 20),
-                              SizedBox(width: 8),
-                              Text('Agregar al carrito',
-                                style: TextStyle(
-                                  fontSize: 16, fontWeight: FontWeight.w700)),
-                            ],
-                          ),
+                      loading: _adding,
+                      icon: Icons.add_shopping_cart_rounded,
                     ),
                   ),
                 ),
@@ -533,7 +530,7 @@ class _SectionTitle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Row(children: [
-    Icon(icon, size: 18, color: const Color(0xFF1A7A35)),
+    Icon(icon, size: 18, color: Theme.of(context).colorScheme.primary),
     const SizedBox(width: 6),
     Text(label,
       style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: Color(0xFF1A1A1A))),
@@ -587,7 +584,7 @@ class _QtyBtn extends StatelessWidget {
     child: Container(
       width: 46, height: 46,
       decoration: BoxDecoration(
-        color: enabled ? const Color(0xFF1A7A35) : Colors.transparent,
+        color: enabled ? Theme.of(context).colorScheme.primary : Colors.transparent,
         borderRadius: BorderRadius.circular(14),
       ),
       child: Icon(icon,
@@ -599,15 +596,18 @@ class _QtyBtn extends StatelessWidget {
 
 class _ImgFallback extends StatelessWidget {
   @override
-  Widget build(BuildContext context) => Container(
-    color: const Color(0xFFE8F5E9),
-    child: const Center(
-      child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-        Icon(Icons.pets_rounded, color: Color(0xFF1A7A35), size: 80),
-        SizedBox(height: 12),
-        Text('Imagen no disponible',
-          style: TextStyle(color: Color(0xFF1A7A35), fontSize: 13)),
-      ]),
-    ),
-  );
+  Widget build(BuildContext context) {
+    final primary = Theme.of(context).colorScheme.primary;
+    return Container(
+      color: primary.withValues(alpha: 0.1),
+      child: Center(
+        child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+          Icon(Icons.pets_rounded, color: primary, size: 80),
+          const SizedBox(height: 12),
+          Text('Imagen no disponible',
+            style: TextStyle(color: primary, fontSize: 13)),
+        ]),
+      ),
+    );
+  }
 }

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../models/estado.dart';
 import '../services/api_service.dart';
+import '../widgets/empty_state.dart';
 import 'client_estados_viewer.dart';
 
 class ClientEstadosScreen extends StatefulWidget {
@@ -12,9 +13,6 @@ class ClientEstadosScreen extends StatefulWidget {
 }
 
 class _ClientEstadosScreenState extends State<ClientEstadosScreen> {
-  static const _green = Color(0xFF1E6B2E);
-  static const _gold  = Color(0xFFD4800A);
-
   List<Estado> get _estados => widget.estados;
 
   void _open(int index) async {
@@ -38,28 +36,24 @@ class _ClientEstadosScreenState extends State<ClientEstadosScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     if (_estados.isEmpty) {
       return RefreshIndicator(
         onRefresh: widget.onRefresh,
-        color: _green,
+        color: scheme.primary,
         child: ListView(children: [
           SizedBox(
             height: MediaQuery.of(context).size.height * 0.6,
-            child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-              const Text('📖', style: TextStyle(fontSize: 64)),
-              const SizedBox(height: 16),
-              const Text('No hay estados disponibles',
-                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600, color: Colors.black87)),
-              const SizedBox(height: 8),
-              Text('Aquí aparecerán las novedades del negocio',
-                style: TextStyle(color: Colors.grey.shade500, fontSize: 14)),
-              const SizedBox(height: 24),
-              FilledButton.icon(
+            child: EmptyState(
+              emoji: '📖',
+              title: 'No hay estados disponibles',
+              subtitle: 'Aquí aparecerán las novedades del negocio',
+              action: FilledButton.icon(
                 onPressed: widget.onRefresh,
                 icon: const Icon(Icons.refresh_rounded),
                 label: const Text('Actualizar'),
               ),
-            ]),
+            ),
           ),
         ]),
       );
@@ -67,7 +61,7 @@ class _ClientEstadosScreenState extends State<ClientEstadosScreen> {
 
     return RefreshIndicator(
       onRefresh: widget.onRefresh,
-      color: _green,
+      color: scheme.primary,
       child: CustomScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
         slivers: [
@@ -100,14 +94,15 @@ class _ClientEstadosScreenState extends State<ClientEstadosScreen> {
   }
 
   Widget _buildStoryRow() {
+    final scheme = Theme.of(context).colorScheme;
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      const Padding(
-        padding: EdgeInsets.fromLTRB(16, 14, 16, 10),
+      Padding(
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
         child: Row(children: [
-          Icon(Icons.auto_stories_rounded, color: _gold, size: 18),
-          SizedBox(width: 8),
+          Icon(Icons.auto_stories_rounded, color: scheme.secondary, size: 18),
+          const SizedBox(width: 8),
           Text('Estados recientes',
-            style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15, color: Color(0xFF1A3009))),
+            style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15, color: scheme.primary)),
         ]),
       ),
       SizedBox(
@@ -126,9 +121,10 @@ class _ClientEstadosScreenState extends State<ClientEstadosScreen> {
                   Container(
                     width: 58, height: 58,
                     padding: const EdgeInsets.all(2.5),
-                    decoration: const BoxDecoration(
+                    decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      gradient: LinearGradient(colors: [_gold, Color(0xFFFF9800)]),
+                      gradient: LinearGradient(
+                        colors: [scheme.secondary, Color.lerp(scheme.secondary, Colors.white, 0.3)!]),
                     ),
                     child: ClipOval(
                       child: e.mediaType == 'image'
@@ -136,13 +132,13 @@ class _ClientEstadosScreenState extends State<ClientEstadosScreen> {
                             imageUrl: ApiService.estadoMediaUrl(e.filename),
                             httpHeaders: const {'ngrok-skip-browser-warning': 'true'},
                             fit: BoxFit.cover,
-                            placeholder: (_, __) => Container(color: const Color(0xFF1A3009)),
+                            placeholder: (_, __) => Container(color: scheme.primary),
                             errorWidget: (_, __, ___) => Container(
-                              color: const Color(0xFF1A3009),
+                              color: scheme.primary,
                               child: const Icon(Icons.image, color: Colors.white30, size: 24)),
                           )
                         : Container(
-                            color: const Color(0xFF1A3009),
+                            color: scheme.primary,
                             child: const Icon(Icons.videocam, color: Colors.white, size: 24)),
                     ),
                   ),
@@ -170,11 +166,9 @@ class _EstadoCard extends StatelessWidget {
   final VoidCallback onTap;
   const _EstadoCard({required this.estado, required this.onTap});
 
-  static const _green = Color(0xFF1E6B2E);
-  static const _gold  = Color(0xFFD4800A);
-
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     return GestureDetector(
       onTap: onTap,
       child: Container(
@@ -193,13 +187,13 @@ class _EstadoCard extends StatelessWidget {
                   httpHeaders: const {'ngrok-skip-browser-warning': 'true'},
                   fit: BoxFit.cover,
                   placeholder: (_, __) => Container(
-                    color: const Color(0xFFE8F5E9),
-                    child: const Center(child: CircularProgressIndicator(
-                      color: _green, strokeWidth: 2))),
+                    color: scheme.primary.withValues(alpha: 0.1),
+                    child: Center(child: CircularProgressIndicator(
+                      color: scheme.primary, strokeWidth: 2))),
                   errorWidget: (_, __, ___) => Container(
-                    color: const Color(0xFFE8F5E9),
-                    child: const Icon(Icons.image_not_supported_rounded,
-                      color: _green, size: 40)),
+                    color: scheme.primary.withValues(alpha: 0.1),
+                    child: Icon(Icons.image_not_supported_rounded,
+                      color: scheme.primary, size: 40)),
                 )
               : Container(
                   color: Colors.black87,

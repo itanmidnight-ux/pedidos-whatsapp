@@ -11,6 +11,7 @@ import 'package:record/record.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../models/message.dart';
 import '../services/api_service.dart';
+import '../widgets/empty_state.dart';
 
 class ChatScreen extends StatefulWidget {
   final String  phone;
@@ -324,7 +325,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   Icon(
                     msg.sent == 1 ? Icons.done_all : Icons.done,
                     size: 12,
-                    color: msg.sent == 1 ? const Color(0xFF2D5016) : Colors.grey,
+                    color: msg.sent == 1 ? Theme.of(context).colorScheme.primary : Colors.grey,
                   ),
                 ],
               ]),
@@ -339,6 +340,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final msgId    = msg.id ?? 0;
     final isPlaying = _playingId == msgId && _playerState == PlayerState.playing;
     final isLoading = _loadingAudio[msgId] == true;
+    final scheme = Theme.of(context).colorScheme;
 
     return Row(mainAxisSize: MainAxisSize.min, children: [
       GestureDetector(
@@ -346,20 +348,20 @@ class _ChatScreenState extends State<ChatScreen> {
         child: Container(
           width: 40, height: 40,
           decoration: BoxDecoration(
-            color: const Color(0xFF2D5016).withValues(alpha: 0.12),
+            color: scheme.primary.withValues(alpha: 0.12),
             shape: BoxShape.circle,
           ),
           child: isLoading
-            ? const Padding(padding: EdgeInsets.all(10),
-                child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF2D5016)))
+            ? Padding(padding: const EdgeInsets.all(10),
+                child: CircularProgressIndicator(strokeWidth: 2, color: scheme.primary))
             : Icon(
                 isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
-                color: const Color(0xFF2D5016), size: 24),
+                color: scheme.primary, size: 24),
         ),
       ),
       const SizedBox(width: 8),
       Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        const Icon(Icons.graphic_eq, color: Color(0xFF2D5016), size: 20),
+        Icon(Icons.graphic_eq, color: scheme.primary, size: 20),
         const SizedBox(height: 2),
         Text('Mensaje de voz', style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
       ]),
@@ -387,7 +389,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 return Container(
                   width: imgW, height: imgH,
                   color: Colors.grey.shade200,
-                  child: const Center(child: CircularProgressIndicator(color: Color(0xFF2D5016))),
+                  child: Center(child: CircularProgressIndicator(color: Theme.of(context).colorScheme.primary)),
                 );
               },
             ),
@@ -397,6 +399,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   // ── Input bar ────────────────────────────────────────────
   Widget _buildInputBar() {
+    final scheme = Theme.of(context).colorScheme;
     if (_recording) {
       return Container(
         color: Colors.white,
@@ -412,7 +415,7 @@ class _ChatScreenState extends State<ChatScreen> {
               decoration: const BoxDecoration(color: Colors.red, shape: BoxShape.circle)),
             const SizedBox(width: 8),
             Text(_formatRecDuration(_recSeconds),
-              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Color(0xFF2D5016))),
+              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: scheme.primary)),
             const Spacer(),
             const Text('Grabando…', style: TextStyle(color: Colors.grey, fontSize: 12)),
           ])),
@@ -421,7 +424,7 @@ class _ChatScreenState extends State<ChatScreen> {
             onTap: _stopAndSendRecording,
             child: Container(
               width: 48, height: 48,
-              decoration: const BoxDecoration(color: Color(0xFF2D5016), shape: BoxShape.circle),
+              decoration: BoxDecoration(color: scheme.primary, shape: BoxShape.circle),
               child: const Icon(Icons.send_rounded, color: Colors.white, size: 22),
             ),
           ),
@@ -467,7 +470,7 @@ class _ChatScreenState extends State<ChatScreen> {
           onTap: _sending ? null : (_hasText ? _sendText : _startRecording),
           child: Container(
             width: 44, height: 44,
-            decoration: const BoxDecoration(color: Color(0xFF2D5016), shape: BoxShape.circle),
+            decoration: BoxDecoration(color: scheme.primary, shape: BoxShape.circle),
             child: _sending
               ? const Padding(padding: EdgeInsets.all(10),
                   child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
@@ -483,7 +486,7 @@ class _ChatScreenState extends State<ChatScreen> {
   // ── AppBar ───────────────────────────────────────────────
   PreferredSizeWidget _buildAppBar() {
     return AppBar(
-      backgroundColor: const Color(0xFF2D5016),
+      backgroundColor: Theme.of(context).colorScheme.primary,
       foregroundColor: Colors.white,
       titleSpacing: 0,
       leading: BackButton(color: Colors.white, onPressed: () => Navigator.pop(context)),
@@ -561,7 +564,7 @@ class _ChatScreenState extends State<ChatScreen> {
       body: Column(children: [
         Expanded(
           child: _messages.isEmpty
-            ? const Center(child: Text('Sin mensajes aún', style: TextStyle(color: Colors.grey)))
+            ? const EmptyState(emoji: '💬', title: 'Sin mensajes aún')
             : ListView.builder(
                 controller: _scroll,
                 reverse: true,

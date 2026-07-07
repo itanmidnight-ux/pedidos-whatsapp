@@ -4,6 +4,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import '../models/estado.dart';
 import '../models/product.dart';
 import '../services/api_service.dart';
+import '../widgets/empty_state.dart';
 
 class AdminEstadosScreen extends StatefulWidget {
   const AdminEstadosScreen({super.key});
@@ -11,7 +12,6 @@ class AdminEstadosScreen extends StatefulWidget {
 }
 
 class _AdminEstadosScreenState extends State<AdminEstadosScreen> {
-  static const _green = Color(0xFF1E6B2E);
   List<Estado>   _estados  = [];
   List<Product>  _products = [];
   bool _loading   = true;
@@ -171,7 +171,7 @@ class _AdminEstadosScreenState extends State<AdminEstadosScreen> {
   void _snack(String msg, {bool success = false}) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text(msg),
-      backgroundColor: success ? _green : Colors.red.shade700,
+      backgroundColor: success ? Theme.of(context).colorScheme.primary : Colors.red.shade700,
       behavior: SnackBarBehavior.floating,
     ));
   }
@@ -184,22 +184,19 @@ class _AdminEstadosScreenState extends State<AdminEstadosScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     return Stack(children: [
       _loading
-          ? const Center(child: CircularProgressIndicator(color: _green))
+          ? Center(child: CircularProgressIndicator(color: scheme.primary))
           : _estados.isEmpty
-              ? Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-                  const Text('📸', style: TextStyle(fontSize: 64)),
-                  const SizedBox(height: 12),
-                  const Text('No hay estados activos',
-                    style: TextStyle(color: Colors.grey, fontSize: 16, fontWeight: FontWeight.w500)),
-                  const SizedBox(height: 8),
-                  Text('Los estados duran 36 horas',
-                    style: TextStyle(color: Colors.grey.shade400, fontSize: 13)),
-                ]))
+              ? const EmptyState(
+                  emoji: '📸',
+                  title: 'No hay estados activos',
+                  subtitle: 'Los estados duran 36 horas',
+                )
               : RefreshIndicator(
                   onRefresh: _load,
-                  color: _green,
+                  color: scheme.primary,
                   child: GridView.builder(
                     padding: const EdgeInsets.fromLTRB(12, 12, 12, 100),
                     gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
@@ -246,11 +243,11 @@ class _AdminEstadosScreenState extends State<AdminEstadosScreen> {
                                     style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w500)),
                                 if (e.productName != null)
                                   Row(children: [
-                                    const Icon(Icons.shopping_bag_outlined, color: Color(0xFFD4800A), size: 12),
+                                    Icon(Icons.shopping_bag_outlined, color: scheme.secondary, size: 12),
                                     const SizedBox(width: 3),
                                     Expanded(child: Text(e.productName!,
                                       maxLines: 1, overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(color: Color(0xFFD4800A), fontSize: 11))),
+                                      style: TextStyle(color: scheme.secondary, fontSize: 11))),
                                   ]),
                                 const SizedBox(height: 2),
                                 Row(children: [
@@ -281,16 +278,16 @@ class _AdminEstadosScreenState extends State<AdminEstadosScreen> {
                 ),
 
       if (_uploading)
-        const Positioned.fill(child: ColoredBox(
+        Positioned.fill(child: ColoredBox(
           color: Colors.black26,
-          child: Center(child: CircularProgressIndicator(color: _green)),
+          child: Center(child: CircularProgressIndicator(color: scheme.primary)),
         )),
 
       Positioned(
         bottom: 20, right: 16,
         child: FloatingActionButton.extended(
           onPressed: _uploading ? null : _pickAndUpload,
-          backgroundColor: _green,
+          backgroundColor: scheme.primary,
           icon: const Icon(Icons.add_photo_alternate_rounded, color: Colors.white),
           label: const Text('Nuevo estado', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
         ),
@@ -308,7 +305,6 @@ class _LikesDialog extends StatefulWidget {
 }
 
 class _LikesDialogState extends State<_LikesDialog> {
-  static const _green = Color(0xFF1E6B2E);
   List<Map<String, dynamic>> _reactions = [];
   bool _loading = true;
 
@@ -328,45 +324,48 @@ class _LikesDialogState extends State<_LikesDialog> {
   }
 
   @override
-  Widget build(BuildContext context) => AlertDialog(
-    title: Row(children: [
-      const Icon(Icons.favorite, color: Colors.red, size: 20),
-      const SizedBox(width: 8),
-      Text('${widget.heartCount} me gusta'),
-    ]),
-    content: SizedBox(
-      width: 280,
-      child: _loading
-          ? const Center(child: Padding(
-              padding: EdgeInsets.all(24),
-              child: CircularProgressIndicator(color: _green)))
-          : _reactions.isEmpty
-              ? const Text('Nadie ha reaccionado aún.',
-                  style: TextStyle(color: Colors.grey))
-              : Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: _reactions.map((r) {
-                    final name = r['display_name'] as String? ?? r['username'] as String? ?? '?';
-                    return Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 4),
-                      child: Row(children: [
-                        CircleAvatar(
-                          radius: 16,
-                          backgroundColor: const Color(0xFFE8F5E9),
-                          child: Text(name[0].toUpperCase(),
-                            style: const TextStyle(color: _green, fontWeight: FontWeight.bold)),
-                        ),
-                        const SizedBox(width: 10),
-                        Text(name, style: const TextStyle(fontSize: 14)),
-                        const Spacer(),
-                        const Icon(Icons.favorite, color: Colors.red, size: 14),
-                      ]),
-                    );
-                  }).toList(),
-                ),
-    ),
-    actions: [
-      TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cerrar')),
-    ],
-  );
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return AlertDialog(
+      title: Row(children: [
+        const Icon(Icons.favorite, color: Colors.red, size: 20),
+        const SizedBox(width: 8),
+        Text('${widget.heartCount} me gusta'),
+      ]),
+      content: SizedBox(
+        width: 280,
+        child: _loading
+            ? Center(child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: CircularProgressIndicator(color: scheme.primary)))
+            : _reactions.isEmpty
+                ? const Text('Nadie ha reaccionado aún.',
+                    style: TextStyle(color: Colors.grey))
+                : Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: _reactions.map((r) {
+                      final name = r['display_name'] as String? ?? r['username'] as String? ?? '?';
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 4),
+                        child: Row(children: [
+                          CircleAvatar(
+                            radius: 16,
+                            backgroundColor: scheme.primary.withValues(alpha: 0.12),
+                            child: Text(name[0].toUpperCase(),
+                              style: TextStyle(color: scheme.primary, fontWeight: FontWeight.bold)),
+                          ),
+                          const SizedBox(width: 10),
+                          Text(name, style: const TextStyle(fontSize: 14)),
+                          const Spacer(),
+                          const Icon(Icons.favorite, color: Colors.red, size: 14),
+                        ]),
+                      );
+                    }).toList(),
+                  ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cerrar')),
+      ],
+    );
+  }
 }

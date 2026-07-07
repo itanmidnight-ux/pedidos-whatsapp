@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../models/estado.dart';
 import '../services/api_service.dart';
+import '../widgets/empty_state.dart';
 
 class WorkerEstadosScreen extends StatefulWidget {
   const WorkerEstadosScreen({super.key});
@@ -9,7 +10,6 @@ class WorkerEstadosScreen extends StatefulWidget {
 }
 
 class _WorkerEstadosScreenState extends State<WorkerEstadosScreen> {
-  static const _green = Color(0xFF1E6B2E);
   List<Estado> _estados = [];
   bool _loading = true;
 
@@ -36,23 +36,21 @@ class _WorkerEstadosScreenState extends State<WorkerEstadosScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (_loading) return const Center(child: CircularProgressIndicator(color: _green));
+    final scheme = Theme.of(context).colorScheme;
+
+    if (_loading) return Center(child: CircularProgressIndicator(color: scheme.primary));
 
     if (_estados.isEmpty) {
-      return Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-        const Text('📸', style: TextStyle(fontSize: 64)),
-        const SizedBox(height: 12),
-        const Text('No hay estados activos',
-          style: TextStyle(color: Colors.grey, fontSize: 16, fontWeight: FontWeight.w500)),
-        const SizedBox(height: 8),
-        Text('El administrador publicará estados aquí',
-          style: TextStyle(color: Colors.grey.shade400, fontSize: 13)),
-      ]));
+      return const EmptyState(
+        emoji: '📸',
+        title: 'No hay estados activos',
+        subtitle: 'El administrador publicará estados aquí',
+      );
     }
 
     return RefreshIndicator(
       onRefresh: _load,
-      color: _green,
+      color: scheme.primary,
       child: GridView.builder(
         padding: const EdgeInsets.all(12),
         gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
@@ -97,11 +95,11 @@ class _WorkerEstadosScreenState extends State<WorkerEstadosScreen> {
                       style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w500)),
                   if (e.productName != null)
                     Row(children: [
-                      const Icon(Icons.shopping_bag_outlined, color: Color(0xFFD4800A), size: 12),
+                      Icon(Icons.shopping_bag_outlined, color: scheme.secondary, size: 12),
                       const SizedBox(width: 3),
                       Expanded(child: Text(e.productName!,
                         maxLines: 1, overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(color: Color(0xFFD4800A), fontSize: 11))),
+                        style: TextStyle(color: scheme.secondary, fontSize: 11))),
                     ]),
                   const SizedBox(height: 2),
                   Text(_timeLeft(e),

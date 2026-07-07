@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../models/cart_item.dart';
 import '../services/api_service.dart';
+import '../widgets/app_button.dart';
+import '../widgets/app_card.dart';
+import '../widgets/empty_state.dart';
 
 class ClientCartScreen extends StatefulWidget {
   const ClientCartScreen({super.key});
@@ -9,7 +12,6 @@ class ClientCartScreen extends StatefulWidget {
 }
 
 class ClientCartScreenState extends State<ClientCartScreen> {
-  static const _green = Color(0xFF1E6B2E);
   List<CartItem> _items = [];
   bool _loading = true;
   bool _checking = false;
@@ -176,9 +178,9 @@ class ClientCartScreenState extends State<ClientCartScreen> {
         deliveryDate: _items.isNotEmpty ? _items.first.deliveryDate : null,
       );
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('¡Pedido realizado exitosamente!'),
-          backgroundColor: _green,
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: const Text('¡Pedido realizado exitosamente!'),
+          backgroundColor: Theme.of(context).colorScheme.primary,
           behavior: SnackBarBehavior.floating,
         ));
         setState(() => _items = []);
@@ -198,6 +200,7 @@ class ClientCartScreenState extends State<ClientCartScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     return Scaffold(
       backgroundColor: const Color(0xFFF5F5F0),
       appBar: AppBar(
@@ -214,31 +217,25 @@ class ClientCartScreenState extends State<ClientCartScreen> {
         ],
       ),
       body: _loading
-          ? const Center(child: CircularProgressIndicator(color: _green))
+          ? Center(child: CircularProgressIndicator(color: scheme.primary))
           : _items.isEmpty
-              ? Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-                  const Text('🛒', style: TextStyle(fontSize: 64)),
-                  const SizedBox(height: 12),
-                  const Text('Tu carrito está vacío',
-                    style: TextStyle(color: Colors.grey, fontSize: 16, fontWeight: FontWeight.w500)),
-                  const SizedBox(height: 8),
-                  TextButton(
+              ? EmptyState(
+                  emoji: '🛒',
+                  title: 'Tu carrito está vacío',
+                  action: TextButton(
                     onPressed: () => Navigator.pop(context),
                     child: const Text('Ver productos'),
                   ),
-                ]))
+                )
               : Column(children: [
                   Expanded(child: ListView.builder(
                     padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
                     itemCount: _items.length,
                     itemBuilder: (_, i) {
                       final item = _items[i];
-                      return Card(
-                        elevation: 0,
-                        color: Colors.white,
-                        margin: const EdgeInsets.only(bottom: 8),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                        child: Padding(
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: AppCard(
                           padding: const EdgeInsets.all(14),
                           child: Row(children: [
                             Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -247,11 +244,11 @@ class ClientCartScreenState extends State<ClientCartScreen> {
                                 style: TextStyle(color: Colors.grey.shade500, fontSize: 12)),
                               if (item.deliveryDate != null)
                                 Text('Entrega: ${item.deliveryDate}',
-                                  style: const TextStyle(color: _green, fontSize: 12)),
+                                  style: TextStyle(color: scheme.primary, fontSize: 12)),
                             ])),
                             Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
                               Text('\$${_fmt(item.subtotal)}',
-                                style: const TextStyle(fontWeight: FontWeight.bold, color: _green, fontSize: 15)),
+                                style: TextStyle(fontWeight: FontWeight.bold, color: scheme.primary, fontSize: 15)),
                               Text('x${item.quantity}',
                                 style: TextStyle(color: Colors.grey.shade500, fontSize: 13)),
                             ]),
@@ -279,18 +276,15 @@ class ClientCartScreenState extends State<ClientCartScreen> {
                         const Text('Total:', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                         const Spacer(),
                         Text('\$${_fmt(_total)}',
-                          style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: _green)),
+                          style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: scheme.primary)),
                       ]),
                       const SizedBox(height: 12),
                       SizedBox(width: double.infinity, height: 52,
-                        child: FilledButton.icon(
+                        child: AppButton(
+                          label: _checking ? 'Procesando...' : 'Realizar pedido',
                           onPressed: _checking ? null : _checkout,
-                          icon: _checking
-                              ? const SizedBox(width: 18, height: 18,
-                                  child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                              : const Icon(Icons.payment_rounded),
-                          label: Text(_checking ? 'Procesando...' : 'Realizar pedido',
-                            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                          loading: _checking,
+                          icon: Icons.payment_rounded,
                         ),
                       ),
                       const SizedBox(height: 8),

@@ -3,6 +3,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import '../models/product.dart';
 import '../services/api_service.dart';
 import '../services/local_db.dart';
+import '../widgets/empty_state.dart';
 import 'client_product_detail.dart';
 
 class ClientProductsScreen extends StatefulWidget {
@@ -12,9 +13,6 @@ class ClientProductsScreen extends StatefulWidget {
 
 class _ClientProductsScreenState extends State<ClientProductsScreen>
     with SingleTickerProviderStateMixin {
-  static const _green = Color(0xFF1E6B2E);
-  static const _gold  = Color(0xFFD4800A);
-
   List<Product> _all      = [];
   List<Product> _filtered = [];
   String        _category = 'Todos';
@@ -125,8 +123,9 @@ class _ClientProductsScreenState extends State<ClientProductsScreen>
 
   @override
   Widget build(BuildContext context) {
-    final size = MediaQuery.of(context).size;
-    final cols = size.width > 600 ? 3 : 2;
+    final size   = MediaQuery.of(context).size;
+    final cols   = size.width > 600 ? 3 : 2;
+    final scheme = Theme.of(context).colorScheme;
     return Column(children: [
       // Search bar
       Container(
@@ -137,7 +136,7 @@ class _ClientProductsScreenState extends State<ClientProductsScreen>
           decoration: InputDecoration(
             hintText: 'Buscar producto...',
             hintStyle: TextStyle(color: Colors.grey.shade400, fontSize: 14),
-            prefixIcon: const Icon(Icons.search_rounded, color: _green, size: 22),
+            prefixIcon: Icon(Icons.search_rounded, color: scheme.primary, size: 22),
             suffixIcon: _searchCtrl.text.isNotEmpty
               ? IconButton(
                   icon: Icon(Icons.close_rounded, color: Colors.grey.shade400),
@@ -150,7 +149,7 @@ class _ClientProductsScreenState extends State<ClientProductsScreen>
               borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(14),
-              borderSide: const BorderSide(color: _green, width: 1.5)),
+              borderSide: BorderSide(color: scheme.primary, width: 1.5)),
           ),
         ),
       ),
@@ -173,10 +172,10 @@ class _ClientProductsScreenState extends State<ClientProductsScreen>
                   duration: const Duration(milliseconds: 200),
                   padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
                   decoration: BoxDecoration(
-                    color: sel ? _green : Colors.grey.shade100,
+                    color: sel ? scheme.primary : Colors.grey.shade100,
                     borderRadius: BorderRadius.circular(20),
                     border: Border.all(
-                      color: sel ? _green : Colors.grey.shade300, width: 1),
+                      color: sel ? scheme.primary : Colors.grey.shade300, width: 1),
                   ),
                   child: Text(cat,
                     style: TextStyle(
@@ -193,12 +192,12 @@ class _ClientProductsScreenState extends State<ClientProductsScreen>
 
       // Products grid
       Expanded(child: _loading
-        ? const Center(child: CircularProgressIndicator(color: _green))
+        ? Center(child: CircularProgressIndicator(color: scheme.primary))
         : _filtered.isEmpty
           ? _emptyState()
           : RefreshIndicator(
               onRefresh: _load,
-              color: _green,
+              color: scheme.primary,
               child: CustomScrollView(
                 physics: const AlwaysScrollableScrollPhysics(),
                 slivers: [
@@ -241,14 +240,17 @@ class _ClientProductsScreenState extends State<ClientProductsScreen>
   Widget _featuredSection() {
     final featured = _all.where((p) => p.favorite).take(5).toList();
     if (featured.isEmpty) return const SizedBox.shrink();
+    final scheme = Theme.of(context).colorScheme;
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      const Padding(
-        padding: EdgeInsets.fromLTRB(16, 12, 16, 8),
+      Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
         child: Row(children: [
-          Icon(Icons.star_rounded, color: _gold, size: 18),
-          SizedBox(width: 6),
+          Icon(Icons.star_rounded, color: scheme.secondary, size: 18),
+          const SizedBox(width: 6),
           Text('Más Solicitados',
-            style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15, color: Color(0xFF1A3009))),
+            style: TextStyle(
+              fontWeight: FontWeight.w800, fontSize: 15,
+              color: Color.lerp(scheme.primary, Colors.black, 0.5))),
         ]),
       ),
       SizedBox(
@@ -277,11 +279,13 @@ class _ClientProductsScreenState extends State<ClientProductsScreen>
                     child: SizedBox(
                       height: 90, width: double.infinity,
                       child: p.images.isNotEmpty
-                        ? CachedNetworkImage(
-                            imageUrl: ApiService.productImageUrl(p.images.first),
-                            httpHeaders: ApiService.imageHeaders,
-                            fit: BoxFit.cover,
-                            errorWidget: (_, __, ___) => _ImgPlaceholder())
+                        ? Hero(
+                            tag: 'product-image-${p.id}',
+                            child: CachedNetworkImage(
+                              imageUrl: ApiService.productImageUrl(p.images.first),
+                              httpHeaders: ApiService.imageHeaders,
+                              fit: BoxFit.cover,
+                              errorWidget: (_, __, ___) => _ImgPlaceholder()))
                         : _ImgPlaceholder(),
                     ),
                   ),
@@ -292,7 +296,7 @@ class _ClientProductsScreenState extends State<ClientProductsScreen>
                         style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
                       const SizedBox(height: 3),
                       Text('\$${_fmt(p.price)}',
-                        style: const TextStyle(color: _green, fontWeight: FontWeight.bold, fontSize: 13)),
+                        style: TextStyle(color: scheme.primary, fontWeight: FontWeight.bold, fontSize: 13)),
                     ]),
                   ),
                 ]),
@@ -305,26 +309,20 @@ class _ClientProductsScreenState extends State<ClientProductsScreen>
     ]);
   }
 
-  Widget _emptyState() => Center(child: Column(
-    mainAxisAlignment: MainAxisAlignment.center,
-    children: [
-      const Text('📦', style: TextStyle(fontSize: 56)),
-      const SizedBox(height: 12),
-      Text(_searchCtrl.text.isNotEmpty
-        ? 'Sin resultados para "${_searchCtrl.text}"'
-        : _offline ? 'Sin datos guardados — conecta a internet'
-        : 'Sin productos disponibles',
-        style: const TextStyle(color: Colors.grey, fontSize: 15)),
-      if (_offline) ...[
-        const SizedBox(height: 12),
-        FilledButton.icon(
+  Widget _emptyState() => EmptyState(
+    emoji: '📦',
+    title: _searchCtrl.text.isNotEmpty
+      ? 'Sin resultados para "${_searchCtrl.text}"'
+      : _offline ? 'Sin datos guardados — conecta a internet'
+      : 'Sin productos disponibles',
+    action: _offline
+      ? FilledButton.icon(
           onPressed: _load,
           icon: const Icon(Icons.refresh_rounded),
           label: const Text('Reintentar'),
-        ),
-      ],
-    ],
-  ));
+        )
+      : null,
+  );
 
   static String _fmt(double v) => v == v.roundToDouble() ? v.toInt().toString() : v.toStringAsFixed(0);
 }
@@ -335,11 +333,9 @@ class _ProductCard extends StatelessWidget {
   final VoidCallback onTap;
   const _ProductCard({required this.product, required this.description, required this.onTap});
 
-  static const _green = Color(0xFF1E6B2E);
-  static const _gold  = Color(0xFFD4800A);
-
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     return GestureDetector(
       onTap: onTap,
       child: Container(
@@ -353,12 +349,14 @@ class _ProductCard extends StatelessWidget {
           // Image section
           Expanded(child: Stack(fit: StackFit.expand, children: [
             product.images.isNotEmpty
-              ? CachedNetworkImage(
-                  imageUrl: ApiService.productImageUrl(product.images.first),
-                  httpHeaders: ApiService.imageHeaders,
-                  fit: BoxFit.cover,
-                  placeholder: (_, __) => _ImgPlaceholder(shimmer: true),
-                  errorWidget: (_, __, ___) => _ImgPlaceholder())
+              ? Hero(
+                  tag: 'product-image-${product.id}',
+                  child: CachedNetworkImage(
+                    imageUrl: ApiService.productImageUrl(product.images.first),
+                    httpHeaders: ApiService.imageHeaders,
+                    fit: BoxFit.cover,
+                    placeholder: (_, __) => _ImgPlaceholder(shimmer: true),
+                    errorWidget: (_, __, ___) => _ImgPlaceholder()))
               : _ImgPlaceholder(),
             // Gradient overlay bottom
             Positioned(bottom: 0, left: 0, right: 0,
@@ -375,7 +373,7 @@ class _ProductCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 if (product.favorite)
-                  _Badge(label: '⭐ Destacado', color: _gold),
+                  _Badge(label: '⭐ Destacado', color: scheme.secondary),
                 if (!product.noFiado)
                   const _Badge(label: '🤝 Fiado', color: Color(0xFF1565C0)),
               ],
@@ -395,11 +393,11 @@ class _ProductCard extends StatelessWidget {
               const SizedBox(height: 6),
               Row(children: [
                 Expanded(child: Text('\$${_fmt(product.price)}',
-                  style: const TextStyle(
-                    color: _green, fontWeight: FontWeight.w800, fontSize: 16))),
+                  style: TextStyle(
+                    color: scheme.primary, fontWeight: FontWeight.w800, fontSize: 16))),
                 Container(
                   padding: const EdgeInsets.all(6),
-                  decoration: const BoxDecoration(color: _green, shape: BoxShape.circle),
+                  decoration: BoxDecoration(color: scheme.primary, shape: BoxShape.circle),
                   child: const Icon(Icons.add_shopping_cart_rounded, color: Colors.white, size: 14),
                 ),
               ]),
@@ -434,8 +432,11 @@ class _ImgPlaceholder extends StatelessWidget {
   final bool shimmer;
   const _ImgPlaceholder({this.shimmer = false});
   @override
-  Widget build(BuildContext context) => Container(
-    color: const Color(0xFFE8F5E9),
-    child: const Center(child: Icon(Icons.pets_rounded, color: Color(0xFF1E6B2E), size: 40)),
-  );
+  Widget build(BuildContext context) {
+    final primary = Theme.of(context).colorScheme.primary;
+    return Container(
+      color: primary.withValues(alpha: 0.1),
+      child: Center(child: Icon(Icons.pets_rounded, color: primary, size: 40)),
+    );
+  }
 }

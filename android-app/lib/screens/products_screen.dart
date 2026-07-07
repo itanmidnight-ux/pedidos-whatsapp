@@ -7,6 +7,8 @@ import 'package:cached_network_image/cached_network_image.dart';
 import '../providers/app_provider.dart';
 import '../models/product.dart';
 import '../services/api_service.dart';
+import '../widgets/app_button.dart';
+import '../widgets/empty_state.dart';
 
 class ProductsScreen extends StatefulWidget {
   const ProductsScreen({super.key});
@@ -20,6 +22,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
     final nameCtrl  = TextEditingController();
     final priceCtrl = TextEditingController();
     final picker    = ImagePicker();
+    final scheme    = Theme.of(context).colorScheme;
 
     showModalBottomSheet(
       context: context, isScrollControlled: true,
@@ -35,8 +38,8 @@ class _ProductsScreenState extends State<ProductsScreen> {
               Center(child: Container(width: 40, height: 4,
                 decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)))),
               const SizedBox(height: 16),
-              const Text('Nuevo Producto',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF2D5016))),
+              Text('Nuevo Producto',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: scheme.primary)),
               const SizedBox(height: 16),
               TextField(controller: nameCtrl,
                 decoration: const InputDecoration(
@@ -63,7 +66,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
                     color: const Color(0xFFF5F5F5),
                     borderRadius: BorderRadius.circular(12),
                     border: Border.all(
-                      color: pickedImage != null ? const Color(0xFF2D5016) : Colors.grey.shade300,
+                      color: pickedImage != null ? scheme.primary : Colors.grey.shade300,
                       width: pickedImage != null ? 2 : 1)),
                   child: pickedImage != null
                     ? ClipRRect(
@@ -78,9 +81,9 @@ class _ProductsScreenState extends State<ProductsScreen> {
                 ),
               ),
               const SizedBox(height: 20),
-              SizedBox(width: double.infinity, child: FilledButton.icon(
-                icon: const Icon(Icons.check_rounded),
-                label: const Text('Guardar Producto'),
+              AppButton(
+                label: 'Guardar Producto',
+                icon: Icons.check_rounded,
                 onPressed: () async {
                   String _np(String s) {
                     s = s.trim();
@@ -114,10 +117,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
                       backgroundColor: Colors.red.shade700));
                   }
                 },
-                style: FilledButton.styleFrom(
-                  backgroundColor: const Color(0xFF2D5016),
-                  minimumSize: const Size(double.infinity, 50)),
-              )),
+              ),
             ]),
           ),
         );
@@ -128,6 +128,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
   // ── Acciones al tocar tarjeta (toggles) ──────────────────
   void _showCardActions(Product p) {
     final provider = context.read<AppProvider>();
+    final scheme = Theme.of(context).colorScheme;
 
     showModalBottomSheet(
       context: context,
@@ -154,7 +155,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
               Expanded(child: Text(p.name,
                 style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16))),
               Text('\$${NumberFormat('#,###', 'es_CO').format(p.price)}',
-                style: const TextStyle(color: Color(0xFF2D5016),
+                style: TextStyle(color: scheme.primary,
                   fontWeight: FontWeight.bold, fontSize: 15)),
             ]),
           ),
@@ -350,16 +351,15 @@ class _ProductsScreenState extends State<ProductsScreen> {
   Widget build(BuildContext context) {
     final provider  = context.watch<AppProvider>();
     final products  = provider.products;
+    final scheme    = Theme.of(context).colorScheme;
 
     return Scaffold(
       body: products.isEmpty
-        ? const Center(child: Column(
-            mainAxisAlignment: MainAxisAlignment.center, children: [
-            Icon(Icons.inventory_2_outlined, size: 64, color: Colors.grey),
-            SizedBox(height: 16),
-            Text('Sin productos. Agrega uno con +',
-              style: TextStyle(color: Colors.grey)),
-          ]))
+        ? const EmptyState(
+            emoji: '📦',
+            title: 'Sin productos',
+            subtitle: 'Agrega uno con +',
+          )
         : ListView.builder(
             padding: const EdgeInsets.only(top: 8, bottom: 80),
             itemCount: products.length,
@@ -383,7 +383,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
                               ? Colors.orange.withValues(alpha: 0.12)
                               : p.favorite
                                 ? Colors.amber.withValues(alpha: 0.12)
-                                : const Color(0xFF2D5016).withValues(alpha: 0.08),
+                                : scheme.primary.withValues(alpha: 0.08),
                             borderRadius: BorderRadius.circular(10),
                           ),
                           child: Icon(
@@ -392,7 +392,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
                               : p.favorite ? Icons.star : Icons.inventory_2_outlined,
                             color: !p.available
                               ? Colors.orange
-                              : p.favorite ? Colors.amber : const Color(0xFF2D5016),
+                              : p.favorite ? Colors.amber : scheme.primary,
                             size: 20,
                           ),
                         ),
@@ -405,8 +405,8 @@ class _ProductsScreenState extends State<ProductsScreen> {
                                 fontWeight: FontWeight.bold, fontSize: 15))),
                             Text(
                               '\$${NumberFormat('#,###', 'es_CO').format(p.price)}',
-                              style: const TextStyle(
-                                color: Color(0xFF2D5016),
+                              style: TextStyle(
+                                color: scheme.primary,
                                 fontWeight: FontWeight.bold)),
                           ]),
                           if (p.aliases.isNotEmpty)
@@ -430,7 +430,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
             onPressed: _showAddProduct,
             icon: const Icon(Icons.add),
             label: const Text('Producto'),
-            backgroundColor: const Color(0xFF2D5016),
+            backgroundColor: scheme.primary,
             foregroundColor: Colors.white,
           )
         : null,

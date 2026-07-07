@@ -27,7 +27,6 @@ class _ClientEstadosViewerState extends State<ClientEstadosViewer>
   final _replyFocus  = FocusNode();
 
   static const _autoDuration = Duration(seconds: 30);
-  static const _green = Color(0xFF1A7A35);
 
   @override
   void initState() {
@@ -134,6 +133,7 @@ class _ClientEstadosViewerState extends State<ClientEstadosViewer>
     }
 
     if (!mounted) return;
+    final scheme = Theme.of(context).colorScheme;
     showDialog(
       context: context,
       barrierColor: Colors.black54,
@@ -145,8 +145,8 @@ class _ClientEstadosViewerState extends State<ClientEstadosViewer>
             Container(
               width: 56, height: 56,
               decoration: BoxDecoration(
-                color: _green.withValues(alpha: 0.1), shape: BoxShape.circle),
-              child: const Icon(Icons.check_circle_outline_rounded, color: _green, size: 32),
+                color: scheme.primary.withValues(alpha: 0.1), shape: BoxShape.circle),
+              child: Icon(Icons.check_circle_outline_rounded, color: scheme.primary, size: 32),
             ),
             const SizedBox(height: 16),
             const Text('Mensaje enviado',
@@ -160,7 +160,7 @@ class _ClientEstadosViewerState extends State<ClientEstadosViewer>
               child: FilledButton(
                 onPressed: () => Navigator.pop(context),
                 style: FilledButton.styleFrom(
-                  backgroundColor: _green,
+                  backgroundColor: scheme.primary,
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
                 child: const Text('Entendido'),
               )),
@@ -175,6 +175,7 @@ class _ClientEstadosViewerState extends State<ClientEstadosViewer>
     final e       = _estados[_current];
     final padBot  = MediaQuery.of(context).padding.bottom;
     final padTop  = MediaQuery.of(context).padding.top;
+    final scheme  = Theme.of(context).colorScheme;
 
     return Scaffold(
       backgroundColor: Colors.black,
@@ -276,10 +277,10 @@ class _ClientEstadosViewerState extends State<ClientEstadosViewer>
             top: padTop + 16,
             left: 12, right: 12,
             child: Row(children: [
-              const CircleAvatar(
+              CircleAvatar(
                 radius: 20,
-                backgroundColor: Color(0xFF1A7A35),
-                child: Text('🌾', style: TextStyle(fontSize: 18)),
+                backgroundColor: scheme.primary,
+                child: const Text('🌾', style: TextStyle(fontSize: 18)),
               ),
               const SizedBox(width: 10),
               Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -349,7 +350,7 @@ class _ClientEstadosViewerState extends State<ClientEstadosViewer>
                           _ActionBtn(
                             onTap: _goToProduct,
                             icon: Icons.shopping_bag_outlined,
-                            iconColor: const Color(0xFFD4800A),
+                            iconColor: scheme.secondary,
                             label: 'Ver producto',
                             active: false,
                           ),
@@ -394,8 +395,8 @@ class _ClientEstadosViewerState extends State<ClientEstadosViewer>
                       onTap: _sendReply,
                       child: Container(
                         width: 44, height: 44,
-                        decoration: const BoxDecoration(
-                          color: _green, shape: BoxShape.circle),
+                        decoration: BoxDecoration(
+                          color: scheme.primary, shape: BoxShape.circle),
                         child: const Icon(
                           Icons.send_rounded, color: Colors.white, size: 20),
                       ),

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../services/api_service.dart';
+import '../widgets/empty_state.dart';
 
 class InventarioScreen extends StatefulWidget {
   const InventarioScreen({super.key});
@@ -8,10 +9,6 @@ class InventarioScreen extends StatefulWidget {
 }
 
 class _InventarioScreenState extends State<InventarioScreen> {
-  static const _green     = Color(0xFF2D5016);
-  static const _darkGreen = Color(0xFF1A3009);
-  static const _gold      = Color(0xFFD4800A);
-
   bool _loading = true;
   String? _error;
   List<Map<String, dynamic>> _productTotals = [];
@@ -41,32 +38,36 @@ class _InventarioScreenState extends State<InventarioScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     return RefreshIndicator(
       onRefresh: _load,
-      color: _green,
+      color: scheme.primary,
       child: _loading
-        ? const Center(child: CircularProgressIndicator(color: _green))
+        ? Center(child: CircularProgressIndicator(color: scheme.primary))
         : _error != null
           ? _buildError()
           : _buildContent(),
     );
   }
 
-  Widget _buildError() => ListView(children: [
-    const SizedBox(height: 100),
-    Center(child: Column(children: [
-      const Icon(Icons.error_outline, size: 48, color: Colors.red),
-      const SizedBox(height: 12),
-      Text(_error!, textAlign: TextAlign.center, style: const TextStyle(color: Colors.red)),
-      const SizedBox(height: 16),
-      FilledButton.icon(
-        onPressed: _load,
-        icon: const Icon(Icons.refresh),
-        label: const Text('Reintentar'),
-        style: FilledButton.styleFrom(backgroundColor: _green),
-      ),
-    ])),
-  ]);
+  Widget _buildError() {
+    final scheme = Theme.of(context).colorScheme;
+    return ListView(children: [
+      const SizedBox(height: 100),
+      Center(child: Column(children: [
+        const Icon(Icons.error_outline, size: 48, color: Colors.red),
+        const SizedBox(height: 12),
+        Text(_error!, textAlign: TextAlign.center, style: const TextStyle(color: Colors.red)),
+        const SizedBox(height: 16),
+        FilledButton.icon(
+          onPressed: _load,
+          icon: const Icon(Icons.refresh),
+          label: const Text('Reintentar'),
+          style: FilledButton.styleFrom(backgroundColor: scheme.primary),
+        ),
+      ])),
+    ]);
+  }
 
   Widget _buildContent() => ListView(
     padding: const EdgeInsets.all(16),
@@ -80,15 +81,17 @@ class _InventarioScreenState extends State<InventarioScreen> {
     ],
   );
 
-  Widget _buildSummaryCards() => Column(
+  Widget _buildSummaryCards() {
+    final scheme = Theme.of(context).colorScheme;
+    return Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      const Text('Resumen del día', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: _darkGreen)),
+      Text('Resumen del día', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: scheme.primary)),
       const SizedBox(height: 10),
       Row(children: [
-        Expanded(child: _statCard('Pendientes', '${_summary['pending'] ?? 0}', Icons.hourglass_top_rounded, _gold)),
+        Expanded(child: _statCard('Pendientes', '${_summary['pending'] ?? 0}', Icons.hourglass_top_rounded, scheme.secondary)),
         const SizedBox(width: 10),
-        Expanded(child: _statCard('En camino', '${_summary['en_camino'] ?? 0}', Icons.directions_bike_rounded, _green)),
+        Expanded(child: _statCard('En camino', '${_summary['en_camino'] ?? 0}', Icons.directions_bike_rounded, scheme.primary)),
       ]),
       const SizedBox(height: 10),
       Row(children: [
@@ -98,6 +101,7 @@ class _InventarioScreenState extends State<InventarioScreen> {
       ]),
     ],
   );
+  }
 
   Widget _statCard(String label, String value, IconData icon, Color color) => Card(
     elevation: 2,
@@ -136,6 +140,7 @@ class _InventarioScreenState extends State<InventarioScreen> {
     });
 
     final maxCount = bars.map((b) => b.count).reduce((a, b) => a > b ? a : b);
+    final scheme = Theme.of(context).colorScheme;
 
     return Card(
       elevation: 2,
@@ -143,8 +148,8 @@ class _InventarioScreenState extends State<InventarioScreen> {
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Text('Pedidos entregados (últimos 7 días)',
-            style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: _darkGreen)),
+          Text('Pedidos entregados (últimos 7 días)',
+            style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: scheme.primary)),
           const SizedBox(height: 16),
           SizedBox(
             height: 140,
@@ -164,13 +169,13 @@ class _InventarioScreenState extends State<InventarioScreen> {
                             style: TextStyle(
                               fontSize: 10,
                               fontWeight: FontWeight.bold,
-                              color: b.isToday ? _gold : _green)),
+                              color: b.isToday ? scheme.secondary : scheme.primary)),
                         const SizedBox(height: 2),
                         AnimatedContainer(
                           duration: const Duration(milliseconds: 400),
                           height: barH.clamp(4, 100),
                           decoration: BoxDecoration(
-                            color: b.isToday ? _gold : _green,
+                            color: b.isToday ? scheme.secondary : scheme.primary,
                             borderRadius: const BorderRadius.vertical(top: Radius.circular(4)),
                           ),
                         ),
@@ -179,7 +184,7 @@ class _InventarioScreenState extends State<InventarioScreen> {
                           style: TextStyle(
                             fontSize: 10,
                             fontWeight: b.isToday ? FontWeight.bold : FontWeight.normal,
-                            color: b.isToday ? _gold : Colors.grey.shade700)),
+                            color: b.isToday ? scheme.secondary : Colors.grey.shade700)),
                       ],
                     ),
                   ),
@@ -198,13 +203,10 @@ class _InventarioScreenState extends State<InventarioScreen> {
   }
 
   Widget _buildProductList() {
-    if (_productTotals.isEmpty) return Card(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-      child: const Padding(
-        padding: EdgeInsets.all(24),
-        child: Center(child: Text('No hay pedidos activos', style: TextStyle(color: Colors.grey))),
-      ),
-    );
+    final scheme = Theme.of(context).colorScheme;
+    if (_productTotals.isEmpty) {
+      return const EmptyState(emoji: '📦', title: 'No hay pedidos activos');
+    }
 
     return Card(
       elevation: 2,
@@ -213,18 +215,18 @@ class _InventarioScreenState extends State<InventarioScreen> {
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
           child: Row(children: [
-            const Icon(Icons.inventory_2_rounded, color: _green, size: 20),
+            Icon(Icons.inventory_2_rounded, color: scheme.primary, size: 20),
             const SizedBox(width: 8),
-            const Text('Productos requeridos',
-              style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: _darkGreen)),
+            Text('Productos requeridos',
+              style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: scheme.primary)),
             const Spacer(),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
               decoration: BoxDecoration(
-                color: _green.withValues(alpha: 0.1),
+                color: scheme.primary.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(10)),
               child: Text('${_productTotals.length} productos',
-                style: const TextStyle(fontSize: 11, color: _green, fontWeight: FontWeight.w600)),
+                style: TextStyle(fontSize: 11, color: scheme.primary, fontWeight: FontWeight.w600)),
             ),
           ]),
         ),
@@ -246,12 +248,12 @@ class _InventarioScreenState extends State<InventarioScreen> {
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
                     decoration: BoxDecoration(
-                      color: _gold.withValues(alpha: 0.12),
+                      color: scheme.secondary.withValues(alpha: 0.12),
                       borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: _gold.withValues(alpha: 0.4))),
+                      border: Border.all(color: scheme.secondary.withValues(alpha: 0.4))),
                     child: Text(
                       NumberFormat('#,###', 'es_CO').format(total),
-                      style: const TextStyle(fontWeight: FontWeight.bold, color: _gold, fontSize: 13)),
+                      style: TextStyle(fontWeight: FontWeight.bold, color: scheme.secondary, fontSize: 13)),
                   ),
                 ]),
                 const SizedBox(height: 6),
@@ -262,7 +264,7 @@ class _InventarioScreenState extends State<InventarioScreen> {
                     minHeight: 4,
                     backgroundColor: Colors.grey.shade200,
                     valueColor: AlwaysStoppedAnimation<Color>(
-                      ratio > 0.7 ? Colors.red.shade400 : ratio > 0.4 ? _gold : _green),
+                      ratio > 0.7 ? Colors.red.shade400 : ratio > 0.4 ? scheme.secondary : scheme.primary),
                   ),
                 ),
               ]),

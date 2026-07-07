@@ -4,6 +4,7 @@ import '../providers/app_provider.dart';
 import '../services/api_service.dart';
 import '../widgets/order_card.dart';
 import '../widgets/company_header.dart';
+import '../widgets/empty_state.dart';
 import 'products_screen.dart';
 import 'messages_screen.dart';
 import 'users_screen.dart';
@@ -79,18 +80,19 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
     final provider = context.watch<AppProvider>();
     final titles = provider.isAdmin ? _titlesAdmin : _titlesWorker;
     final safeTab = _tab < titles.length ? _tab : 0;
+    final scheme = Theme.of(context).colorScheme;
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF8F4EE),
+      backgroundColor: scheme.surface,
       appBar: CompanyHeader(
         pageTitle: titles[safeTab],
         actions: [
           if (!provider.isOnline)
-            const Padding(
-              padding: EdgeInsets.only(right: 4),
+            Padding(
+              padding: const EdgeInsets.only(right: 4),
               child: Tooltip(
                 message: 'Sin conexión',
-                child: Icon(Icons.wifi_off, color: Color(0xFFD4800A), size: 20),
+                child: Icon(Icons.wifi_off, color: scheme.secondary, size: 20),
               ),
             ),
           if (provider.isAdmin)
@@ -101,10 +103,10 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
                 builder: (_) => Scaffold(
                   appBar: AppBar(
                     title: const Text('Configuración'),
-                    backgroundColor: const Color(0xFF1E6B2E),
+                    backgroundColor: scheme.primary,
                     foregroundColor: Colors.white,
                   ),
-                  backgroundColor: const Color(0xFFF8F4EE),
+                  backgroundColor: scheme.surface,
                   body: const AdminSettingsScreen(),
                 ))),
             ),
@@ -150,27 +152,25 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
                   label: Text(_statusLabels[s] ?? s),
                   selected: _filter.contains(s),
                   onSelected: (v) => setState(() => v ? _filter.add(s) : _filter.remove(s)),
-                  selectedColor: const Color(0xFFD4ECB8),
-                  checkmarkColor: const Color(0xFF2D5016),
+                  selectedColor: scheme.primary.withValues(alpha: 0.16),
+                  checkmarkColor: scheme.primary,
                 ),
               )).toList(),
             ),
           ),
           Expanded(child: RefreshIndicator(
             onRefresh: provider.refreshOrders,
-            color: const Color(0xFF2D5016),
+            color: scheme.primary,
             child: () {
-              if (provider.loading) return const Center(child: CircularProgressIndicator(color: Color(0xFF2D5016)));
+              if (provider.loading) return Center(child: CircularProgressIndicator(color: scheme.primary));
               final sorted = _sortedOrders(provider.orders);
-              if (sorted.isEmpty) return ListView(children: const [
-                SizedBox(height: 100),
-                Column(children: [
-                  Text('📦', style: TextStyle(fontSize: 64)),
-                  SizedBox(height: 12),
-                  Text('No hay pedidos activos', style: TextStyle(color: Colors.grey, fontSize: 16, fontWeight: FontWeight.w500)),
-                  SizedBox(height: 4),
-                  Text('Desliza para actualizar', style: TextStyle(color: Colors.grey, fontSize: 12)),
-                ]),
+              if (sorted.isEmpty) return ListView(children: [
+                const SizedBox(height: 100),
+                const EmptyState(
+                  emoji: '📦',
+                  title: 'No hay pedidos activos',
+                  subtitle: 'Desliza para actualizar',
+                ),
               ]);
               return ListView.builder(
                 padding: const EdgeInsets.only(top: 4, bottom: 80),
@@ -211,20 +211,20 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
         selectedIndex: safeTab,
         onDestinationSelected: (i) => setState(() => _tab = i),
         backgroundColor: Colors.white,
-        indicatorColor: const Color(0xFFC8E6C9),
+        indicatorColor: scheme.primary.withValues(alpha: 0.16),
         destinations: [
           NavigationDestination(
             icon: Badge(
               isLabelVisible: provider.orders.isNotEmpty,
               label: Text('${provider.orders.length}'),
-              backgroundColor: const Color(0xFFD4800A),
+              backgroundColor: scheme.secondary,
               child: const Icon(Icons.dashboard_rounded)),
-            selectedIcon: const Icon(Icons.dashboard_rounded, color: Color(0xFF1E6B2E)),
+            selectedIcon: Icon(Icons.dashboard_rounded, color: scheme.primary),
             label: 'Pedidos'),
           if (provider.isAdmin)
-            const NavigationDestination(
-              icon: Icon(Icons.inventory_2_outlined),
-              selectedIcon: Icon(Icons.inventory_2_rounded, color: Color(0xFF1E6B2E)),
+            NavigationDestination(
+              icon: const Icon(Icons.inventory_2_outlined),
+              selectedIcon: Icon(Icons.inventory_2_rounded, color: scheme.primary),
               label: 'Productos'),
           NavigationDestination(
             icon: Badge(
@@ -236,32 +236,32 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
               isLabelVisible: provider.flaggedCount > 0,
               label: Text('${provider.flaggedCount}'),
               backgroundColor: Colors.red,
-              child: const Icon(Icons.chat_bubble_rounded, color: Color(0xFF1E6B2E))),
+              child: Icon(Icons.chat_bubble_rounded, color: scheme.primary)),
             label: 'Mensajes'),
           // Estados tab: admin gets it in its own slot; worker gets it here
           if (!provider.isAdmin)
-            const NavigationDestination(
-              icon: Icon(Icons.auto_stories_outlined),
-              selectedIcon: Icon(Icons.auto_stories_rounded, color: Color(0xFF1E6B2E)),
+            NavigationDestination(
+              icon: const Icon(Icons.auto_stories_outlined),
+              selectedIcon: Icon(Icons.auto_stories_rounded, color: scheme.primary),
               label: 'Estados'),
           if (provider.isAdmin)
             NavigationDestination(
               icon: Badge(
                 isLabelVisible: provider.users.isNotEmpty,
                 label: Text('${provider.users.length}'),
-                backgroundColor: const Color(0xFFD4800A),
+                backgroundColor: scheme.secondary,
                 child: const Icon(Icons.group_outlined)),
-              selectedIcon: const Icon(Icons.group_rounded, color: Color(0xFF1E6B2E)),
+              selectedIcon: Icon(Icons.group_rounded, color: scheme.primary),
               label: 'Usuarios'),
           if (provider.isAdmin)
-            const NavigationDestination(
-              icon: Icon(Icons.auto_stories_outlined),
-              selectedIcon: Icon(Icons.auto_stories_rounded, color: Color(0xFF1E6B2E)),
+            NavigationDestination(
+              icon: const Icon(Icons.auto_stories_outlined),
+              selectedIcon: Icon(Icons.auto_stories_rounded, color: scheme.primary),
               label: 'Estados'),
           if (provider.isAdmin)
-            const NavigationDestination(
-              icon: Icon(Icons.bar_chart_rounded),
-              selectedIcon: Icon(Icons.bar_chart_rounded, color: Color(0xFF1E6B2E)),
+            NavigationDestination(
+              icon: const Icon(Icons.bar_chart_rounded),
+              selectedIcon: Icon(Icons.bar_chart_rounded, color: scheme.primary),
               label: 'Inventario'),
         ],
       ),

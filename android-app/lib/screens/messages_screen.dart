@@ -5,6 +5,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:intl/intl.dart';
 import '../models/message.dart';
 import '../services/api_service.dart';
+import '../widgets/empty_state.dart';
 import 'chat_screen.dart';
 
 class MessagesScreen extends StatefulWidget {
@@ -69,7 +70,7 @@ class _MessagesScreenState extends State<MessagesScreen> with SingleTickerProvid
     switch (reason) {
       case 'reclamo':         return Colors.red;
       case 'fiado_bloqueado': return Colors.orange;
-      case 'fiado_pedido':    return const Color(0xFFD4800A);
+      case 'fiado_pedido':    return Theme.of(context).colorScheme.secondary;
       default:                return Colors.orange;
     }
   }
@@ -122,7 +123,7 @@ class _MessagesScreenState extends State<MessagesScreen> with SingleTickerProvid
     return Stack(children: [
       CircleAvatar(
         radius: 24,
-        backgroundColor: c.hasFlaggedMessages ? flagColor : const Color(0xFF2D5016),
+        backgroundColor: c.hasFlaggedMessages ? flagColor : Theme.of(context).colorScheme.primary,
         child: c.profilePicUrl != null && c.profilePicUrl!.isNotEmpty
             ? ClipOval(child: CachedNetworkImage(
                 imageUrl: c.profilePicUrl!,
@@ -146,6 +147,7 @@ class _MessagesScreenState extends State<MessagesScreen> with SingleTickerProvid
 
   Widget _buildConvTile(Conversation c, {bool isArchived = false}) {
     final flagColor = _flagColor(c.flagReason);
+    final scheme = Theme.of(context).colorScheme;
     return Slidable(
       key: ValueKey(c.phone),
       startActionPane: ActionPane(
@@ -209,7 +211,7 @@ class _MessagesScreenState extends State<MessagesScreen> with SingleTickerProvid
             Text(_formatTime(c.lastAt),
               style: TextStyle(
                 fontSize: 11,
-                color: c.unread > 0 ? const Color(0xFF2D5016) : Colors.grey,
+                color: c.unread > 0 ? scheme.primary : Colors.grey,
                 fontWeight: c.unread > 0 ? FontWeight.w600 : FontWeight.normal,
               )),
             if (c.unread > 0) ...[
@@ -217,7 +219,7 @@ class _MessagesScreenState extends State<MessagesScreen> with SingleTickerProvid
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF2D5016),
+                  color: scheme.primary,
                   borderRadius: BorderRadius.circular(10)),
                 child: Text('${c.unread}',
                   style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
@@ -292,35 +294,39 @@ class _MessagesScreenState extends State<MessagesScreen> with SingleTickerProvid
     ).toList();
   }
 
-  Widget _searchBar() => Container(
-    padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-    color: Colors.white,
-    child: TextField(
-      controller: _searchCtrl,
-      textInputAction: TextInputAction.search,
-      decoration: InputDecoration(
-        hintText: 'Buscar chats...',
-        hintStyle: TextStyle(color: Colors.grey.shade400, fontSize: 14),
-        prefixIcon: const Icon(Icons.search_rounded, color: Color(0xFF2D5016), size: 20),
-        suffixIcon: _query.isNotEmpty
-            ? IconButton(
-                icon: Icon(Icons.close_rounded, color: Colors.grey.shade400, size: 18),
-                onPressed: () { _searchCtrl.clear(); setState(() => _query = ''); })
-            : null,
-        filled: true,
-        fillColor: const Color(0xFFF5F5F5),
-        contentPadding: const EdgeInsets.symmetric(vertical: 10),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: Color(0xFF2D5016), width: 1.5)),
+  Widget _searchBar() {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+      color: Colors.white,
+      child: TextField(
+        controller: _searchCtrl,
+        textInputAction: TextInputAction.search,
+        decoration: InputDecoration(
+          hintText: 'Buscar chats...',
+          hintStyle: TextStyle(color: Colors.grey.shade400, fontSize: 14),
+          prefixIcon: Icon(Icons.search_rounded, color: scheme.primary, size: 20),
+          suffixIcon: _query.isNotEmpty
+              ? IconButton(
+                  icon: Icon(Icons.close_rounded, color: Colors.grey.shade400, size: 18),
+                  onPressed: () { _searchCtrl.clear(); setState(() => _query = ''); })
+              : null,
+          filled: true,
+          fillColor: const Color(0xFFF5F5F5),
+          contentPadding: const EdgeInsets.symmetric(vertical: 10),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: BorderSide(color: scheme.primary, width: 1.5)),
+        ),
       ),
-    ),
-  );
+    );
+  }
 
   Widget _buildList(List<Conversation> convs, {bool archived = false}) {
     final alertCount = convs.where((c) => c.hasFlaggedMessages).length;
+    final scheme = Theme.of(context).colorScheme;
     return Column(children: [
       if (alertCount > 0 && !archived)
         Container(
@@ -334,19 +340,16 @@ class _MessagesScreenState extends State<MessagesScreen> with SingleTickerProvid
           ]),
         ),
       Expanded(child: _loading
-        ? const Center(child: CircularProgressIndicator(color: Color(0xFF2D5016)))
+        ? Center(child: CircularProgressIndicator(color: scheme.primary))
         : convs.isEmpty
-          ? Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-              Text(_query.isNotEmpty ? '🔍' : archived ? '📦' : '💬',
-                style: const TextStyle(fontSize: 56)),
-              const SizedBox(height: 12),
-              Text(_query.isNotEmpty ? 'Sin resultados'
+          ? EmptyState(
+              emoji: _query.isNotEmpty ? '🔍' : archived ? '📦' : '💬',
+              title: _query.isNotEmpty ? 'Sin resultados'
                   : archived ? 'Sin conversaciones archivadas' : 'Sin conversaciones aún',
-                style: const TextStyle(color: Colors.grey, fontSize: 15)),
-            ]))
+            )
           : RefreshIndicator(
               onRefresh: _load,
-              color: const Color(0xFF2D5016),
+              color: scheme.primary,
               child: ListView.separated(
                 padding: const EdgeInsets.symmetric(vertical: 4),
                 itemCount: convs.length,
@@ -361,17 +364,18 @@ class _MessagesScreenState extends State<MessagesScreen> with SingleTickerProvid
   Widget build(BuildContext context) {
     final filteredChats    = _filterConvs(_chats);
     final filteredArchived = _filterConvs(_archived);
+    final scheme = Theme.of(context).colorScheme;
     return Scaffold(
-      backgroundColor: const Color(0xFFF8F4EE),
+      backgroundColor: scheme.surface,
       body: Column(children: [
         Container(
           color: Colors.white,
           child: Column(mainAxisSize: MainAxisSize.min, children: [
             TabBar(
               controller: _tabs,
-              labelColor: const Color(0xFF2D5016),
+              labelColor: scheme.primary,
               unselectedLabelColor: Colors.grey,
-              indicatorColor: const Color(0xFF2D5016),
+              indicatorColor: scheme.primary,
               tabs: [
                 Tab(text: filteredChats.isNotEmpty ? 'Chats (${filteredChats.length})' : 'Chats'),
                 Tab(text: filteredArchived.isNotEmpty ? 'Archivadas (${filteredArchived.length})' : 'Archivadas'),

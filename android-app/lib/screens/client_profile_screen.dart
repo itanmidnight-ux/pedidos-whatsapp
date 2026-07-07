@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import '../services/api_service.dart';
+import '../widgets/app_button.dart';
+import '../widgets/app_card.dart';
 
 class ClientProfileScreen extends StatefulWidget {
   const ClientProfileScreen({super.key});
@@ -8,9 +10,6 @@ class ClientProfileScreen extends StatefulWidget {
 }
 
 class _ClientProfileScreenState extends State<ClientProfileScreen> {
-  static const _green = Color(0xFF1E6B2E);
-  static const _gold  = Color(0xFFD4800A);
-
   bool _loading = true;
   bool _saving  = false;
 
@@ -129,22 +128,25 @@ class _ClientProfileScreenState extends State<ClientProfileScreen> {
   void _snack(String msg, {bool success = false}) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text(msg),
-      backgroundColor: success ? _green : Colors.red.shade700,
+      backgroundColor: success ? Theme.of(context).colorScheme.primary : Colors.red.shade700,
       behavior: SnackBarBehavior.floating,
     ));
   }
 
-  InputDecoration _deco(String label, IconData icon, {int? maxLines}) => InputDecoration(
-    labelText: label,
-    prefixIcon: Icon(icon, color: _green, size: 20),
-    filled: true,
-    fillColor: Colors.white,
-    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
-    focusedBorder: OutlineInputBorder(
-      borderRadius: BorderRadius.circular(12),
-      borderSide: const BorderSide(color: _green, width: 1.5)),
-    alignLabelWithHint: maxLines != null && maxLines > 1,
-  );
+  InputDecoration _deco(String label, IconData icon, {int? maxLines}) {
+    final primary = Theme.of(context).colorScheme.primary;
+    return InputDecoration(
+      labelText: label,
+      prefixIcon: Icon(icon, color: primary, size: 20),
+      filled: true,
+      fillColor: Colors.white,
+      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide(color: primary, width: 1.5)),
+      alignLabelWithHint: maxLines != null && maxLines > 1,
+    );
+  }
 
   Widget _section(String title) => Padding(
     padding: const EdgeInsets.fromLTRB(0, 8, 0, 12),
@@ -153,13 +155,14 @@ class _ClientProfileScreenState extends State<ClientProfileScreen> {
       color: Colors.black54, letterSpacing: 0.5)),
   );
 
-  Widget _pwField(TextEditingController ctrl, String label, bool obscure, VoidCallback toggle) =>
-    TextField(
+  Widget _pwField(TextEditingController ctrl, String label, bool obscure, VoidCallback toggle) {
+    final primary = Theme.of(context).colorScheme.primary;
+    return TextField(
       controller: ctrl,
       obscureText: obscure,
       decoration: InputDecoration(
         labelText: label,
-        prefixIcon: const Icon(Icons.lock_outline, color: _green, size: 20),
+        prefixIcon: Icon(Icons.lock_outline, color: primary, size: 20),
         suffixIcon: IconButton(
           icon: Icon(obscure ? Icons.visibility_off_outlined : Icons.visibility_outlined,
             size: 20, color: Colors.grey.shade400),
@@ -169,14 +172,16 @@ class _ClientProfileScreenState extends State<ClientProfileScreen> {
         border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: _green, width: 1.5)),
+          borderSide: BorderSide(color: primary, width: 1.5)),
       ),
     );
+  }
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     if (_loading) {
-      return const Center(child: CircularProgressIndicator(color: _green));
+      return Center(child: CircularProgressIndicator(color: scheme.primary));
     }
 
     return SingleChildScrollView(
@@ -187,15 +192,15 @@ class _ClientProfileScreenState extends State<ClientProfileScreen> {
           Stack(children: [
             CircleAvatar(
               radius: 48,
-              backgroundColor: const Color(0xFFE8F5E9),
+              backgroundColor: scheme.primary.withValues(alpha: 0.1),
               backgroundImage: _profilePic != null
                 ? NetworkImage(ApiService.profilePicUrl(_profilePic!)) : null,
               child: _profilePic == null
                 ? Text(
                     ApiService.displayName.isNotEmpty
                       ? ApiService.displayName[0].toUpperCase() : '?',
-                    style: const TextStyle(
-                      color: _green, fontSize: 36, fontWeight: FontWeight.bold))
+                    style: TextStyle(
+                      color: scheme.primary, fontSize: 36, fontWeight: FontWeight.bold))
                 : null,
             ),
             Positioned(bottom: 0, right: 0,
@@ -204,7 +209,7 @@ class _ClientProfileScreenState extends State<ClientProfileScreen> {
                 child: Container(
                   width: 30, height: 30,
                   decoration: BoxDecoration(
-                    color: _green, shape: BoxShape.circle,
+                    color: scheme.primary, shape: BoxShape.circle,
                     border: Border.all(color: Colors.white, width: 2)),
                   child: const Icon(Icons.camera_alt_rounded, color: Colors.white, size: 16),
                 ),
@@ -227,97 +232,88 @@ class _ClientProfileScreenState extends State<ClientProfileScreen> {
 
         // ── Perfil ─────────────────────────────────────────────
         _section('Información personal'),
-        Card(elevation: 0, color: Colors.white,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(children: [
-              TextField(
-                controller: _nameCtrl,
-                decoration: _deco('Nombre', Icons.badge_outlined),
-                textCapitalization: TextCapitalization.words,
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _addressCtrl,
-                decoration: _deco('Dirección de entrega', Icons.location_on_outlined, maxLines: 2),
-                maxLines: 2, minLines: 1,
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _nicknameCtrl,
-                decoration: _deco('Apodo (opcional)', Icons.tag_rounded),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _bioCtrl,
-                decoration: _deco('Descripción (opcional)', Icons.notes_rounded, maxLines: 2),
-                maxLines: 2, minLines: 1,
-              ),
-            ]),
-          )),
+        AppCard(
+          child: Column(children: [
+            TextField(
+              controller: _nameCtrl,
+              decoration: _deco('Nombre', Icons.badge_outlined),
+              textCapitalization: TextCapitalization.words,
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _addressCtrl,
+              decoration: _deco('Dirección de entrega', Icons.location_on_outlined, maxLines: 2),
+              maxLines: 2, minLines: 1,
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _nicknameCtrl,
+              decoration: _deco('Apodo (opcional)', Icons.tag_rounded),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _bioCtrl,
+              decoration: _deco('Descripción (opcional)', Icons.notes_rounded, maxLines: 2),
+              maxLines: 2, minLines: 1,
+            ),
+          ]),
+        ),
 
         const SizedBox(height: 12),
-        SizedBox(width: double.infinity,
-          child: FilledButton.icon(
-            onPressed: _saving ? null : _saveProfile,
-            style: FilledButton.styleFrom(backgroundColor: _green),
-            icon: _saving
-                ? const SizedBox(width: 16, height: 16,
-                    child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                : const Icon(Icons.save_rounded),
-            label: Text(_saving ? 'Guardando...' : 'Guardar perfil'),
-          )),
+        AppButton(
+          label: _saving ? 'Guardando...' : 'Guardar perfil',
+          onPressed: _saving ? null : _saveProfile,
+          loading: _saving,
+          icon: Icons.save_rounded,
+        ),
 
         const SizedBox(height: 24),
 
         // ── Contraseña ─────────────────────────────────────────
         _section('Cambiar contraseña'),
-        Card(elevation: 0, color: Colors.white,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(children: [
-              _pwField(_curPwCtrl, 'Contraseña actual', _curObscure,
-                () => setState(() => _curObscure = !_curObscure)),
-              const SizedBox(height: 12),
-              _pwField(_newPwCtrl, 'Nueva contraseña (mín 8)', _newObscure,
-                () => setState(() => _newObscure = !_newObscure)),
-              const SizedBox(height: 12),
-              _pwField(_pw2Ctrl, 'Confirmar contraseña', _pw2Obscure,
-                () => setState(() => _pw2Obscure = !_pw2Obscure)),
-              const SizedBox(height: 16),
-              SizedBox(width: double.infinity,
-                child: OutlinedButton.icon(
-                  onPressed: _saving ? null : _changePassword,
-                  icon: const Icon(Icons.key_rounded, color: _green),
-                  label: const Text('Cambiar contraseña',
-                    style: TextStyle(color: _green)),
-                  style: OutlinedButton.styleFrom(
-                    side: const BorderSide(color: _green),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-                )),
-            ]),
-          )),
+        AppCard(
+          child: Column(children: [
+            _pwField(_curPwCtrl, 'Contraseña actual', _curObscure,
+              () => setState(() => _curObscure = !_curObscure)),
+            const SizedBox(height: 12),
+            _pwField(_newPwCtrl, 'Nueva contraseña (mín 8)', _newObscure,
+              () => setState(() => _newObscure = !_newObscure)),
+            const SizedBox(height: 12),
+            _pwField(_pw2Ctrl, 'Confirmar contraseña', _pw2Obscure,
+              () => setState(() => _pw2Obscure = !_pw2Obscure)),
+            const SizedBox(height: 16),
+            SizedBox(width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: _saving ? null : _changePassword,
+                icon: Icon(Icons.key_rounded, color: scheme.primary),
+                label: Text('Cambiar contraseña',
+                  style: TextStyle(color: scheme.primary)),
+                style: OutlinedButton.styleFrom(
+                  side: BorderSide(color: scheme.primary),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+              )),
+          ]),
+        ),
 
         const SizedBox(height: 24),
 
         // ── Notificaciones ─────────────────────────────────────
         _section('Preferencias'),
-        Card(elevation: 0, color: Colors.white,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        AppCard(
+          padding: EdgeInsets.zero,
           child: Column(children: [
             ListTile(
-              leading: const Icon(Icons.notifications_outlined, color: _green),
+              leading: Icon(Icons.notifications_outlined, color: scheme.primary),
               title: const Text('Notificaciones'),
               subtitle: const Text('Recibir alertas de pedidos'),
               trailing: Switch(
                 value: true,
                 onChanged: (_) {},
-                activeColor: _green,
+                activeColor: scheme.primary,
               ),
             ),
-          ])),
+          ]),
+        ),
 
         const SizedBox(height: 32),
       ]),

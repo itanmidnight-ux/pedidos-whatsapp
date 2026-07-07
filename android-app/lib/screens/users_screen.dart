@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_provider.dart';
 import '../services/api_service.dart';
+import '../widgets/app_button.dart';
+import '../widgets/empty_state.dart';
 
 class UsersScreen extends StatefulWidget {
   const UsersScreen({super.key});
@@ -10,9 +12,6 @@ class UsersScreen extends StatefulWidget {
 }
 
 class _UsersScreenState extends State<UsersScreen> with SingleTickerProviderStateMixin {
-  static const _green  = Color(0xFF2D5016);
-  static const _gold   = Color(0xFFD4800A);
-
   bool _loading = false;
   late final TabController _tabs;
   final _staffSearchCtrl  = TextEditingController();
@@ -65,6 +64,7 @@ class _UsersScreenState extends State<UsersScreen> with SingleTickerProviderStat
     String role = isEdit ? (user['role'] ?? 'worker') : 'worker';
     bool   active = isEdit ? (user['active'] == 1 || user['active'] == true) : true;
     final formKey = GlobalKey<FormState>();
+    final scheme = Theme.of(context).colorScheme;
 
     await showModalBottomSheet(
       context: context,
@@ -93,7 +93,7 @@ class _UsersScreenState extends State<UsersScreen> with SingleTickerProviderStat
                 const SizedBox(height: 16),
                 Text(
                   isEdit ? 'Editar usuario' : 'Nuevo usuario',
-                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: _green),
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: scheme.primary),
                 ),
                 const SizedBox(height: 20),
                 TextFormField(
@@ -117,7 +117,7 @@ class _UsersScreenState extends State<UsersScreen> with SingleTickerProviderStat
                   keyboardType: TextInputType.visiblePassword,
                   decoration: InputDecoration(
                     labelText: isEdit ? 'Contraseña (vacío = sin cambio)' : 'Contraseña',
-                    prefixIcon: const Icon(Icons.lock_outline, size: 20, color: _green),
+                    prefixIcon: Icon(Icons.lock_outline, size: 20, color: scheme.primary),
                     suffixIcon: IconButton(
                       icon: Icon(pwObscure ? Icons.visibility_off_outlined : Icons.visibility_outlined, size: 20),
                       onPressed: () => setPw(() => pwObscure = !pwObscure),
@@ -127,7 +127,7 @@ class _UsersScreenState extends State<UsersScreen> with SingleTickerProviderStat
                     border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
                     focusedBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
-                      borderSide: const BorderSide(color: _green, width: 1.5)),
+                      borderSide: BorderSide(color: scheme.primary, width: 1.5)),
                     errorBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
                       borderSide: const BorderSide(color: Colors.red)),
@@ -156,7 +156,7 @@ class _UsersScreenState extends State<UsersScreen> with SingleTickerProviderStat
                     value: active,
                     onChanged: (v) => setS(() => active = v),
                     title: const Text('Usuario activo'),
-                    activeThumbColor: _green,
+                    activeThumbColor: scheme.primary,
                     contentPadding: EdgeInsets.zero,
                   ),
                 const SizedBox(height: 20),
@@ -166,8 +166,8 @@ class _UsersScreenState extends State<UsersScreen> with SingleTickerProviderStat
                     child: const Text('Cancelar'),
                   )),
                   const SizedBox(width: 12),
-                  Expanded(child: FilledButton(
-                    style: FilledButton.styleFrom(backgroundColor: _green),
+                  Expanded(child: AppButton(
+                    label: isEdit ? 'Guardar' : 'Crear',
                     onPressed: () async {
                       if (!formKey.currentState!.validate()) return;
                       Navigator.pop(ctx);
@@ -198,7 +198,6 @@ class _UsersScreenState extends State<UsersScreen> with SingleTickerProviderStat
                         if (mounted) setState(() => _loading = false);
                       }
                     },
-                    child: Text(isEdit ? 'Guardar' : 'Crear'),
                   )),
                 ]),
                 const SizedBox(height: 4),
@@ -213,6 +212,7 @@ class _UsersScreenState extends State<UsersScreen> with SingleTickerProviderStat
   Future<void> _toggleActive(Map<String, dynamic> user) async {
     final newActive = !(user['active'] == 1 || user['active'] == true);
     final name = user['display_name'] ?? user['username'];
+    final scheme = Theme.of(context).colorScheme;
     final confirm = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
@@ -223,7 +223,7 @@ class _UsersScreenState extends State<UsersScreen> with SingleTickerProviderStat
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
           FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: newActive ? _green : Colors.red),
+            style: FilledButton.styleFrom(backgroundColor: newActive ? scheme.primary : Colors.red),
             onPressed: () => Navigator.pop(context, true),
             child: Text(newActive ? 'Activar' : 'Desactivar'),
           ),
@@ -278,73 +278,81 @@ class _UsersScreenState extends State<UsersScreen> with SingleTickerProviderStat
   }
 
   void _snack(String msg, {bool success = false}) {
+    final scheme = Theme.of(context).colorScheme;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text(msg),
-      backgroundColor: success ? _green : Colors.red.shade700,
+      backgroundColor: success ? scheme.primary : Colors.red.shade700,
       behavior: SnackBarBehavior.floating,
     ));
   }
 
-  InputDecoration _inputDeco(String label, IconData icon) => InputDecoration(
-    labelText: label,
-    prefixIcon: Icon(icon, size: 20, color: _green),
-    filled: true,
-    fillColor: const Color(0xFFF5F5F5),
-    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
-    focusedBorder: OutlineInputBorder(
-      borderRadius: BorderRadius.circular(12),
-      borderSide: const BorderSide(color: _green, width: 1.5),
-    ),
-    errorBorder: OutlineInputBorder(
-      borderRadius: BorderRadius.circular(12),
-      borderSide: const BorderSide(color: Colors.red),
-    ),
-    focusedErrorBorder: OutlineInputBorder(
-      borderRadius: BorderRadius.circular(12),
-      borderSide: const BorderSide(color: Colors.red, width: 1.5),
-    ),
-  );
-
-  Widget _searchBar(TextEditingController ctrl, String query, String hint) => Container(
-    padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
-    color: Colors.white,
-    child: TextField(
-      controller: ctrl,
-      textInputAction: TextInputAction.search,
-      decoration: InputDecoration(
-        hintText: hint,
-        hintStyle: TextStyle(color: Colors.grey.shade400, fontSize: 14),
-        prefixIcon: const Icon(Icons.search_rounded, color: Color(0xFF1E6B2E), size: 20),
-        suffixIcon: query.isNotEmpty
-            ? IconButton(
-                icon: Icon(Icons.close_rounded, color: Colors.grey.shade400, size: 18),
-                onPressed: () { ctrl.clear(); })
-            : null,
-        filled: true,
-        fillColor: const Color(0xFFF5F5F5),
-        contentPadding: const EdgeInsets.symmetric(vertical: 10),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: Color(0xFF1E6B2E), width: 1.5)),
+  InputDecoration _inputDeco(String label, IconData icon) {
+    final scheme = Theme.of(context).colorScheme;
+    return InputDecoration(
+      labelText: label,
+      prefixIcon: Icon(icon, size: 20, color: scheme.primary),
+      filled: true,
+      fillColor: const Color(0xFFF5F5F5),
+      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide(color: scheme.primary, width: 1.5),
       ),
-    ),
-  );
+      errorBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: const BorderSide(color: Colors.red),
+      ),
+      focusedErrorBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: const BorderSide(color: Colors.red, width: 1.5),
+      ),
+    );
+  }
+
+  Widget _searchBar(TextEditingController ctrl, String query, String hint) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
+      color: Colors.white,
+      child: TextField(
+        controller: ctrl,
+        textInputAction: TextInputAction.search,
+        decoration: InputDecoration(
+          hintText: hint,
+          hintStyle: TextStyle(color: Colors.grey.shade400, fontSize: 14),
+          prefixIcon: Icon(Icons.search_rounded, color: scheme.primary, size: 20),
+          suffixIcon: query.isNotEmpty
+              ? IconButton(
+                  icon: Icon(Icons.close_rounded, color: Colors.grey.shade400, size: 18),
+                  onPressed: () { ctrl.clear(); })
+              : null,
+          filled: true,
+          fillColor: const Color(0xFFF5F5F5),
+          contentPadding: const EdgeInsets.symmetric(vertical: 10),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: BorderSide(color: scheme.primary, width: 1.5)),
+        ),
+      ),
+    );
+  }
 
   Widget _userTile(Map<String, dynamic> u, {bool isClient = false}) {
+    final scheme  = Theme.of(context).colorScheme;
     final name    = u['display_name'] ?? u['username'] ?? '?';
     final uname   = u['username'] ?? '';
     final role    = u['role'] ?? 'worker';
     final active  = u['active'] == 1 || u['active'] == true;
     final isAdmin = role == 'admin';
-    final badgeColor  = isAdmin ? _gold : isClient ? Colors.blue : _green;
+    final badgeColor  = isAdmin ? scheme.secondary : isClient ? Colors.blue : scheme.primary;
     final badgeText   = isAdmin ? 'Admin' : isClient ? 'Cliente' : 'Trabajador';
     final avatarColor = isAdmin
-        ? _gold.withValues(alpha: active ? 1 : 0.4)
+        ? scheme.secondary.withValues(alpha: active ? 1 : 0.4)
         : isClient
             ? Colors.blue.withValues(alpha: active ? 0.8 : 0.3)
-            : _green.withValues(alpha: active ? 1 : 0.35);
+            : scheme.primary.withValues(alpha: active ? 1 : 0.35);
 
     return Card(
       elevation: 0,
@@ -395,13 +403,13 @@ class _UsersScreenState extends State<UsersScreen> with SingleTickerProviderStat
               IconButton(
                 icon: Icon(
                   active ? Icons.toggle_on_rounded : Icons.toggle_off_rounded,
-                  color: active ? _green : Colors.grey, size: 28),
+                  color: active ? scheme.primary : Colors.grey, size: 28),
                 tooltip: active ? 'Desactivar' : 'Activar',
                 onPressed: () => _toggleActive(u),
               ),
             if (!isClient)
               IconButton(
-                icon: const Icon(Icons.edit_rounded, size: 20, color: Color(0xFF2D5016)),
+                icon: Icon(Icons.edit_rounded, size: 20, color: scheme.primary),
                 onPressed: () => _showStaffDialog(user: u),
               ),
             IconButton(
@@ -417,6 +425,7 @@ class _UsersScreenState extends State<UsersScreen> with SingleTickerProviderStat
   // ── Build ─────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     final allUsers = context.watch<AppProvider>().users;
     final staff = allUsers.where((u) => u['role'] != 'client').where((u) {
       if (_staffQuery.isEmpty) return true;
@@ -437,9 +446,9 @@ class _UsersScreenState extends State<UsersScreen> with SingleTickerProviderStat
         color: Colors.white,
         child: TabBar(
           controller: _tabs,
-          labelColor: _green,
+          labelColor: scheme.primary,
           unselectedLabelColor: Colors.grey,
-          indicatorColor: _green,
+          indicatorColor: scheme.primary,
           tabs: [
             Tab(text: 'Personal (${staff.length})'),
             Tab(text: 'Clientes (${clients.length})'),
@@ -455,17 +464,14 @@ class _UsersScreenState extends State<UsersScreen> with SingleTickerProviderStat
               _searchBar(_staffSearchCtrl, _staffQuery, 'Buscar personal...'),
               Expanded(child: RefreshIndicator(
                 onRefresh: () => context.read<AppProvider>().refreshUsers(),
-                color: _green,
+                color: scheme.primary,
                 child: staff.isEmpty
                     ? ListView(children: [
                         const SizedBox(height: 100),
-                        Column(children: [
-                          Text(_staffQuery.isNotEmpty ? '🔍' : '👥',
-                            style: const TextStyle(fontSize: 56)),
-                          const SizedBox(height: 12),
-                          Text(_staffQuery.isNotEmpty ? 'Sin resultados' : 'No hay personal',
-                            style: const TextStyle(fontSize: 16, color: Colors.grey)),
-                        ]),
+                        EmptyState(
+                          emoji: _staffQuery.isNotEmpty ? '🔍' : '👥',
+                          title: _staffQuery.isNotEmpty ? 'Sin resultados' : 'No hay personal',
+                        ),
                       ])
                     : ListView(
                         padding: const EdgeInsets.fromLTRB(12, 12, 12, 100),
@@ -479,24 +485,17 @@ class _UsersScreenState extends State<UsersScreen> with SingleTickerProviderStat
               _searchBar(_clientSearchCtrl, _clientQuery, 'Buscar clientes...'),
               Expanded(child: RefreshIndicator(
                 onRefresh: _loadClients,
-                color: _green,
+                color: scheme.primary,
                 child: _loadingClients
-                    ? const Center(child: CircularProgressIndicator(color: _green))
+                    ? Center(child: CircularProgressIndicator(color: scheme.primary))
                     : clients.isEmpty
                         ? ListView(children: [
                             const SizedBox(height: 100),
-                            Column(children: [
-                              Text(_clientQuery.isNotEmpty ? '🔍' : '🛒',
-                                style: const TextStyle(fontSize: 56)),
-                              const SizedBox(height: 12),
-                              Text(_clientQuery.isNotEmpty ? 'Sin resultados' : 'No hay clientes registrados',
-                                style: const TextStyle(fontSize: 16, color: Colors.grey)),
-                              if (_clientQuery.isEmpty) ...[
-                                const SizedBox(height: 8),
-                                Text('Los clientes se registran desde la app',
-                                  style: TextStyle(fontSize: 12, color: Colors.grey.shade400)),
-                              ],
-                            ]),
+                            EmptyState(
+                              emoji: _clientQuery.isNotEmpty ? '🔍' : '🛒',
+                              title: _clientQuery.isNotEmpty ? 'Sin resultados' : 'No hay clientes registrados',
+                              subtitle: _clientQuery.isEmpty ? 'Los clientes se registran desde la app' : null,
+                            ),
                           ])
                         : ListView(
                             padding: const EdgeInsets.fromLTRB(12, 12, 12, 20),
@@ -509,9 +508,9 @@ class _UsersScreenState extends State<UsersScreen> with SingleTickerProviderStat
 
         // Loading overlay
         if (_loading)
-          const Positioned.fill(child: ColoredBox(
+          Positioned.fill(child: ColoredBox(
             color: Colors.black12,
-            child: Center(child: CircularProgressIndicator(color: _green)),
+            child: Center(child: CircularProgressIndicator(color: scheme.primary)),
           )),
 
         // FAB only on Tab 0 (staff)
@@ -522,7 +521,7 @@ class _UsersScreenState extends State<UsersScreen> with SingleTickerProviderStat
                   bottom: 20, right: 16,
                   child: FloatingActionButton.extended(
                     onPressed: () => _showStaffDialog(),
-                    backgroundColor: _green,
+                    backgroundColor: scheme.primary,
                     icon: const Icon(Icons.person_add_rounded, color: Colors.white),
                     label: const Text('Nuevo usuario',
                       style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),

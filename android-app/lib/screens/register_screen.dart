@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_provider.dart';
 import '../services/api_service.dart';
+import '../widgets/app_button.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
@@ -24,10 +25,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
   bool    _obscure2 = true;
   String? _error;
 
-  static const _green     = Color(0xFF1A7A35);
-  static const _greenDark = Color(0xFF0F4D20);
-  static const _gold      = Color(0xFFD4800A);
-
   @override
   void dispose() {
     _nameCtrl.dispose(); _usernameCtrl.dispose(); _emailCtrl.dispose();
@@ -40,8 +37,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
     if (!_formKey.currentState!.validate()) return;
     setState(() { _loading = true; _error = null; });
     try {
-      // Create the account first
-      await ApiService.register(
+      // Cuenta queda pendiente de aprobación del admin — no hay auto-login
+      final message = await ApiService.register(
         username:    _usernameCtrl.text.trim(),
         password:    _pwCtrl.text,
         displayName: _nameCtrl.text.trim(),
@@ -51,9 +48,21 @@ class _RegisterScreenState extends State<RegisterScreen> {
         bio:         _bioCtrl.text.trim().isEmpty ? null : _bioCtrl.text.trim(),
       );
       if (!mounted) return;
-      // Auto-login with the new credentials
-      await context.read<AppProvider>().login(
-        _usernameCtrl.text.trim(), _pwCtrl.text);
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Cuenta creada'),
+          content: Text(message),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Entendido'),
+            ),
+          ],
+        ),
+      );
+      if (mounted) Navigator.pop(context);
     } catch (e) {
       if (mounted) setState(() => _error = e.toString().replaceAll('Exception: ', ''));
     } finally {
@@ -74,6 +83,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     int maxLines = 1,
     String? Function(String?)? validator,
   }) {
+    final scheme = Theme.of(context).colorScheme;
     return TextFormField(
       controller: controller,
       obscureText: obscure,
@@ -86,7 +96,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       decoration: InputDecoration(
         labelText: label,
         hintText: hint,
-        prefixIcon: Icon(icon, color: _green, size: 20),
+        prefixIcon: Icon(icon, color: scheme.primary, size: 20),
         suffixIcon: onToggle != null
             ? IconButton(
                 icon: Icon(obscure ? Icons.visibility_off_outlined : Icons.visibility_outlined,
@@ -103,7 +113,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
           borderSide: BorderSide(color: Colors.grey.shade200)),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(14),
-          borderSide: const BorderSide(color: _green, width: 1.8)),
+          borderSide: BorderSide(color: scheme.primary, width: 1.8)),
         errorBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(14),
           borderSide: const BorderSide(color: Colors.red)),
@@ -118,10 +128,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final greenDark = Color.lerp(scheme.primary, Colors.black, 0.35)!;
     return Scaffold(
-      backgroundColor: _greenDark,
+      backgroundColor: greenDark,
       appBar: AppBar(
-        backgroundColor: _greenDark,
+        backgroundColor: greenDark,
         foregroundColor: Colors.white,
         title: const Text('Crear cuenta',
           style: TextStyle(fontWeight: FontWeight.w700)),
@@ -138,8 +150,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 const Text('🌾', style: TextStyle(fontSize: 36)),
                 const SizedBox(height: 8),
-                const Text('Concentrados Monserrath',
-                  style: TextStyle(color: _gold, fontSize: 13, fontWeight: FontWeight.w800, letterSpacing: 1)),
+                Text('Concentrados Monserrath',
+                  style: TextStyle(color: scheme.secondary, fontSize: 13, fontWeight: FontWeight.w800, letterSpacing: 1)),
                 const SizedBox(height: 4),
                 Text('Regístrate para hacer pedidos',
                   style: TextStyle(color: Colors.white.withValues(alpha: 0.7), fontSize: 13)),
@@ -284,33 +296,18 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       ]),
                     ),
 
-                  SizedBox(height: 54,
-                    child: ElevatedButton(
-                      onPressed: _loading ? null : _register,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: _green,
-                        disabledBackgroundColor: _green.withValues(alpha: 0.5),
-                        foregroundColor: Colors.white,
-                        elevation: 0,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                      ),
-                      child: _loading
-                          ? const SizedBox(width: 24, height: 24,
-                              child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white))
-                          : const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                              Icon(Icons.person_add_rounded, size: 20),
-                              SizedBox(width: 10),
-                              Text('Crear mi cuenta',
-                                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
-                            ]),
-                    ),
+                  AppButton(
+                    label: 'Crear mi cuenta',
+                    onPressed: _loading ? null : _register,
+                    loading: _loading,
+                    icon: Icons.person_add_rounded,
                   ),
                   const SizedBox(height: 16),
 
                   Center(child: TextButton(
                     onPressed: () => Navigator.pop(context),
-                    child: const Text('¿Ya tienes cuenta? Inicia sesión',
-                      style: TextStyle(color: Color(0xFF1A7A35))),
+                    child: Text('¿Ya tienes cuenta? Inicia sesión',
+                      style: TextStyle(color: scheme.primary)),
                   )),
                   const SizedBox(height: 8),
                 ]),
