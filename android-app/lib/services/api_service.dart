@@ -12,7 +12,25 @@ import '../models/message.dart';
 import '../models/estado.dart';
 import '../models/cart_item.dart';
 
+// Interceptor central: cualquier request que responda 401 dispara logout +
+// aviso a la UI, sin depender de que cada método individual lo chequee.
+class _AuthHttpClient extends http.BaseClient {
+  final http.Client _inner = http.Client();
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    final res = await _inner.send(request);
+    if (res.statusCode == 401) {
+      ApiService.logout();
+      ApiService.onUnauthorized?.call();
+    }
+    return res;
+  }
+}
+
 class ApiService {
+  static final http.Client _client = _AuthHttpClient();
+
   static const _secureStorage = FlutterSecureStorage(
     aOptions: AndroidOptions(encryptedSharedPreferences: true),
   );
@@ -70,7 +88,7 @@ class ApiService {
   }
 
   static Future<void> _refreshToken() async {
-    final res = await http.post(
+    final res = await _client.post(
       Uri.parse('$_serverUrl/api/auth/refresh'),
       headers: {
         'Authorization':              'Bearer $_token',
@@ -158,7 +176,9 @@ class ApiService {
   }
 
   // ── Auth ────────────────────────────────────────────────
-  static Future<Map<String, String>> register({
+  // Cuenta queda pendiente de aprobación del admin — el servidor ya no
+  // devuelve token de sesión en el registro (active=0 hasta ser aprobada).
+  static Future<String> register({
     required String username,
     required String password,
     required String displayName,
@@ -169,7 +189,7 @@ class ApiService {
   }) async {
     http.Response res;
     try {
-      res = await http.post(
+      res = await _client.post(
         Uri.parse('$_serverUrl/api/auth/register'),
         headers: {'Content-Type': 'application/json', 'ngrok-skip-browser-warning': 'true'},
         body: jsonEncode({
@@ -189,12 +209,8 @@ class ApiService {
     }
     if (res.statusCode == 201) {
       final body = jsonDecode(res.body) as Map<String, dynamic>;
-      return {
-        'token':        body['token'] as String,
-        'username':     body['username'] as String,
-        'role':         body['role'] as String? ?? 'client',
-        'display_name': body['display_name'] as String? ?? username,
-      };
+      return body['message'] as String? ??
+          'Cuenta creada. Un administrador debe aprobarla antes de que puedas iniciar sesión.';
     }
     final body = _tryDecodeBody(res.body);
     throw Exception(body['error'] as String? ?? 'Error al registrarse');
@@ -203,7 +219,7 @@ class ApiService {
   static Future<Map<String, String>> login(String username, String pin) async {
     http.Response res;
     try {
-      res = await http.post(
+      res = await _client.post(
         Uri.parse('$_serverUrl/api/auth/token'),
         headers: {'Content-Type': 'application/json', 'ngrok-skip-browser-warning': 'true'},
         body: jsonEncode({'username': username.toLowerCase().trim(), 'password': pin}),
@@ -244,46 +260,46 @@ class ApiService {
   // ── Orders ──────────────────────────────────────────────
   static Future<List<Order>> getOrders() async {
     final res = _handleResponse(
-      await http.get(Uri.parse('$_serverUrl/api/orders'), headers: _headers).timeout(const Duration(seconds: 10)));
+      await _client.get(Uri.parse('$_serverUrl/api/orders'), headers: _headers).timeout(const Duration(seconds: 10)));
     if (res.statusCode == 200) return (jsonDecode(res.body) as List).map((j) => Order.fromJson(j)).toList();
     throw Exception('Error pedidos: ${res.statusCode}');
   }
 
   static Future<Order> claimOrder(int id) async {
-    final res = await http.put(Uri.parse('$_serverUrl/api/orders/$id/claim'), headers: _headers).timeout(const Duration(seconds: 10));
+    final res = await _client.put(Uri.parse('$_serverUrl/api/orders/$id/claim'), headers: _headers).timeout(const Duration(seconds: 10));
     if (res.statusCode == 200) return Order.fromJson(jsonDecode(res.body));
     throw Exception(jsonDecode(res.body)['error'] ?? 'Error reclamando pedido');
   }
 
   static Future<Order> unclaimOrder(int id) async {
-    final res = await http.put(Uri.parse('$_serverUrl/api/orders/$id/unclaim'), headers: _headers).timeout(const Duration(seconds: 10));
+    final res = await _client.put(Uri.parse('$_serverUrl/api/orders/$id/unclaim'), headers: _headers).timeout(const Duration(seconds: 10));
     if (res.statusCode == 200) return Order.fromJson(jsonDecode(res.body));
     throw Exception(jsonDecode(res.body)['error'] ?? 'Error liberando pedido');
   }
 
   static Future<Order> markEnCamino(int id) async {
-    final res = await http.put(Uri.parse('$_serverUrl/api/orders/$id/en_camino'), headers: _headers).timeout(const Duration(seconds: 10));
+    final res = await _client.put(Uri.parse('$_serverUrl/api/orders/$id/en_camino'), headers: _headers).timeout(const Duration(seconds: 10));
     if (res.statusCode == 200) return Order.fromJson(jsonDecode(res.body));
     throw Exception(jsonDecode(res.body)['error'] ?? 'Error actualizando estado');
   }
 
   static Future<Order> cancelOrder(int id, String reason) async {
-    final res = await http.put(Uri.parse('$_serverUrl/api/orders/$id/cancel'), headers: _headers, body: jsonEncode({'reason': reason})).timeout(const Duration(seconds: 10));
+    final res = await _client.put(Uri.parse('$_serverUrl/api/orders/$id/cancel'), headers: _headers, body: jsonEncode({'reason': reason})).timeout(const Duration(seconds: 10));
     if (res.statusCode == 200) return Order.fromJson(jsonDecode(res.body));
     throw Exception(jsonDecode(res.body)['error'] ?? 'Error cancelando pedido');
   }
 
   static Future<void> deliverOrder(int id) async {
-    final res = await http.put(Uri.parse('$_serverUrl/api/orders/$id/deliver'), headers: _headers).timeout(const Duration(seconds: 10));
+    final res = await _client.put(Uri.parse('$_serverUrl/api/orders/$id/deliver'), headers: _headers).timeout(const Duration(seconds: 10));
     if (res.statusCode != 200) throw Exception('Error entregando pedido');
   }
 
   static Future<void> addComment(int id, String comment) async {
-    await http.put(Uri.parse('$_serverUrl/api/orders/$id/comment'), headers: _headers, body: jsonEncode({'comment': comment})).timeout(const Duration(seconds: 10));
+    await _client.put(Uri.parse('$_serverUrl/api/orders/$id/comment'), headers: _headers, body: jsonEncode({'comment': comment})).timeout(const Duration(seconds: 10));
   }
 
   static Future<Map<String, dynamic>> getInventoryStats() async {
-    final res = await http.get(Uri.parse('$_serverUrl/api/orders/stats'), headers: _headers).timeout(const Duration(seconds: 10));
+    final res = await _client.get(Uri.parse('$_serverUrl/api/orders/stats'), headers: _headers).timeout(const Duration(seconds: 10));
     if (res.statusCode == 200) return jsonDecode(res.body) as Map<String, dynamic>;
     throw Exception('Error stats: ${res.statusCode}');
   }
@@ -291,43 +307,43 @@ class ApiService {
   // ── Products ─────────────────────────────────────────────
   static Future<List<Product>> getProducts() async {
     final res = _handleResponse(
-      await http.get(Uri.parse('$_serverUrl/api/products'), headers: _headers).timeout(const Duration(seconds: 10)));
+      await _client.get(Uri.parse('$_serverUrl/api/products'), headers: _headers).timeout(const Duration(seconds: 10)));
     if (res.statusCode == 200) return (jsonDecode(res.body) as List).map((j) => Product.fromJson(j)).toList();
     throw Exception('Error productos');
   }
 
   static Future<Product> createProduct(Product p) async {
-    final res = await http.post(Uri.parse('$_serverUrl/api/products'), headers: _headers, body: jsonEncode(p.toJson())).timeout(const Duration(seconds: 10));
+    final res = await _client.post(Uri.parse('$_serverUrl/api/products'), headers: _headers, body: jsonEncode(p.toJson())).timeout(const Duration(seconds: 10));
     if (res.statusCode == 200 || res.statusCode == 201) return Product.fromJson(jsonDecode(res.body));
     throw Exception(jsonDecode(res.body)['error'] ?? 'Error creando producto: ${res.statusCode}');
   }
 
   static Future<Product> updateProduct(int id, Map<String, dynamic> data) async {
-    final res = await http.put(Uri.parse('$_serverUrl/api/products/$id'), headers: _headers, body: jsonEncode(data)).timeout(const Duration(seconds: 10));
+    final res = await _client.put(Uri.parse('$_serverUrl/api/products/$id'), headers: _headers, body: jsonEncode(data)).timeout(const Duration(seconds: 10));
     if (res.statusCode == 200) return Product.fromJson(jsonDecode(res.body));
     throw Exception(jsonDecode(res.body)['error'] ?? 'Error actualizando producto: ${res.statusCode}');
   }
 
   static Future<void> deleteProduct(int id) async {
-    await http.delete(Uri.parse('$_serverUrl/api/products/$id'), headers: _headers).timeout(const Duration(seconds: 10));
+    await _client.delete(Uri.parse('$_serverUrl/api/products/$id'), headers: _headers).timeout(const Duration(seconds: 10));
   }
 
   // ── Users (admin) ────────────────────────────────────────
   static Future<List<Map<String, dynamic>>> getUsers() async {
-    final res = await http.get(Uri.parse('$_serverUrl/api/users'), headers: _headers).timeout(const Duration(seconds: 10));
+    final res = await _client.get(Uri.parse('$_serverUrl/api/users'), headers: _headers).timeout(const Duration(seconds: 10));
     if (res.statusCode == 200) return List<Map<String, dynamic>>.from(jsonDecode(res.body)['users']);
     throw Exception('Error usuarios: ${res.statusCode}');
   }
 
   static Future<Map<String, dynamic>> createUser(String username, String password, String displayName, {String role = 'worker', String? address}) async {
-    final res = await http.post(Uri.parse('$_serverUrl/api/users'), headers: _headers,
+    final res = await _client.post(Uri.parse('$_serverUrl/api/users'), headers: _headers,
       body: jsonEncode({'username': username, 'password': password, 'display_name': displayName, 'role': role, if (address != null && address.isNotEmpty) 'address': address})).timeout(const Duration(seconds: 10));
     if (res.statusCode == 201) return jsonDecode(res.body)['user'];
     throw Exception(jsonDecode(res.body)['error'] ?? 'Error creando usuario');
   }
 
   static Future<Map<String, dynamic>> updateUser(int id, Map<String, dynamic> data) async {
-    final res = await http.put(Uri.parse('$_serverUrl/api/users/$id'), headers: _headers, body: jsonEncode(data)).timeout(const Duration(seconds: 10));
+    final res = await _client.put(Uri.parse('$_serverUrl/api/users/$id'), headers: _headers, body: jsonEncode(data)).timeout(const Duration(seconds: 10));
     if (res.statusCode == 200) return jsonDecode(res.body)['user'];
     throw Exception(jsonDecode(res.body)['error'] ?? 'Error actualizando usuario');
   }
@@ -336,36 +352,36 @@ class ApiService {
   static Future<List<Conversation>> getConversations({bool archived = false}) async {
     final url = '$_serverUrl/api/messages${archived ? '?archived=true' : ''}';
     final res = _handleResponse(
-      await http.get(Uri.parse(url), headers: _headers).timeout(const Duration(seconds: 10)));
+      await _client.get(Uri.parse(url), headers: _headers).timeout(const Duration(seconds: 10)));
     if (res.statusCode == 200) return (jsonDecode(res.body) as List).map((j) => Conversation.fromJson(j)).toList();
     throw Exception('Error conversaciones');
   }
 
   static Future<List<Message>> getFlaggedMessages() async {
-    final res = await http.get(Uri.parse('$_serverUrl/api/messages/flagged'), headers: _headers).timeout(const Duration(seconds: 10));
+    final res = await _client.get(Uri.parse('$_serverUrl/api/messages/flagged'), headers: _headers).timeout(const Duration(seconds: 10));
     if (res.statusCode == 200) return (jsonDecode(res.body) as List).map((j) => Message.fromJson(j)).toList();
     throw Exception('Error alertas');
   }
 
   static Future<List<Message>> getMessages(String phone) async {
-    final res = await http.get(Uri.parse('$_serverUrl/api/messages/${Uri.encodeComponent(phone)}'), headers: _headers).timeout(const Duration(seconds: 10));
+    final res = await _client.get(Uri.parse('$_serverUrl/api/messages/${Uri.encodeComponent(phone)}'), headers: _headers).timeout(const Duration(seconds: 10));
     if (res.statusCode == 200) return (jsonDecode(res.body) as List).map((j) => Message.fromJson(j)).toList();
     throw Exception('Error mensajes');
   }
 
   static Future<void> sendWhatsAppMessage(String phone, String content) async {
-    final res = await http.post(Uri.parse('$_serverUrl/api/messages/send'), headers: _headers,
+    final res = await _client.post(Uri.parse('$_serverUrl/api/messages/send'), headers: _headers,
       body: jsonEncode({'phone': phone, 'content': content})).timeout(const Duration(seconds: 10));
     if (res.statusCode != 200) throw Exception('Error enviando mensaje');
   }
 
   static Future<void> markConversationRead(String phone) async {
-    await http.put(Uri.parse('$_serverUrl/api/messages/${Uri.encodeComponent(phone)}/read'),
+    await _client.put(Uri.parse('$_serverUrl/api/messages/${Uri.encodeComponent(phone)}/read'),
       headers: _headers).timeout(const Duration(seconds: 5));
   }
 
   static Future<void> deleteConversation(String phone) async {
-    final res = await http.delete(
+    final res = await _client.delete(
       Uri.parse('$_serverUrl/api/messages/conversation/${Uri.encodeComponent(phone)}'),
       headers: _headers,
     ).timeout(const Duration(seconds: 10));
@@ -373,7 +389,7 @@ class ApiService {
   }
 
   static Future<void> archiveConversation(String phone, {required bool archived}) async {
-    final res = await http.put(
+    final res = await _client.put(
       Uri.parse('$_serverUrl/api/messages/conversation/${Uri.encodeComponent(phone)}/archive'),
       headers: _headers,
       body: jsonEncode({'archived': archived}),
@@ -389,13 +405,13 @@ class ApiService {
     request.fields['media_type'] = mediaType;
     request.files.add(await http.MultipartFile.fromPath('file', filePath,
       contentType: _mimeOf(filePath)));
-    final streamed = await request.send().timeout(const Duration(seconds: 60));
+    final streamed = await _client.send(request).timeout(const Duration(seconds: 60));
     if (streamed.statusCode != 200) throw Exception('Error enviando media');
   }
 
   static Future<Uint8List?> downloadMedia(String filename) async {
     try {
-      final res = await http.get(
+      final res = await _client.get(
         Uri.parse('$_serverUrl/api/messages/media/${Uri.encodeComponent(filename)}'),
         headers: _headers,
       ).timeout(const Duration(seconds: 30));
@@ -405,27 +421,27 @@ class ApiService {
   }
 
   static Future<void> flagMessage(int id, {bool flagged = false, String? reason}) async {
-    await http.put(Uri.parse('$_serverUrl/api/messages/$id/flag'), headers: _headers,
+    await _client.put(Uri.parse('$_serverUrl/api/messages/$id/flag'), headers: _headers,
       body: jsonEncode({'flagged': flagged, 'flag_reason': reason})).timeout(const Duration(seconds: 10));
   }
 
   // ── Users: clients list + self-profile ───────────────────
   static Future<List<Map<String, dynamic>>> getClients() async {
-    final res = await http.get(Uri.parse('$_serverUrl/api/users/clients'), headers: _headers)
+    final res = await _client.get(Uri.parse('$_serverUrl/api/users/clients'), headers: _headers)
       .timeout(const Duration(seconds: 10));
     if (res.statusCode == 200) return List<Map<String, dynamic>>.from(jsonDecode(res.body)['clients']);
     throw Exception('Error clientes: ${res.statusCode}');
   }
 
   static Future<Map<String, dynamic>> updateProfile(Map<String, dynamic> data) async {
-    final res = await http.put(Uri.parse('$_serverUrl/api/users/me'), headers: _headers,
+    final res = await _client.put(Uri.parse('$_serverUrl/api/users/me'), headers: _headers,
       body: jsonEncode(data)).timeout(const Duration(seconds: 10));
     if (res.statusCode == 200) return jsonDecode(res.body)['user'] as Map<String, dynamic>;
     throw Exception(jsonDecode(res.body)['error'] ?? 'Error actualizando perfil');
   }
 
   static Future<void> changePassword(String currentPw, String newPw) async {
-    final res = await http.put(Uri.parse('$_serverUrl/api/users/me/password'), headers: _headers,
+    final res = await _client.put(Uri.parse('$_serverUrl/api/users/me/password'), headers: _headers,
       body: jsonEncode({'current_password': currentPw, 'new_password': newPw}))
       .timeout(const Duration(seconds: 10));
     if (res.statusCode != 200) throw Exception(jsonDecode(res.body)['error'] ?? 'Error cambiando contraseña');
@@ -446,14 +462,14 @@ class ApiService {
     } else {
       throw Exception('Se requiere filePath o bytes');
     }
-    final streamed = await request.send().timeout(const Duration(seconds: 60));
+    final streamed = await _client.send(request).timeout(const Duration(seconds: 60));
     final body = await streamed.stream.bytesToString();
     if (streamed.statusCode != 200) throw Exception(_tryParseError(body) ?? 'Error subiendo foto');
     return jsonDecode(body)['filename'] as String;
   }
 
   static Future<void> deleteProfilePic() async {
-    final res = await http.delete(Uri.parse('$_serverUrl/api/users/me/profile-pic'), headers: _headers)
+    final res = await _client.delete(Uri.parse('$_serverUrl/api/users/me/profile-pic'), headers: _headers)
       .timeout(const Duration(seconds: 10));
     if (res.statusCode != 200) throw Exception('Error eliminando foto');
   }
@@ -461,9 +477,22 @@ class ApiService {
   static String profilePicUrl(String filename) =>
     '$_serverUrl/api/users/profile-pic/${Uri.encodeComponent(filename)}';
 
+  static Future<String> uploadLogo(String filePath) async {
+    final uri = Uri.parse('$_serverUrl/api/settings/logo');
+    final request = http.MultipartRequest('POST', uri);
+    request.headers.addAll(_headersNoContent);
+    request.files.add(await http.MultipartFile.fromPath('logo', filePath, contentType: _mimeOf(filePath)));
+    final streamed = await _client.send(request).timeout(const Duration(seconds: 30));
+    final body = await streamed.stream.bytesToString();
+    if (streamed.statusCode != 200) throw Exception(_tryParseError(body) ?? 'Error subiendo logo');
+    return jsonDecode(body)['filename'] as String;
+  }
+
+  static String logoUrl(String filename) => '$_serverUrl/api/settings/logo/${Uri.encodeComponent(filename)}';
+
   // ── Users: delete ────────────────────────────────────────
   static Future<void> deleteUser(int id) async {
-    final res = await http.delete(Uri.parse('$_serverUrl/api/users/$id'), headers: _headers)
+    final res = await _client.delete(Uri.parse('$_serverUrl/api/users/$id'), headers: _headers)
       .timeout(const Duration(seconds: 10));
     if (res.statusCode != 200) throw Exception(jsonDecode(res.body)['error'] ?? 'Error eliminando usuario');
   }
@@ -475,7 +504,7 @@ class ApiService {
     request.headers.addAll(_headersNoContent);
     request.files.add(await http.MultipartFile.fromPath('image', filePath,
       contentType: _mimeOf(filePath)));
-    final streamed = await request.send().timeout(const Duration(seconds: 60));
+    final streamed = await _client.send(request).timeout(const Duration(seconds: 60));
     final body = await streamed.stream.bytesToString();
     if (streamed.statusCode != 201) {
       final err = _tryParseError(body);
@@ -489,7 +518,7 @@ class ApiService {
   }
 
   static Future<void> deleteProductImage(int productId, String filename) async {
-    final res = await http.delete(
+    final res = await _client.delete(
       Uri.parse('$_serverUrl/api/products/$productId/images/${Uri.encodeComponent(filename)}'),
       headers: _headers,
     ).timeout(const Duration(seconds: 10));
@@ -502,7 +531,7 @@ class ApiService {
   // ── Estados ──────────────────────────────────────────────
   static Future<List<Estado>> getEstados() async {
     final res = _handleResponse(
-      await http.get(Uri.parse('$_serverUrl/api/estados'), headers: _headers)
+      await _client.get(Uri.parse('$_serverUrl/api/estados'), headers: _headers)
         .timeout(const Duration(seconds: 10)));
     if (res.statusCode == 200) {
       final body = jsonDecode(res.body) as Map<String, dynamic>;
@@ -540,7 +569,7 @@ class ApiService {
       throw Exception('Se requiere filePath o bytes');
     }
 
-    final streamed = await request.send().timeout(const Duration(seconds: 60));
+    final streamed = await _client.send(request).timeout(const Duration(seconds: 60));
     final body = await streamed.stream.bytesToString();
     if (streamed.statusCode != 201) {
       final err = _tryParseError(body);
@@ -550,7 +579,7 @@ class ApiService {
   }
 
   static Future<void> deleteEstado(int id) async {
-    final res = await http.delete(Uri.parse('$_serverUrl/api/estados/$id'), headers: _headers)
+    final res = await _client.delete(Uri.parse('$_serverUrl/api/estados/$id'), headers: _headers)
       .timeout(const Duration(seconds: 10));
     if (res.statusCode != 200) throw Exception('Error eliminando estado');
   }
@@ -559,28 +588,28 @@ class ApiService {
     '$_serverUrl/api/estados/media/${Uri.encodeComponent(filename)}';
 
   static Future<Map<String, dynamic>> reactToEstado(int id) async {
-    final res = await http.post(Uri.parse('$_serverUrl/api/estados/$id/react'),
+    final res = await _client.post(Uri.parse('$_serverUrl/api/estados/$id/react'),
       headers: _headers).timeout(const Duration(seconds: 10));
     if (res.statusCode == 200) return jsonDecode(res.body) as Map<String, dynamic>;
     throw Exception('Error al reaccionar');
   }
 
   static Future<List<Map<String, dynamic>>> getEstadoComments(int id) async {
-    final res = await http.get(Uri.parse('$_serverUrl/api/estados/$id/comments'),
+    final res = await _client.get(Uri.parse('$_serverUrl/api/estados/$id/comments'),
       headers: _headers).timeout(const Duration(seconds: 10));
     if (res.statusCode == 200) return List<Map<String, dynamic>>.from(jsonDecode(res.body)['comments']);
     throw Exception('Error cargando comentarios');
   }
 
   static Future<List<Map<String, dynamic>>> getEstadoReactions(int id) async {
-    final res = await http.get(Uri.parse('$_serverUrl/api/estados/$id/reactions'),
+    final res = await _client.get(Uri.parse('$_serverUrl/api/estados/$id/reactions'),
       headers: _headers).timeout(const Duration(seconds: 10));
     if (res.statusCode == 200) return List<Map<String, dynamic>>.from(jsonDecode(res.body)['reactions']);
     throw Exception('Error cargando reacciones');
   }
 
   static Future<void> addEstadoComment(int id, String comment) async {
-    final res = await http.post(Uri.parse('$_serverUrl/api/estados/$id/comments'),
+    final res = await _client.post(Uri.parse('$_serverUrl/api/estados/$id/comments'),
       headers: _headers,
       body: jsonEncode({'comment': comment})).timeout(const Duration(seconds: 10));
     if (res.statusCode != 201) throw Exception(jsonDecode(res.body)['error'] ?? 'Error agregando comentario');
@@ -588,7 +617,7 @@ class ApiService {
 
   // ── Cart ─────────────────────────────────────────────────
   static Future<List<CartItem>> getCart() async {
-    final res = await http.get(Uri.parse('$_serverUrl/api/cart'), headers: _headers)
+    final res = await _client.get(Uri.parse('$_serverUrl/api/cart'), headers: _headers)
       .timeout(const Duration(seconds: 10));
     if (res.statusCode == 200) {
       final body = jsonDecode(res.body) as Map<String, dynamic>;
@@ -598,7 +627,7 @@ class ApiService {
   }
 
   static Future<void> addToCart(int productId, int quantity, {String? deliveryDate}) async {
-    final res = await http.post(
+    final res = await _client.post(
       Uri.parse('$_serverUrl/api/cart'),
       headers: _headers,
       body: jsonEncode({'product_id': productId, 'quantity': quantity, 'delivery_date': deliveryDate}),
@@ -607,13 +636,13 @@ class ApiService {
   }
 
   static Future<void> removeFromCart(int productId) async {
-    final res = await http.delete(Uri.parse('$_serverUrl/api/cart/$productId'), headers: _headers)
+    final res = await _client.delete(Uri.parse('$_serverUrl/api/cart/$productId'), headers: _headers)
       .timeout(const Duration(seconds: 10));
     if (res.statusCode != 200) throw Exception('Error removiendo del carrito');
   }
 
   static Future<void> clearCart() async {
-    await http.delete(Uri.parse('$_serverUrl/api/cart'), headers: _headers)
+    await _client.delete(Uri.parse('$_serverUrl/api/cart'), headers: _headers)
       .timeout(const Duration(seconds: 10));
   }
 
@@ -622,7 +651,7 @@ class ApiService {
     String? nequiReference,
     String? deliveryDate,
   }) async {
-    final res = await http.post(
+    final res = await _client.post(
       Uri.parse('$_serverUrl/api/cart/checkout'),
       headers: _headers,
       body: jsonEncode({
@@ -637,7 +666,7 @@ class ApiService {
 
   // ── Settings ─────────────────────────────────────────────
   static Future<Map<String, String>> getSettings() async {
-    final res = await http.get(Uri.parse('$_serverUrl/api/settings'), headers: _headers)
+    final res = await _client.get(Uri.parse('$_serverUrl/api/settings'), headers: _headers)
       .timeout(const Duration(seconds: 10));
     if (res.statusCode == 200) {
       final body = jsonDecode(res.body)['settings'] as Map<String, dynamic>;
@@ -647,7 +676,7 @@ class ApiService {
   }
 
   static Future<void> updateSetting(String key, String value) async {
-    final res = await http.put(
+    final res = await _client.put(
       Uri.parse('$_serverUrl/api/settings'),
       headers: _headers,
       body: jsonEncode({'key': key, 'value': value}),
@@ -655,16 +684,33 @@ class ApiService {
     if (res.statusCode != 200) throw Exception('Error actualizando configuración');
   }
 
-  // ── Saved credentials (remember me) ──────────────────────────
-  static Future<void> saveCredentials(String username, String password) async {
-    await _secureStorage.write(key: 'saved_username', value: username);
-    await _secureStorage.write(key: 'saved_password', value: password);
+  // ── Bot de WhatsApp: salud/estado ─────────────────────────────
+  static Future<Map<String, dynamic>> getBotStatus() async {
+    final res = await _client.get(Uri.parse('$_serverUrl/api/bot/status'), headers: _headers)
+      .timeout(const Duration(seconds: 10));
+    if (res.statusCode == 200) return jsonDecode(res.body) as Map<String, dynamic>;
+    throw Exception('Error consultando estado del bot');
   }
 
-  static Future<({String username, String password})> loadCredentials() async {
-    final u = await _secureStorage.read(key: 'saved_username') ?? '';
-    final p = await _secureStorage.read(key: 'saved_password') ?? '';
-    return (username: u, password: p);
+  static Future<void> restartBot() async {
+    final res = await _client.post(Uri.parse('$_serverUrl/api/bot/restart'), headers: _headers)
+      .timeout(const Duration(seconds: 15));
+    if (res.statusCode != 200) {
+      final body = _tryDecodeBody(res.body);
+      throw Exception(body['error'] as String? ?? 'Error reiniciando el bot');
+    }
+  }
+
+  // ── Remember me: solo el usuario, nunca la contraseña ────────
+  // La sesión ya persiste vía el JWT (ver init()); esto es solo para no
+  // tener que retipear el usuario si el token expiró o cerró sesión.
+  static Future<void> saveCredentials(String username) async {
+    await _secureStorage.write(key: 'saved_username', value: username);
+    await _secureStorage.delete(key: 'saved_password'); // limpia instalaciones previas
+  }
+
+  static Future<String> loadCredentials() async {
+    return await _secureStorage.read(key: 'saved_username') ?? '';
   }
 
   static Future<void> clearCredentials() async {
@@ -674,7 +720,7 @@ class ApiService {
 
   // ── In-app chat message (order detection via bot) ─────────────
   static Future<String> sendAppMessage(String message) async {
-    final res = await http.post(
+    final res = await _client.post(
       Uri.parse('$_serverUrl/api/chat/message'),
       headers: _headers,
       body: jsonEncode({'message': message}),

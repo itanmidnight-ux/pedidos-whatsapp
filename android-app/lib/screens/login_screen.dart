@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_provider.dart';
+import '../providers/theme_provider.dart';
 import '../services/api_service.dart';
 import '../widgets/app_button.dart';
 import 'register_screen.dart';
@@ -139,6 +140,7 @@ class _LoginScreenState extends State<LoginScreen>
     setState(() { _loading = true; _error = null; });
     try {
       await context.read<AppProvider>().login(user, pin);
+      if (context.mounted) await context.read<ThemeProvider>().load();
       if (_remember) {
         await ApiService.saveCredentials(user);
       } else {

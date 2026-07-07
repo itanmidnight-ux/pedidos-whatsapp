@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../providers/theme_provider.dart';
+import '../services/api_service.dart';
 
 class CompanyHeader extends StatelessWidget implements PreferredSizeWidget {
   final String pageTitle;
@@ -18,32 +21,45 @@ class CompanyHeader extends StatelessWidget implements PreferredSizeWidget {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Container(
-          color: const Color(0xFF1A3009),
-          padding: const EdgeInsets.symmetric(vertical: 6),
-          width: double.infinity,
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Text('🌾', style: TextStyle(fontSize: 12)),
-              const SizedBox(width: 6),
-              Flexible(
-                child: FittedBox(
-                  fit: BoxFit.scaleDown,
-                  child: const Text(
-                    'CONCENTRADOS MONSERRATH',
-                    style: TextStyle(
-                      color: Color(0xFFD4800A),
-                      fontSize: 12,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 1.2,
+        Consumer<ThemeProvider>(
+          builder: (_, theme, __) => Container(
+            color: const Color(0xFF1A3009),
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            width: double.infinity,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                if (theme.logoFilename != null)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 6),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(4),
+                      child: Image.network(
+                        ApiService.logoUrl(theme.logoFilename!),
+                        width: 16, height: 16, fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => const Text('🌾', style: TextStyle(fontSize: 12)),
+                      ),
+                    ),
+                  )
+                else
+                  const Text('🌾', style: TextStyle(fontSize: 12)),
+                const SizedBox(width: 6),
+                Flexible(
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text(
+                      theme.brandName.toUpperCase(),
+                      style: const TextStyle(
+                        color: Color(0xFFD4800A),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 1.2,
+                      ),
                     ),
                   ),
                 ),
-              ),
-              const SizedBox(width: 6),
-              const Text('🌾', style: TextStyle(fontSize: 12)),
-            ],
+              ],
+            ),
           ),
         ),
         AppBar(

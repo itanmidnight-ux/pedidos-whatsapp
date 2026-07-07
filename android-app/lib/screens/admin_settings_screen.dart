@@ -1,6 +1,9 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:provider/provider.dart';
 import '../services/api_service.dart';
+import '../providers/theme_provider.dart';
 import '../widgets/app_button.dart';
 import '../widgets/app_card.dart';
 
@@ -10,6 +13,18 @@ class AdminSettingsScreen extends StatefulWidget {
 }
 
 class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
+  static const _presets = [
+    {'name': 'Olivo & Ámbar',      'primary': '#2D5016', 'accent': '#D4800A'},
+    {'name': 'Bosque & Cuero',      'primary': '#1B4332', 'accent': '#B08968'},
+    {'name': 'Slate & Terracota',   'primary': '#264653', 'accent': '#E76F51'},
+    {'name': 'Vino & Oro',          'primary': '#5C1A28', 'accent': '#C9A227'},
+    {'name': 'Azul Corporativo',    'primary': '#1B3A6B', 'accent': '#3D8BFD'},
+    {'name': 'Carbón & Lima',       'primary': '#22302B', 'accent': '#8AB833'},
+  ];
+  String _selectedPrimary = '#2D5016';
+  String _selectedAccent  = '#D4800A';
+  bool _savingBrand = false;
+
   bool _loading = true;
   bool _saving   = false;
 
@@ -93,6 +108,33 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
       if (mounted) _snack(e.toString().replaceAll('Exception: ', ''));
     } finally {
       if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _saveBranding() async {
+    setState(() => _savingBrand = true);
+    try {
+      await ApiService.updateSetting('theme_primary', _selectedPrimary);
+      await ApiService.updateSetting('theme_accent', _selectedAccent);
+      if (mounted) await context.read<ThemeProvider>().reload();
+      if (mounted) _snack('Marca actualizada', success: true);
+    } catch (e) {
+      if (mounted) _snack(e.toString().replaceAll('Exception: ', ''));
+    } finally {
+      if (mounted) setState(() => _savingBrand = false);
+    }
+  }
+
+  Future<void> _pickLogo() async {
+    final picker = ImagePicker();
+    final file = await picker.pickImage(source: ImageSource.gallery, maxWidth: 512);
+    if (file == null) return;
+    try {
+      await ApiService.uploadLogo(file.path);
+      if (mounted) await context.read<ThemeProvider>().reload();
+      if (mounted) _snack('Logo actualizado', success: true);
+    } catch (e) {
+      if (mounted) _snack(e.toString().replaceAll('Exception: ', ''));
     }
   }
 
@@ -212,6 +254,42 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
         _sectionTitle('Estado del bot de WhatsApp'),
         _botStatusCard(),
 
+        const SizedBox(height: 24),
+
+        _sectionTitle('Personalización de marca'),
+        AppCard(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Wrap(spacing: 10, runSpacing: 10, children: _presets.map((p) {
+              final selected = _selectedPrimary == p['primary'];
+              return GestureDetector(
+                onTap: () => setState(() {
+                  _selectedPrimary = p['primary']!;
+                  _selectedAccent  = p['accent']!;
+                }),
+                child: Container(
+                  width: 64, height: 64,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: selected ? Colors.black87 : Colors.transparent, width: 2),
+                  ),
+                  child: Row(children: [
+                    Expanded(child: Container(color: Color(int.parse('FF${p['primary']!.replaceAll('#', '')}', radix: 16)))),
+                    Expanded(child: Container(color: Color(int.parse('FF${p['accent']!.replaceAll('#', '')}', radix: 16)))),
+                  ]),
+                ),
+              );
+            }).toList()),
+            const SizedBox(height: 16),
+            OutlinedButton.icon(
+              onPressed: _pickLogo,
+              icon: const Icon(Icons.image_outlined),
+              label: const Text('Cambiar logo'),
+            ),
+            const SizedBox(height: 12),
+            SizedBox(width: double.infinity,
+              child: AppButton(label: 'Guardar marca', onPressed: _saveBranding, loading: _savingBrand, icon: Icons.palette_outlined)),
+          ]),
+        ),
         const SizedBox(height: 24),
 
         // Empresa section
