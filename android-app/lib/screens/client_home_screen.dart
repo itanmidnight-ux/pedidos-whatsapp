@@ -18,9 +18,6 @@ class ClientHomeScreen extends StatefulWidget {
 }
 
 class _ClientHomeScreenState extends State<ClientHomeScreen> with WidgetsBindingObserver {
-  static const _green = Color(0xFF1E6B2E);
-  static const _gold  = Color(0xFFD4800A);
-
   int  _tab       = 0;
   int  _newEstados = 0;
   bool _isOnline  = true;
@@ -91,7 +88,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> with WidgetsBinding
   Widget build(BuildContext context) {
     final size = MediaQuery.of(context).size;
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F5F0),
+      backgroundColor: Theme.of(context).colorScheme.surface,
       body: Column(children: [
         // ── Status bar + Header ───────────────────────────
         _buildHeader(size),
@@ -123,12 +120,17 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> with WidgetsBinding
   }
 
   Widget _buildHeader(Size size) {
+    final scheme = Theme.of(context).colorScheme;
     return Container(
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [Color(0xFF1A3009), Color(0xFF1E6B2E), Color(0xFF2D8040)],
+          colors: [
+            Color.lerp(scheme.primary, Colors.black, 0.5)!,
+            scheme.primary,
+            Color.lerp(scheme.primary, Colors.white, 0.2)!,
+          ],
         ),
       ),
       child: SafeArea(bottom: false, child: Column(children: [
@@ -193,6 +195,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> with WidgetsBinding
   }
 
   Widget _buildEstadosPreview() {
+    final scheme = Theme.of(context).colorScheme;
     return GestureDetector(
       onTap: _goToEstados,
       child: Container(
@@ -208,8 +211,8 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> with WidgetsBinding
                 label: 'Ver todo',
                 isNew: _newEstados > 0,
                 child: Container(
-                  decoration: const BoxDecoration(
-                    gradient: LinearGradient(colors: [Color(0xFFD4800A), Color(0xFFFF9800)]),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(colors: [scheme.secondary, Color.lerp(scheme.secondary, Colors.white, 0.3)!]),
                     shape: BoxShape.circle,
                   ),
                   child: const Icon(Icons.auto_stories_rounded, color: Colors.white, size: 28),
@@ -222,8 +225,8 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> with WidgetsBinding
               label: e.adminUsername,
               isNew: true,
               child: Container(
-                decoration: const BoxDecoration(
-                  gradient: LinearGradient(colors: [Color(0xFF1E6B2E), Color(0xFF4CAF50)]),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(colors: [scheme.primary, Color.lerp(scheme.primary, Colors.white, 0.3)!]),
                   shape: BoxShape.circle,
                 ),
                 child: const Icon(Icons.camera_alt_rounded, color: Colors.white, size: 24),
@@ -237,6 +240,7 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> with WidgetsBinding
   }
 
   Widget _buildBottomNav() {
+    final scheme = Theme.of(context).colorScheme;
     return NavigationBar(
       selectedIndex: _tab,
       onDestinationSelected: (i) {
@@ -246,18 +250,18 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> with WidgetsBinding
       },
 
       backgroundColor: Colors.white,
-      indicatorColor: const Color(0xFFC8E6C9),
+      indicatorColor: scheme.primary.withValues(alpha: 0.16),
       elevation: 8,
       shadowColor: Colors.black26,
       destinations: [
-        const NavigationDestination(
-          icon:         Icon(Icons.storefront_outlined),
-          selectedIcon: Icon(Icons.storefront_rounded, color: _green),
+        NavigationDestination(
+          icon:         const Icon(Icons.storefront_outlined),
+          selectedIcon: Icon(Icons.storefront_rounded, color: scheme.primary),
           label: 'Tienda',
         ),
-        const NavigationDestination(
-          icon:         Icon(Icons.shopping_cart_outlined),
-          selectedIcon: Icon(Icons.shopping_cart_rounded, color: _green),
+        NavigationDestination(
+          icon:         const Icon(Icons.shopping_cart_outlined),
+          selectedIcon: Icon(Icons.shopping_cart_rounded, color: scheme.primary),
           label: 'Carrito',
         ),
         NavigationDestination(
@@ -267,17 +271,17 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> with WidgetsBinding
               Positioned(right: -4, top: -4,
                 child: Container(
                   padding: const EdgeInsets.all(3),
-                  decoration: const BoxDecoration(color: _gold, shape: BoxShape.circle),
+                  decoration: BoxDecoration(color: scheme.secondary, shape: BoxShape.circle),
                   child: Text('$_newEstados',
                     style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold)),
                 )),
           ]),
-          selectedIcon: const Icon(Icons.auto_stories_rounded, color: _green),
+          selectedIcon: Icon(Icons.auto_stories_rounded, color: scheme.primary),
           label: 'Estados',
         ),
-        const NavigationDestination(
-          icon:         Icon(Icons.person_outline_rounded),
-          selectedIcon: Icon(Icons.person_rounded, color: _green),
+        NavigationDestination(
+          icon:         const Icon(Icons.person_outline_rounded),
+          selectedIcon: Icon(Icons.person_rounded, color: scheme.primary),
           label: 'Perfil',
         ),
       ],
@@ -312,7 +316,9 @@ class _StoryCircle extends StatelessWidget {
   const _StoryCircle({required this.child, required this.label, required this.isNew, required this.onTap});
 
   @override
-  Widget build(BuildContext context) => GestureDetector(
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return GestureDetector(
     onTap: onTap,
     child: Padding(
       padding: const EdgeInsets.symmetric(horizontal: 6),
@@ -323,13 +329,13 @@ class _StoryCircle extends StatelessWidget {
           decoration: BoxDecoration(
             shape: BoxShape.circle,
             gradient: isNew
-              ? const LinearGradient(colors: [Color(0xFFD4800A), Color(0xFFFF9800)])
+              ? LinearGradient(colors: [scheme.secondary, Color.lerp(scheme.secondary, Colors.white, 0.3)!])
               : null,
             color: isNew ? null : Colors.white24,
           ),
           child: Container(
-            decoration: const BoxDecoration(
-              color: Color(0xFF1A3009),
+            decoration: BoxDecoration(
+              color: Color.lerp(scheme.primary, Colors.black, 0.5),
               shape: BoxShape.circle,
             ),
             child: child,
@@ -343,4 +349,5 @@ class _StoryCircle extends StatelessWidget {
       ]),
     ),
   );
+  }
 }

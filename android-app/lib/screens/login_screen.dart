@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_provider.dart';
 import '../services/api_service.dart';
+import '../widgets/app_button.dart';
 import 'register_screen.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -32,10 +33,6 @@ class _LoginScreenState extends State<LoginScreen>
   // logo tap counter for server config (admin hidden feature)
   int _logoTaps = 0;
 
-  static const _green     = Color(0xFF1A7A35);
-  static const _greenDark = Color(0xFF0F4D20);
-  static const _gold      = Color(0xFFD4800A);
-
   @override
   void initState() {
     super.initState();
@@ -58,11 +55,10 @@ class _LoginScreenState extends State<LoginScreen>
   }
 
   Future<void> _loadSaved() async {
-    final creds = await ApiService.loadCredentials();
-    if (creds.username.isNotEmpty && mounted) {
+    final savedUsername = await ApiService.loadCredentials();
+    if (savedUsername.isNotEmpty && mounted) {
       setState(() {
-        _userCtrl.text = creds.username;
-        _pinCtrl.text  = creds.password;
+        _userCtrl.text = savedUsername;
         _remember = true;
       });
     }
@@ -71,15 +67,16 @@ class _LoginScreenState extends State<LoginScreen>
   }
 
   Future<void> _showServerDialog() async {
+    final primary = Theme.of(context).colorScheme.primary;
     final ctrl = TextEditingController(text: _serverUrl);
     final result = await showDialog<String>(
       context: context,
       builder: (_) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Row(children: [
-          Icon(Icons.dns_rounded, color: _green),
-          SizedBox(width: 8),
-          Text('Configuración', style: TextStyle(fontSize: 18)),
+        title: Row(children: [
+          Icon(Icons.dns_rounded, color: primary),
+          const SizedBox(width: 8),
+          const Text('Configuración', style: TextStyle(fontSize: 18)),
         ]),
         content: TextField(
           controller: ctrl,
@@ -94,14 +91,14 @@ class _LoginScreenState extends State<LoginScreen>
               borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
-              borderSide: const BorderSide(color: _green)),
+              borderSide: BorderSide(color: primary)),
           ),
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancelar')),
           FilledButton(
             onPressed: () => Navigator.pop(context, ctrl.text.trim()),
-            style: FilledButton.styleFrom(backgroundColor: _green),
+            style: FilledButton.styleFrom(backgroundColor: primary),
             child: const Text('Guardar'),
           ),
         ],
@@ -143,7 +140,7 @@ class _LoginScreenState extends State<LoginScreen>
     try {
       await context.read<AppProvider>().login(user, pin);
       if (_remember) {
-        await ApiService.saveCredentials(user, pin);
+        await ApiService.saveCredentials(user);
       } else {
         await ApiService.clearCredentials();
       }
@@ -161,8 +158,9 @@ class _LoginScreenState extends State<LoginScreen>
   @override
   Widget build(BuildContext context) {
     final h = MediaQuery.of(context).size.height;
+    final scheme = Theme.of(context).colorScheme;
     return Scaffold(
-      backgroundColor: _greenDark,
+      backgroundColor: scheme.primary,
       body: Stack(children: [
         // Background pattern
         Positioned.fill(child: CustomPaint(painter: _BgPainter())),
@@ -178,10 +176,10 @@ class _LoginScreenState extends State<LoginScreen>
                 child: ClipPath(
                   clipper: _WaveClipper(),
                   child: Container(
-                    decoration: const BoxDecoration(
+                    decoration: BoxDecoration(
                       gradient: LinearGradient(
                         begin: Alignment.topLeft, end: Alignment.bottomRight,
-                        colors: [Color(0xFF1A7A35), Color(0xFF0F4D20)],
+                        colors: [scheme.primary, Color.lerp(scheme.primary, Colors.black, 0.35)!],
                       ),
                     ),
                   ),
@@ -202,7 +200,7 @@ class _LoginScreenState extends State<LoginScreen>
                           shape: BoxShape.circle,
                           color: Colors.white.withValues(alpha: 0.12),
                           border: Border.all(
-                            color: _gold.withValues(alpha: 0.7), width: 2.5),
+                            color: scheme.secondary.withValues(alpha: 0.7), width: 2.5),
                           boxShadow: [
                             BoxShadow(color: Colors.black.withValues(alpha: 0.3),
                               blurRadius: 20, offset: const Offset(0, 8)),
@@ -212,9 +210,9 @@ class _LoginScreenState extends State<LoginScreen>
                       ),
                     ),
                     const SizedBox(height: 14),
-                    const Text('CONCENTRADOS MONSERRATH',
+                    Text('CONCENTRADOS MONSERRATH',
                       style: TextStyle(
-                        color: _gold, fontSize: 11, fontWeight: FontWeight.w900,
+                        color: scheme.secondary, fontSize: 11, fontWeight: FontWeight.w900,
                         letterSpacing: 2.5)),
                     const SizedBox(height: 6),
                     const Text('Tu pedido, nuestra prioridad',
@@ -254,7 +252,7 @@ class _LoginScreenState extends State<LoginScreen>
                         boxShadow: [
                           BoxShadow(color: Colors.black.withValues(alpha: 0.25),
                             blurRadius: 40, offset: const Offset(0, 16)),
-                          BoxShadow(color: _green.withValues(alpha: 0.08),
+                          BoxShadow(color: scheme.primary.withValues(alpha: 0.08),
                             blurRadius: 20, offset: const Offset(0, 4)),
                         ],
                       ),
@@ -268,10 +266,10 @@ class _LoginScreenState extends State<LoginScreen>
                               Container(
                                 width: 42, height: 42,
                                 decoration: BoxDecoration(
-                                  color: _green.withValues(alpha: 0.1),
+                                  color: scheme.primary.withValues(alpha: 0.1),
                                   borderRadius: BorderRadius.circular(12),
                                 ),
-                                child: const Icon(Icons.storefront_rounded, color: _green, size: 22),
+                                child: Icon(Icons.storefront_rounded, color: scheme.primary, size: 22),
                               ),
                               const SizedBox(width: 12),
                               const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -318,7 +316,7 @@ class _LoginScreenState extends State<LoginScreen>
                                 child: Checkbox(
                                   value: _remember,
                                   onChanged: (v) => setState(() => _remember = v ?? true),
-                                  activeColor: _green,
+                                  activeColor: scheme.primary,
                                   materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                                   shape: RoundedRectangleBorder(
                                     borderRadius: BorderRadius.circular(4)),
@@ -357,34 +355,11 @@ class _LoginScreenState extends State<LoginScreen>
                             const SizedBox(height: 22),
 
                             // Login button
-                            SizedBox(height: 54,
-                              child: ElevatedButton(
-                                onPressed: _loading ? null : _login,
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: _green,
-                                  disabledBackgroundColor: _green.withValues(alpha: 0.5),
-                                  foregroundColor: Colors.white,
-                                  elevation: 0,
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(16)),
-                                  shadowColor: _green.withValues(alpha: 0.5),
-                                ),
-                                child: _loading
-                                  ? const SizedBox(width: 24, height: 24,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2.5, color: Colors.white))
-                                  : const Row(
-                                      mainAxisAlignment: MainAxisAlignment.center,
-                                      children: [
-                                        Icon(Icons.shopping_basket_rounded, size: 20),
-                                        SizedBox(width: 10),
-                                        Text('Ingresar a la tienda',
-                                          style: TextStyle(
-                                            fontSize: 16, fontWeight: FontWeight.w700,
-                                            letterSpacing: 0.3)),
-                                      ],
-                                    ),
-                              ),
+                            AppButton(
+                              label: 'Ingresar',
+                              onPressed: _loading ? null : _login,
+                              loading: _loading,
+                              icon: Icons.shopping_basket_rounded,
                             ),
 
                             const SizedBox(height: 16),
@@ -394,19 +369,19 @@ class _LoginScreenState extends State<LoginScreen>
                                 onPressed: () => Navigator.push(context, MaterialPageRoute(
                                   builder: (_) => const RegisterScreen())),
                                 style: OutlinedButton.styleFrom(
-                                  side: BorderSide(color: _green.withValues(alpha: 0.4)),
+                                  side: BorderSide(color: scheme.primary.withValues(alpha: 0.4)),
                                   shape: RoundedRectangleBorder(
                                     borderRadius: BorderRadius.circular(16)),
                                 ),
-                                child: const Row(
+                                child: Row(
                                   mainAxisAlignment: MainAxisAlignment.center,
                                   children: [
-                                    Icon(Icons.person_add_outlined, size: 18, color: _green),
-                                    SizedBox(width: 8),
+                                    Icon(Icons.person_add_outlined, size: 18, color: scheme.primary),
+                                    const SizedBox(width: 8),
                                     Text('¿Sin cuenta? Regístrate',
                                       style: TextStyle(
                                         fontSize: 14, fontWeight: FontWeight.w600,
-                                        color: _green)),
+                                        color: scheme.primary)),
                                   ],
                                 ),
                               ),
@@ -476,6 +451,7 @@ class _LoginScreenState extends State<LoginScreen>
     TextCapitalization capitalize = TextCapitalization.sentences,
     void Function(String)? onSubmit,
   }) {
+    final primary = Theme.of(context).colorScheme.primary;
     return TextField(
       controller: controller,
       obscureText: obscure,
@@ -490,7 +466,7 @@ class _LoginScreenState extends State<LoginScreen>
         hintStyle: TextStyle(color: Colors.grey.shade300, fontSize: 14),
         prefixIcon: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 14),
-          child: Icon(icon, size: 20, color: _green),
+          child: Icon(icon, size: 20, color: primary),
         ),
         prefixIconConstraints: const BoxConstraints(minWidth: 50),
         suffixIcon: onToggle != null
@@ -503,7 +479,7 @@ class _LoginScreenState extends State<LoginScreen>
         filled: true,
         fillColor: const Color(0xFFF8FAF8),
         labelStyle: TextStyle(color: Colors.grey.shade500, fontSize: 14),
-        floatingLabelStyle: const TextStyle(color: _green, fontSize: 13, fontWeight: FontWeight.w600),
+        floatingLabelStyle: TextStyle(color: primary, fontSize: 13, fontWeight: FontWeight.w600),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(14),
           borderSide: BorderSide(color: Colors.grey.shade200)),
@@ -512,7 +488,7 @@ class _LoginScreenState extends State<LoginScreen>
           borderSide: BorderSide(color: Colors.grey.shade200)),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(14),
-          borderSide: const BorderSide(color: _green, width: 1.8)),
+          borderSide: BorderSide(color: primary, width: 1.8)),
         contentPadding: const EdgeInsets.symmetric(vertical: 16, horizontal: 16),
       ),
     );

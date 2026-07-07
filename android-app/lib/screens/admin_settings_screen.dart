@@ -1,5 +1,8 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
+import '../widgets/app_button.dart';
+import '../widgets/app_card.dart';
 
 class AdminSettingsScreen extends StatefulWidget {
   const AdminSettingsScreen({super.key});
@@ -7,7 +10,6 @@ class AdminSettingsScreen extends StatefulWidget {
 }
 
 class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
-  static const _green = Color(0xFF1E6B2E);
   bool _loading = true;
   bool _saving   = false;
 
@@ -17,10 +19,16 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
   final _empresaDescCtrl   = TextEditingController();
   final _horarioCtrl       = TextEditingController();
 
+  Map<String, dynamic>? _botStatus;
+  bool _restartingBot = false;
+  Timer? _botTimer;
+
   @override
   void initState() {
     super.initState();
     _load();
+    _loadBotStatus();
+    _botTimer = Timer.periodic(const Duration(seconds: 15), (_) => _loadBotStatus());
   }
 
   @override
@@ -30,7 +38,29 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
     _empresaNombreCtrl.dispose();
     _empresaDescCtrl.dispose();
     _horarioCtrl.dispose();
+    _botTimer?.cancel();
     super.dispose();
+  }
+
+  Future<void> _loadBotStatus() async {
+    try {
+      final s = await ApiService.getBotStatus();
+      if (mounted) setState(() => _botStatus = s);
+    } catch (_) {}
+  }
+
+  Future<void> _restartBot() async {
+    setState(() => _restartingBot = true);
+    try {
+      await ApiService.restartBot();
+      if (mounted) _snack('Bot reiniciando...', success: true);
+      await Future.delayed(const Duration(seconds: 2));
+      await _loadBotStatus();
+    } catch (e) {
+      if (mounted) _snack(e.toString().replaceAll('Exception: ', ''));
+    } finally {
+      if (mounted) setState(() => _restartingBot = false);
+    }
   }
 
   Future<void> _load() async {
@@ -69,119 +99,186 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
   void _snack(String msg, {bool success = false}) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text(msg),
-      backgroundColor: success ? _green : Colors.red.shade700,
+      backgroundColor: success ? Theme.of(context).colorScheme.primary : Colors.red.shade700,
       behavior: SnackBarBehavior.floating,
     ));
   }
 
-  InputDecoration _deco(String label, IconData icon, {int? maxLines}) => InputDecoration(
-    labelText: label,
-    prefixIcon: Icon(icon, color: _green, size: 20),
-    filled: true,
-    fillColor: Colors.white,
-    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
-    focusedBorder: OutlineInputBorder(
-      borderRadius: BorderRadius.circular(12),
-      borderSide: const BorderSide(color: _green, width: 1.5),
-    ),
-    alignLabelWithHint: maxLines != null && maxLines > 1,
-  );
+  InputDecoration _deco(String label, IconData icon, {int? maxLines}) {
+    final primary = Theme.of(context).colorScheme.primary;
+    return InputDecoration(
+      labelText: label,
+      prefixIcon: Icon(icon, color: primary, size: 20),
+      filled: true,
+      fillColor: Colors.white,
+      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide(color: primary, width: 1.5),
+      ),
+      alignLabelWithHint: maxLines != null && maxLines > 1,
+    );
+  }
 
   Widget _sectionTitle(String title) => Padding(
     padding: const EdgeInsets.symmetric(vertical: 8),
-    child: Text(title, style: const TextStyle(
-      fontSize: 16, fontWeight: FontWeight.bold, color: _green)),
+    child: Text(title, style: TextStyle(
+      fontSize: 16, fontWeight: FontWeight.bold, color: Theme.of(context).colorScheme.primary)),
   );
+
+  String _timeAgo(String? iso) {
+    if (iso == null) return 'nunca';
+    final t = DateTime.tryParse(iso);
+    if (t == null) return 'nunca';
+    final diff = DateTime.now().difference(t);
+    if (diff.inMinutes < 1)  return 'hace instantes';
+    if (diff.inMinutes < 60) return 'hace ${diff.inMinutes} min';
+    if (diff.inHours < 24)   return 'hace ${diff.inHours} h';
+    return 'hace ${diff.inDays} días';
+  }
+
+  Widget _statRow(IconData icon, String label, String value) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 4),
+    child: Row(children: [
+      Icon(icon, size: 18, color: Colors.grey.shade600),
+      const SizedBox(width: 8),
+      Expanded(child: Text(label, style: TextStyle(fontSize: 13, color: Colors.grey.shade700))),
+      Text(value, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+    ]),
+  );
+
+  Widget _botStatusCard() {
+    final s = _botStatus;
+    final primary = Theme.of(context).colorScheme.primary;
+    final ready = s?['ready'] == true;
+    final exhausted = s?['reconnectExhausted'] == true;
+    final statusColor  = ready ? primary : (exhausted ? Colors.red.shade700 : Colors.orange.shade700);
+    final statusLabel  = ready ? 'Conectado' : (exhausted ? 'Desconectado — requiere reinicio manual' : 'Reconectando…');
+
+    return AppCard(
+      child: s == null
+        ? Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Center(child: CircularProgressIndicator(color: primary, strokeWidth: 2)),
+          )
+        : Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: [
+              Container(
+                width: 10, height: 10,
+                decoration: BoxDecoration(color: statusColor, shape: BoxShape.circle),
+              ),
+              const SizedBox(width: 8),
+              Expanded(child: Text(statusLabel,
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: statusColor))),
+              IconButton(
+                icon: const Icon(Icons.refresh_rounded, size: 20),
+                tooltip: 'Actualizar',
+                onPressed: _loadBotStatus,
+              ),
+            ]),
+            const Divider(height: 20),
+            _statRow(Icons.pending_actions_outlined, 'Mensajes en cola', '${s['pendingQueue'] ?? 0}'),
+            _statRow(Icons.send_outlined, 'Enviados última hora',
+              '${s['sentLastHour'] ?? 0} / ${s['maxMsgsPerHour'] ?? '-'}'),
+            _statRow(Icons.chat_bubble_outline, 'Último mensaje', _timeAgo(s['lastMessageAt'] as String?)),
+            _statRow(Icons.autorenew, 'Reintentos de reconexión',
+              '${s['reconnectAttempts'] ?? 0} / ${s['maxReconnectAttempts'] ?? '-'}'),
+            const SizedBox(height: 12),
+            SizedBox(width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: _restartingBot ? null : _restartBot,
+                style: OutlinedButton.styleFrom(foregroundColor: primary),
+                icon: _restartingBot
+                    ? SizedBox(width: 16, height: 16,
+                        child: CircularProgressIndicator(color: primary, strokeWidth: 2))
+                    : const Icon(Icons.restart_alt_rounded),
+                label: Text(_restartingBot ? 'Reiniciando...' : 'Reiniciar bot'),
+              ),
+            ),
+          ]),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
-    if (_loading) return const Center(child: CircularProgressIndicator(color: _green));
+    if (_loading) {
+      return Center(child: CircularProgressIndicator(color: Theme.of(context).colorScheme.primary));
+    }
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        // Bot health section
+        _sectionTitle('Estado del bot de WhatsApp'),
+        _botStatusCard(),
+
+        const SizedBox(height: 24),
+
         // Empresa section
         _sectionTitle('Información de la empresa'),
-        Card(
-          elevation: 0,
-          color: Colors.white,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(children: [
-              TextField(
-                controller: _empresaNombreCtrl,
-                decoration: _deco('Nombre de la empresa', Icons.business_outlined),
+        AppCard(
+          child: Column(children: [
+            TextField(
+              controller: _empresaNombreCtrl,
+              decoration: _deco('Nombre de la empresa', Icons.business_outlined),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _empresaDescCtrl,
+              decoration: _deco('Descripción', Icons.description_outlined, maxLines: 3),
+              maxLines: 3,
+              minLines: 2,
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _horarioCtrl,
+              decoration: _deco('Horario de atención', Icons.access_time_outlined),
+            ),
+            const SizedBox(height: 4),
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                'Ej: Lunes a Sábado 8:00am - 6:00pm',
+                style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
               ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _empresaDescCtrl,
-                decoration: _deco('Descripción', Icons.description_outlined, maxLines: 3),
-                maxLines: 3,
-                minLines: 2,
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _horarioCtrl,
-                decoration: _deco('Horario de atención', Icons.access_time_outlined),
-              ),
-              const SizedBox(height: 4),
-              Padding(
-                padding: const EdgeInsets.only(top: 4),
-                child: Text(
-                  'Ej: Lunes a Sábado 8:00am - 6:00pm',
-                  style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
-                ),
-              ),
-            ]),
-          ),
+            ),
+          ]),
         ),
 
         const SizedBox(height: 24),
 
         // Nequi section
         _sectionTitle('Pago Nequi'),
-        Card(
-          elevation: 0,
-          color: Colors.white,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(children: [
-              TextField(
-                controller: _nequiPhoneCtrl,
-                decoration: _deco('Número Nequi', Icons.phone_outlined),
-                keyboardType: TextInputType.phone,
+        AppCard(
+          child: Column(children: [
+            TextField(
+              controller: _nequiPhoneCtrl,
+              decoration: _deco('Número Nequi', Icons.phone_outlined),
+              keyboardType: TextInputType.phone,
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _nequiNameCtrl,
+              decoration: _deco('Nombre en Nequi', Icons.person_outline),
+            ),
+            const SizedBox(height: 4),
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                'Los clientes verán este número para transferencias.',
+                style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
               ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _nequiNameCtrl,
-                decoration: _deco('Nombre en Nequi', Icons.person_outline),
-              ),
-              const SizedBox(height: 4),
-              Padding(
-                padding: const EdgeInsets.only(top: 4),
-                child: Text(
-                  'Los clientes verán este número para transferencias.',
-                  style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
-                ),
-              ),
-            ]),
-          ),
+            ),
+          ]),
         ),
 
         const SizedBox(height: 24),
 
-        SizedBox(width: double.infinity,
-          child: FilledButton.icon(
-            onPressed: _saving ? null : _save,
-            style: FilledButton.styleFrom(backgroundColor: _green),
-            icon: _saving
-                ? const SizedBox(width: 16, height: 16,
-                    child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                : const Icon(Icons.save_rounded),
-            label: Text(_saving ? 'Guardando...' : 'Guardar configuración'),
-          ),
+        AppButton(
+          label: _saving ? 'Guardando...' : 'Guardar configuración',
+          onPressed: _saving ? null : _save,
+          loading: _saving,
+          icon: Icons.save_rounded,
         ),
         const SizedBox(height: 16),
       ]),
