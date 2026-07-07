@@ -430,6 +430,109 @@ wait_server_healthy() {
 }
 
 # ================================================================
+#  Comandos de control rapido: --start / --stop / --localhost / --continue
+# ================================================================
+require_installed() {
+    systemctl cat "${NODE_SVC}.service" &>/dev/null 2>&1 \
+        || die "El servidor no esta instalado. Corre ./deploy-linux.sh (sin flags) primero."
+}
+
+cmd_start() {
+    require_installed
+    as_root systemctl start "$NODE_SVC"
+    wait_server_healthy "$(env_get PORT)" 20 || true
+    ok "Servidor iniciado."
+}
+
+cmd_stop() {
+    require_installed
+    as_root systemctl stop "$NODE_SVC"
+    ok "Servidor detenido. (systemctl start $NODE_SVC para reanudarlo, o ./deploy-linux.sh --start)"
+}
+
+# Bloquea/permite trafico entrante que no sea loopback hacia el puerto de la
+# app y 80/443. No toca la configuracion de nginx/tunel -- solo la capa de
+# red -- para que --continue pueda revertir exacto sin reconfigurar nada.
+# Reglas insertadas en el TOPE de la cadena para que ganen sobre cualquier
+# "allow" previo del firewall (orden importa en ufw/iptables).
+firewall_set_public() {
+    local allow="$1"   # true = permitir publico, false = solo localhost
+    local port; port=$(env_get PORT); port="${port:-$DEFAULT_PORT}"
+    if has_cmd ufw; then
+        if [ "$allow" = "true" ]; then
+            as_root ufw delete deny "$port"/tcp &>/dev/null || true
+            as_root ufw delete deny 80/tcp  &>/dev/null || true
+            as_root ufw delete deny 443/tcp &>/dev/null || true
+        else
+            as_root ufw insert 1 deny "$port"/tcp &>/dev/null || true
+            as_root ufw insert 1 deny 80/tcp  &>/dev/null || true
+            as_root ufw insert 1 deny 443/tcp &>/dev/null || true
+        fi
+    elif has_cmd firewall-cmd; then
+        if [ "$allow" = "true" ]; then
+            as_root firewall-cmd --permanent --remove-rich-rule="rule family=ipv4 port port=$port protocol=tcp reject" &>/dev/null || true
+            as_root firewall-cmd --permanent --add-service=http --add-service=https &>/dev/null || true
+        else
+            as_root firewall-cmd --permanent --add-rich-rule="rule family=ipv4 port port=$port protocol=tcp reject" &>/dev/null || true
+            as_root firewall-cmd --permanent --remove-service=http --remove-service=https &>/dev/null || true
+        fi
+        as_root firewall-cmd --reload &>/dev/null || true
+    elif has_cmd iptables; then
+        if [ "$allow" = "true" ]; then
+            as_root iptables -D INPUT ! -i lo -p tcp --dport "$port" -j DROP 2>/dev/null || true
+            as_root iptables -D INPUT ! -i lo -p tcp --dport 80  -j DROP 2>/dev/null || true
+            as_root iptables -D INPUT ! -i lo -p tcp --dport 443 -j DROP 2>/dev/null || true
+        else
+            as_root iptables -I INPUT ! -i lo -p tcp --dport "$port" -j DROP 2>/dev/null || true
+            as_root iptables -I INPUT ! -i lo -p tcp --dport 80  -j DROP 2>/dev/null || true
+            as_root iptables -I INPUT ! -i lo -p tcp --dport 443 -j DROP 2>/dev/null || true
+        fi
+        if has_cmd netfilter-persistent; then as_root netfilter-persistent save &>/dev/null || true; fi
+    fi
+}
+
+cmd_localhost() {
+    require_installed
+    info "Cerrando acceso publico -- el servidor quedara solo en localhost..."
+    if systemctl cat "${CF_SVC}.service" &>/dev/null 2>&1; then
+        as_root systemctl stop "$CF_SVC" 2>/dev/null || true
+        ok "Tunel Cloudflare detenido."
+    fi
+    firewall_set_public false
+    save_conf ACCESS_SUSPENDED true
+    ok "Servidor aislado. Solo accesible en http://127.0.0.1:$(env_get PORT)/app/ desde esta maquina."
+    warn "Para reabrir al publico: ./deploy-linux.sh --continue"
+}
+
+cmd_continue() {
+    require_installed
+    # Siempre se revierte primero el bloqueo de puerto de --localhost (aunque
+    # ACCESS_METHOD no se haya guardado nunca) -- sino un firewall bloqueado
+    # se queda asi para siempre si el metodo quedo desconocido.
+    firewall_set_public true
+    local method; method=$(load_conf ACCESS_METHOD)
+    case "$method" in
+        tunnel)
+            if systemctl cat "${CF_SVC}.service" &>/dev/null 2>&1; then
+                as_root systemctl start "$CF_SVC"
+                ok "Tunel Cloudflare reanudado."
+            else
+                warn "No hay tunel Cloudflare configurado -- vuelve a correr ./deploy-linux.sh para crearlo."
+            fi
+            firewall_set_public false  # el tunel no necesita 80/443 abiertos, solo el bloqueo de esos dos
+            ;;
+        nginx)
+            ok "Puertos 80/443 reabiertos para nginx."
+            ;;
+        *)
+            warn "No se encontro un metodo de acceso publico guardado -- se reabrio el firewall por seguridad, pero revisa manualmente si corresponde tunel/nginx."
+            ;;
+    esac
+    save_conf ACCESS_SUSPENDED false
+    ok "Acceso publico reanudado."
+}
+
+# ================================================================
 #  PASO 6 — Firewall: cerrar todo salvo lo estrictamente necesario
 # ================================================================
 harden_firewall() {
@@ -842,10 +945,12 @@ main_install() {
         3 "Solo red local / VPN (no exponer a internet)")
 
     case "$access_method" in
-        1) install_cloudflared; setup_cloudflared_tunnel "$port"; harden_firewall false ;;
+        1) install_cloudflared; setup_cloudflared_tunnel "$port"; harden_firewall false
+           save_conf ACCESS_METHOD tunnel ;;
         2) local dm; dm=$(ui_input "Dominio (debe apuntar a la IP de este servidor)" "")
-           setup_nginx_certbot "$port" "$dm"; harden_firewall true ;;
-        *) harden_firewall false ;;
+           setup_nginx_certbot "$port" "$dm"; harden_firewall true
+           save_conf ACCESS_METHOD nginx ;;
+        *) harden_firewall false; save_conf ACCESS_METHOD local ;;
     esac
 
     install_fail2ban
@@ -879,7 +984,11 @@ main_install() {
 
 case "${1:-}" in
     --menu)      management_menu ;;
+    --start)     cmd_start ;;
+    --stop)      cmd_stop ;;
+    --localhost) cmd_localhost ;;
+    --continue)  cmd_continue ;;
     --uninstall) uninstall_services ;;
     "")          main_install ;;
-    *)           die "Uso: $0 [--menu|--uninstall]" ;;
+    *)           die "Uso: $0 [--menu|--start|--stop|--localhost|--continue|--uninstall]" ;;
 esac

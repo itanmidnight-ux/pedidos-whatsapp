@@ -1,6 +1,6 @@
 # Concentrados Monserrath — Sistema de Pedidos WhatsApp
 
-Sistema integral de gestión de pedidos recibidos por WhatsApp para **Concentrados Monserrath**, empresa distribuidora de concentrados y alimentos para animales. Incluye bot de WhatsApp con procesamiento de lenguaje natural, servidor REST y aplicación Android nativa.
+Sistema integral de gestión de pedidos recibidos por WhatsApp para **Concentrados Monserrath**, empresa distribuidora de concentrados y alimentos para animales. Bot de WhatsApp con procesamiento de lenguaje natural, servidor REST endurecido en seguridad, panel nativo de análisis para el administrador y aplicación Android/Web para admin, empleados y clientes.
 
 ---
 
@@ -10,21 +10,26 @@ Sistema integral de gestión de pedidos recibidos por WhatsApp para **Concentrad
 - [Stack Tecnológico](#stack-tecnológico)
 - [Estructura del Proyecto](#estructura-del-proyecto)
 - [Funcionalidades](#funcionalidades)
+- [Roles de Usuario](#roles-de-usuario)
 - [Requisitos](#requisitos)
-- [Instalación](#instalación)
-- [Uso](#uso)
+- [Despliegue del Servidor (Linux)](#despliegue-del-servidor-linux)
+- [Panel de Análisis (dashboard.py)](#panel-de-análisis-dashboardpy)
+- [Compilar la App Android](#compilar-la-app-android)
+- [Seguridad](#seguridad)
 - [Versiones](#versiones)
 
 ---
 
 ## Descripción General
 
-Los clientes envían pedidos por WhatsApp en lenguaje natural colombiano. El bot los interpreta automáticamente usando NLP, los registra en base de datos y notifica al equipo de ventas a través de la aplicación Android. El equipo puede responder, enviar imágenes, audios y gestionar conversaciones directamente desde la app.
+Los clientes envían pedidos por WhatsApp en lenguaje natural colombiano. El bot los interpreta automáticamente usando NLP, los registra en base de datos y notifica al equipo de ventas a través de la app. El equipo (admin/empleados) responde, gestiona pedidos, catálogo, estados tipo "historias" y ve analíticas de ventas; los clientes finales tienen su propia vista para pedir y hacer seguimiento.
 
 ```
-Cliente WhatsApp ──► Bot (Baileys) ──► Servidor Express ──► App Android
-                                              │
-                                        SQLite (WAL)
+Cliente WhatsApp ──► Bot (whatsapp-web.js) ──► Servidor Express ──► App Flutter (admin/worker/client)
+                                                      │
+                                                SQLite (WAL)
+                                                      │
+                                          dashboard.py (panel de análisis nativo)
 ```
 
 ---
@@ -33,14 +38,17 @@ Cliente WhatsApp ──► Bot (Baileys) ──► Servidor Express ──► Ap
 
 | Capa | Tecnología |
 |------|-----------|
-| Bot WhatsApp | @whiskeysockets/baileys v6 |
+| Bot WhatsApp | whatsapp-web.js + Puppeteer |
 | NLP | @nlpjs/basic — intención + entidades |
 | Servidor | Node.js 20 + Express 4 |
 | Base de datos | better-sqlite3 (WAL mode) |
-| Tunnel | ngrok dominio fijo |
-| App Android | Flutter 3.44 (arm64) |
+| Auth | JWT + bcrypt + roles (admin / worker / client) |
+| Seguridad servidor | helmet, express-rate-limit, CORS allowlist, systemd hardening |
+| PDF | pdfkit — reportes diarios automáticos (node-cron) |
+| App | Flutter 3.44 (Android + Web/PWA) |
 | Estado app | Provider |
-| Auth | JWT + roles (admin / empleado) |
+| Panel de análisis | Python 3 + GTK3 (dashboard.py) |
+| Deploy Linux | Bash (deploy-linux.sh) — systemd, firewall, fail2ban, Cloudflare Tunnel / nginx+certbot |
 
 ---
 
@@ -48,30 +56,36 @@ Cliente WhatsApp ──► Bot (Baileys) ──► Servidor Express ──► Ap
 
 ```
 pedidos-whatsapp/
-├── server/                    # Backend Node.js
+├── server/                        # Backend Node.js
 │   └── src/
-│       ├── index.js           # Entry point Express
-│       ├── db/database.js     # SQLite + migraciones
+│       ├── index.js               # Entry point Express
+│       ├── db/database.js         # SQLite + migraciones + seed de usuarios
+│       ├── middleware/auth.js     # JWT + control de roles (admin/worker/client)
 │       ├── routes/
-│       │   ├── auth.js        # Login / JWT
-│       │   ├── messages.js    # Conversaciones + media
-│       │   ├── products.js    # Catálogo (admin)
-│       │   └── webhook.js     # Recibe eventos del bot
+│       │   ├── auth.js            # Login / JWT
+│       │   ├── bot.js             # Control del bot WhatsApp
+│       │   ├── cart.js            # Carrito de clientes
+│       │   ├── chat.js            # Conversaciones + media
+│       │   ├── estados.js         # "Historias" tipo WhatsApp (36h TTL)
+│       │   ├── messages.js        # Mensajería interna
+│       │   ├── orders.js          # Pedidos
+│       │   ├── products.js        # Catálogo (admin)
+│       │   ├── settings.js        # Tema/marca (colores, logo, nombre)
+│       │   ├── users.js           # Gestión de usuarios
+│       │   ├── analytics.js       # Ventas, productos, empleados, clientes
+│       │   └── webhook.js         # Eventos entrantes del bot
 │       └── services/
-│           └── waBot.js       # Bot Baileys + NLP
-├── android-app/               # Flutter App
+│           ├── waBot.js           # Bot whatsapp-web.js + NLP
+│           ├── pdfGenerator.js    # Reporte diario PDF
+│           └── pdfScheduler.js    # Cron del reporte diario
+├── android-app/                   # App Flutter (Android + Web)
 │   └── lib/
-│       ├── models/            # Message, Conversation, Product
-│       ├── screens/
-│       │   ├── login_screen.dart
-│       │   ├── home_screen.dart
-│       │   ├── messages_screen.dart   # Lista conversaciones
-│       │   ├── chat_screen.dart       # Chat individual
-│       │   └── products_screen.dart   # Catálogo
-│       └── services/
-│           └── api_service.dart       # Cliente HTTP
-├── compilar-apk.ps1           # Script compilación Windows
-└── start-all.sh               # Arranque completo Linux/macOS
+│       ├── screens/               # admin_*, client_*, worker_*, login, chat, etc.
+│       ├── theme/                 # Tokens + ThemeProvider (paleta personalizable)
+│       └── services/api_service.dart
+├── dashboard.py                   # Panel nativo GTK3 de análisis (standalone)
+├── deploy-linux.sh                # Instala, asegura y gestiona el servidor en Linux
+└── compilar-apk.sh                # Compila el APK release en Linux
 ```
 
 ---
@@ -82,85 +96,101 @@ pedidos-whatsapp/
 - Interpreta pedidos en español colombiano natural ("quiero 2 bultos de maíz")
 - Detección de intenciones: pedido, consulta de precio, reclamo, fiado
 - Descarga y almacena mensajes de voz e imágenes recibidas
-- Envía media (audio/imagen) a clientes desde la app
-- Obtiene foto de perfil del contacto de WhatsApp
-- Lógica anti-ban integrada
+- Envío de media (audio/imagen) a clientes desde la app
+- Foto de perfil del contacto de WhatsApp
 
-### App Android
-- **Pantalla de mensajes** estilo WhatsApp
-  - Tabs: Chats activos / Archivadas
-  - Badges de mensajes no leídos
-  - Fotos de perfil desde WhatsApp
-  - Deslizar para archivar (con Deshacer) o borrar
-  - Alertas visuales para reclamos y fiados bloqueados
-- **Chat individual**
-  - Reproducción de audios recibidos
-  - Grabación y envío de audios
-  - Envío de imágenes desde galería
-  - Vista de imágenes en pantalla completa
-  - Botón de llamada directa al cliente
-  - Actualización en tiempo real (polling 2s)
-  - Marcado automático como leído
-- **Catálogo de productos**
-  - Solo administradores pueden crear, editar y eliminar
-  - Todos los usuarios pueden consultar
-- **Roles de usuario**: admin / empleado
+### App (Flutter — Android/Web)
+- **Mensajería** estilo WhatsApp: chats activos/archivados, no leídos, audio, imágenes, llamada directa
+- **Catálogo de productos**: gestión completa para admin, consulta para todos
+- **Carrito y pedidos** para clientes finales
+- **Estados** tipo "historias" (36h de vida) con reacciones y comentarios
+- **Analíticas** (solo admin): ventas, productos top, desempeño de empleados, clientes
+- **Personalización de marca**: paleta de colores y logo editables desde el rol admin, sin tocar código
+- **Drawer** agrupado por rol, con tokens de diseño consistentes (Material 3)
 
 ### Servidor
-- API REST con autenticación JWT
-- Gestión de conversaciones, media, pedidos y productos
-- Archivo de conversaciones
+- API REST con JWT + bcrypt, rate limiting, headers de seguridad (helmet), CORS allowlist
 - Migraciones automáticas de base de datos
-- Rate limiting y headers de seguridad
+- Reporte PDF diario automático (pedidos + chats)
+- Bind por defecto a `127.0.0.1` (nunca expuesto directo salvo que se configure explícitamente)
+
+---
+
+## Roles de Usuario
+
+| Rol | Acceso |
+|-----|--------|
+| `admin` | Todo: catálogo, usuarios, analíticas, marca/tema, configuración del bot |
+| `worker` | Mensajería, pedidos, estados — sin analíticas ni configuración |
+| `client` | Catálogo, carrito, pedidos propios, estados del negocio |
+
+El usuario admin por defecto es `jesus`, con contraseña inicial `jesus` (cambiarla tras el primer login). El resto de usuarios sembrados reciben contraseña aleatoria criptográfica.
 
 ---
 
 ## Requisitos
 
-- Node.js 20+
-- Java 17+ (para compilar APK)
-- Flutter 3.44+ (para compilar APK)
-- Android SDK (para compilar APK)
-- ngrok (tunnel WhatsApp webhook)
-- Windows 10+ o Linux/macOS
+- Linux (Debian/Ubuntu/Kali — el deploy detecta `apt`/`dnf`/`pacman`)
+- Node.js 20 (el deploy lo instala aislado en `/opt/nodejs`, sin tocar el Node del sistema)
+- Python 3 + GTK3 (`python3-gi`) — solo si se quiere usar `dashboard.py`
+- Flutter 3.44+ y Android SDK — solo para compilar el APK
 
 ---
 
-## Instalación
+## Despliegue del Servidor (Linux)
 
-### Servidor
-
-```bash
-cd server
-npm install
-cp .env.example .env   # completar variables de entorno
-npm start
-```
-
-### Compilar APK (Windows)
-
-```powershell
-.\compilar-apk.ps1
-```
-
-El script verifica e instala automáticamente Java 17, Flutter y Android SDK si no están presentes. El APK resultante queda en la raíz del proyecto.
-
-### Arranque completo (Linux/macOS)
+`deploy-linux.sh` instala, asegura y gestiona el servidor. Se auto-eleva con `sudo` — necesita root para crear el usuario de sistema aislado, systemd, firewall y fail2ban.
 
 ```bash
-chmod +x start-all.sh
-./start-all.sh
+./deploy-linux.sh                # Instalación / despliegue completo (primera vez)
 ```
+
+Comandos de control (no repiten el wizard de instalación):
+
+| Comando | Acción |
+|---------|--------|
+| `./deploy-linux.sh --start` | Inicia el servidor (como servicio systemd aislado) |
+| `./deploy-linux.sh --stop` | Detiene el servidor |
+| `./deploy-linux.sh --localhost` | Cierra el acceso público: detiene el túnel/expone solo `127.0.0.1`. El servidor sigue vivo, solo deja de ser alcanzable desde afuera |
+| `./deploy-linux.sh --continue` | Reabre el acceso público (túnel Cloudflare o puertos 80/443 según cómo se instaló) |
+| `./deploy-linux.sh --menu` | Panel de gestión en terminal (estado, logs, secretos, WhatsApp, etc.) |
+| `./deploy-linux.sh --uninstall` | Detiene y elimina los servicios instalados (conserva datos) |
+
+El servidor corre siempre como servicio systemd con un usuario de sistema dedicado (`pedidos-bot`, sin login, sin privilegios), `ProtectSystem=strict`, `NoNewPrivileges`, capacidades vacías y demás hardening — nunca como root.
 
 ---
 
-## Uso
+## Panel de Análisis (dashboard.py)
 
-1. Ejecutar servidor (`npm start` en `server/`)
-2. Iniciar ngrok y configurar webhook URL en `.env`
-3. Escanear QR en consola con el WhatsApp del negocio
-4. Instalar APK en dispositivo Android del equipo
-5. Iniciar sesión con credenciales de empleado o admin
+Herramienta de escritorio GTK3 **independiente** del deploy — el admin la abre cuando quiere, no se lanza automáticamente:
+
+```bash
+python3 dashboard.py
+```
+
+Pestañas: Monitoreo (estado del servicio, gráficas de actividad), Ventas (ingresos, top productos), Marca (paleta y logo, mismos datos que usa la app), Configuración, Seguridad (auditoría en vivo) y Logs.
+
+---
+
+## Compilar la App Android
+
+```bash
+chmod +x compilar-apk.sh
+./compilar-apk.sh
+```
+
+Verifica/instala Java, Flutter y Android SDK si hacen falta (sin tocar el Java del sistema). El APK queda en la raíz del proyecto.
+
+---
+
+## Seguridad
+
+- Servicio systemd aislado, sin root, con capacidades y superficie de ataque mínimas
+- Firewall deny-by-default (ufw/firewalld/iptables, autodetectado): solo SSH + lo estrictamente necesario
+- fail2ban contra fuerza bruta
+- Secretos (`API_KEY`, `JWT_SECRET`) generados con `openssl rand -hex 32`, regenerables desde el panel
+- `.env` nunca se commitea (ver `.gitignore`); usar `server/.env.example` como plantilla
+- Rate limiting y helmet en toda la API
 
 ---
 
@@ -168,5 +198,6 @@ chmod +x start-all.sh
 
 | Versión | Descripción |
 |---------|-------------|
+| v2.0 | Deploy Linux endurecido, panel GTK de análisis, roles admin/worker/client, estados, analíticas, marca personalizable |
 | v1.1.0 | WhatsApp-clone UI, audio, imágenes, llamadas, fotos de perfil, productos solo admin |
 | v1.0.0 | Bot NLP, gestión de pedidos, app base |

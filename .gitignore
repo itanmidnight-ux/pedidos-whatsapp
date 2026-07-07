@@ -27,3 +27,4 @@ installer/node_modules/
 *.pid
 logs/
 __pycache__/
+.deploy-config
