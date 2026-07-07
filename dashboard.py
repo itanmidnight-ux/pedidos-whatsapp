@@ -231,6 +231,9 @@ button.action-btn {{
     transition: background 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
     outline: none;
 }}
+button.action-btn:disabled {{
+    opacity: 0.35;
+}}
 .btn-primary {{
     background-color: {ACCENT};
     color: {FG};
@@ -399,6 +402,21 @@ def sh(cmd):
         return subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=6).stdout.strip()
     except Exception:
         return ''
+
+
+def load_conf(key):
+    """Lee una clave de .deploy-config (preferencias del deploy, ej. ACCESS_METHOD)."""
+    conf_path = os.path.join(PROJ, '.deploy-config')
+    if not os.path.exists(conf_path):
+        return ''
+    try:
+        with open(conf_path) as f:
+            for line in f:
+                if line.startswith(key + '='):
+                    return line.strip().split('=', 1)[1]
+    except Exception:
+        pass
+    return ''
 
 
 def env_get(key):
@@ -1058,31 +1076,49 @@ class MonitorModule:
 
         actions = Gtk.Box(spacing=8)
         self.box.pack_start(actions, False, False, 0)
-        for label, cmd, css in [
-            ('↻ Reiniciar', f'systemctl restart {SERVICE}', 'btn-primary'),
-            ('⏸ Detener',   f'systemctl stop {SERVICE}',    'btn-warn'),
-            ('▶ Iniciar',   f'systemctl start {SERVICE}',   'btn-primary'),
-        ]:
-            actions.pack_start(make_btn(label, css, on_click=lambda _w, c=cmd: self._run(c)), False, False, 0)
+        self.btn_restart = make_btn('↻ Reiniciar', 'btn-primary',
+                                     on_click=lambda _w: self._run_with_tunnel('restart'))
+        self.btn_stop    = make_btn('⏸ Detener', 'btn-warn',
+                                     on_click=lambda _w: self._run_with_tunnel('stop'))
+        self.btn_start   = make_btn('▶ Iniciar', 'btn-primary',
+                                     on_click=lambda _w: self._run_with_tunnel('start'))
+        for b in (self.btn_restart, self.btn_stop, self.btn_start):
+            actions.pack_start(b, False, False, 0)
 
         actions.pack_start(Gtk.Label(label=''), True, True, 0)  # spacer
 
         # Túnel control
-        for label, cmd, css in [
-            ('⇄ Reiniciar túnel', f'systemctl restart {TUNNEL_SERVICE}', 'btn-flat'),
-        ]:
-            actions.pack_start(make_btn(label, css, small=True,
-                                        on_click=lambda _w, c=cmd: self._run(c)), False, False, 0)
+        actions.pack_start(make_btn('⇄ Reiniciar túnel', 'btn-flat', small=True,
+                            on_click=lambda _w: self._run(f'systemctl restart {TUNNEL_SERVICE}')),
+                            False, False, 0)
 
     def _run(self, cmd):
         sh(cmd)
         GLib.timeout_add(1500, lambda: (self.parent.refresh_all(), False)[1])
+
+    def _run_with_tunnel(self, action):
+        """Inicia/detiene/reinicia el servidor Node Y el tunel Cloudflare juntos
+        (si esta instalacion usa tunel) -- sin servidor no tiene sentido tener
+        el tunel expuesto, y al reanudar el servidor el tunel debe volver solo."""
+        sh(f'systemctl {action} {SERVICE}')
+        tunnel_installed = bool(sh(f'systemctl cat {TUNNEL_SERVICE} 2>/dev/null'))
+        if tunnel_installed and (action in ('start', 'restart') and load_conf('ACCESS_METHOD') == 'tunnel'
+                                  or action == 'stop'):
+            sh(f'systemctl {action} {TUNNEL_SERVICE}')
+        GLib.timeout_add(1500, lambda: (self.parent.refresh_all(), False)[1])
+
+    def _update_action_buttons(self, is_active):
+        """Reacciona al estado real: Detener solo tiene sentido si esta activo,
+        Iniciar solo si esta detenido -- evita botones que no hacen nada."""
+        self.btn_stop.set_sensitive(is_active)
+        self.btn_start.set_sensitive(not is_active)
 
     def refresh(self):
         # Servicio Node
         active = sh(f'systemctl is-active {SERVICE} 2>/dev/null') or 'inactivo'
         self.card_node.set_value(active.upper() if active != 'inactivo' else 'INACTIVO')
         self._set_dot(self.dot_node, active == 'active', failed=(active == 'failed'))
+        self._update_action_buttons(active == 'active')
 
         # Túnel
         tactive = sh(f'systemctl is-active {TUNNEL_SERVICE} 2>/dev/null') or 'no instalado'

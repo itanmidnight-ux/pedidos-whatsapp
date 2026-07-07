@@ -305,27 +305,16 @@ function _buildClient() {
   });
 
   c.on('qr', async (qr) => {
-    if (PHONE) {
-      // Prefer phone-number pairing: user enters code in WA > Linked Devices > Link by phone
-      try {
-        const code = await c.requestPairingCode(PHONE);
-        const fmt  = code.match(/.{1,4}/g)?.join('-') ?? code;
-        logger.info('[bot] ════════════════════════════════');
-        logger.info(`[bot] CÓDIGO DE VINCULACIÓN: ${fmt}`);
-        logger.info('[bot] WhatsApp → Dispositivos vinculados → Vincular con número de teléfono');
-        logger.info('[bot] ════════════════════════════════');
-        currentQR = null;
-        return;
-      } catch (e) {
-        logger.warn({ err: e.message }, '[bot] Pairing code falló, usando QR fallback');
-      }
-    }
-    // Fallback: QR
+    // Vinculación siempre por código QR (WhatsApp → Dispositivos vinculados →
+    // Vincular un dispositivo) -- no usar pairing code por número de teléfono.
     try {
       const QRCode = require('qrcode');
       currentQR = await QRCode.toDataURL(qr);
-    } catch (_) { currentQR = null; }
-    logger.info('[bot] QR listo — GET /api/bot/qr');
+      logger.info('[bot] QR listo — GET /api/bot/qr');
+    } catch (e) {
+      currentQR = null;
+      logger.error({ err: e.message }, '[bot] No se pudo generar el QR');
+    }
   });
 
   c.on('authenticated', () => {

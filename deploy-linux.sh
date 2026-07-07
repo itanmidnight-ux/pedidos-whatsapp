@@ -441,13 +441,24 @@ cmd_start() {
     require_installed
     as_root systemctl start "$NODE_SVC"
     wait_server_healthy "$(env_get PORT)" 20 || true
+    # El tunel acompaña al servidor: si esta instalacion usa Cloudflare Tunnel
+    # como metodo de acceso publico, arranca junto al servidor automaticamente.
+    if [ "$(load_conf ACCESS_METHOD)" = "tunnel" ] && systemctl cat "${CF_SVC}.service" &>/dev/null 2>&1; then
+        as_root systemctl start "$CF_SVC" 2>/dev/null || true
+        ok "Tunel Cloudflare iniciado junto al servidor."
+    fi
     ok "Servidor iniciado."
 }
 
 cmd_stop() {
     require_installed
     as_root systemctl stop "$NODE_SVC"
-    ok "Servidor detenido. (systemctl start $NODE_SVC para reanudarlo, o ./deploy-linux.sh --start)"
+    # Sin servidor no tiene sentido mantener el tunel expuesto -- se detiene
+    # junto con el, y --start/--continue lo vuelve a levantar.
+    if systemctl cat "${CF_SVC}.service" &>/dev/null 2>&1; then
+        as_root systemctl stop "$CF_SVC" 2>/dev/null || true
+    fi
+    ok "Servidor (y tunel, si estaba activo) detenido. Para reanudar: ./deploy-linux.sh --start"
 }
 
 # Bloquea/permite trafico entrante que no sea loopback hacia el puerto de la
