@@ -845,8 +845,29 @@ main_install() {
     echo ""
 }
 
+has_gtk_dashboard() {
+    [ "${DEPLOY_NO_GUI:-}" = "1" ] && return 1
+    [ -n "${DISPLAY:-}" ] || return 1
+    has_cmd python3 || return 1
+    python3 -c "import gi; gi.require_version('Gtk','3.0'); from gi.repository import Gtk" 2>/dev/null
+}
+
+launch_dashboard() {
+    DEPLOY_SERVICE="$NODE_SVC" DEPLOY_TUNNEL_SERVICE="$CF_SVC" \
+    DEPLOY_PROJ="$PROJ" DEPLOY_LOG_DIR="$LOG_DIR" \
+    DISPLAY="$DISPLAY" XAUTHORITY="$XAUTHORITY" \
+    python3 "$PROJ/dashboard.py"
+}
+
 case "${1:-}" in
-    --menu)      management_menu ;;
+    --menu)
+        if has_gtk_dashboard; then
+            launch_dashboard
+        else
+            warn "Sin entorno grafico (GTK3/python3-gi) detectado — usando panel de terminal."
+            management_menu
+        fi
+        ;;
     --uninstall) uninstall_services ;;
     "")          main_install ;;
     *)           die "Uso: $0 [--menu|--uninstall]" ;;
