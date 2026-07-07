@@ -26,3 +26,4 @@ installer/node_modules/
 # Runtime PID files
 *.pid
 logs/
+__pycache__/

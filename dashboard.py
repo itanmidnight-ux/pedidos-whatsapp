@@ -378,6 +378,8 @@ class DashboardWindow(Gtk.Window):
     def __init__(self):
         super().__init__(title='Concentrados Monserrath — Panel del Servidor')
         self.set_default_size(920, 640)
+        self.set_resizable(True)
+        self.set_size_request(720, 480)  # minimo -- evita que las cards/graficos se aplasten y se vean corruptos
 
         screen = Gdk.Screen.get_default()
         provider = Gtk.CssProvider()
@@ -400,10 +402,10 @@ class DashboardWindow(Gtk.Window):
         notebook = Gtk.Notebook()
         vbox.pack_start(notebook, True, True, 0)
 
-        notebook.append_page(self.build_monitor_tab(), Gtk.Label(label='MONITOREO'))
-        notebook.append_page(self.build_sales_tab(), Gtk.Label(label='VENTAS'))
-        notebook.append_page(self.build_brand_tab(), Gtk.Label(label='MARCA'))
-        notebook.append_page(self.build_config_tab(), Gtk.Label(label='CONFIGURACION'))
+        notebook.append_page(self._scrollable(self.build_monitor_tab()), Gtk.Label(label='MONITOREO'))
+        notebook.append_page(self._scrollable(self.build_sales_tab()), Gtk.Label(label='VENTAS'))
+        notebook.append_page(self._scrollable(self.build_brand_tab()), Gtk.Label(label='MARCA'))
+        notebook.append_page(self._scrollable(self.build_config_tab()), Gtk.Label(label='CONFIGURACION'))
         notebook.append_page(self.build_security_tab(), Gtk.Label(label='SEGURIDAD'))
         notebook.append_page(self.build_logs_tab(), Gtk.Label(label='LOGS'))
 
@@ -425,6 +427,14 @@ class DashboardWindow(Gtk.Window):
         elif hasattr(self, 'dot_status'):
             self.dot_status.set_opacity(1.0)
         return True
+
+    def _scrollable(self, widget):
+        """Envuelve una pestaña en scroll vertical -- si la ventana se achica,
+        el contenido no se aplasta ni se superpone, simplemente aparece scroll."""
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroll.add(widget)
+        return scroll
 
     # ── Tab: Monitoreo ────────────────────────────────────────
     def build_monitor_tab(self):

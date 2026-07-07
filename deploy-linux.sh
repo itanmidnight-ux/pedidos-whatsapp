@@ -124,25 +124,34 @@ fullscale=,green
 TITLE="Concentrados Monserrath — Panel de Servidor"
 
 splash() {
+    # zenity con --timeout devuelve exit 5 cuando el tiempo expira -- eso es
+    # exito, no error, pero bajo set -e mataba el script entero aqui mismo
+    # sin ningun output visible. "|| true" en ambas ramas evita el problema.
     if $HAS_ZENITY; then
         gui --info --title="$TITLE" --width=420 --timeout=2 \
-            --text="<b>CONCENTRADOS MONSERRATH v2.0</b>\n\nPanel de despliegue y gestion del servidor" &>/dev/null
+            --text="<b>CONCENTRADOS MONSERRATH v2.0</b>\n\nPanel de despliegue y gestion del servidor" &>/dev/null || true
     elif $HAS_WHIPTAIL; then
-        whiptail --title "$TITLE" --infobox "\n   +==============================================+\n   |                                                |\n   |     CONCENTRADOS MONSERRATH  -  v2.0          |\n   |     Panel de despliegue y gestion del server  |\n   |                                                |\n   +==============================================+\n" 12 62
+        whiptail --title "$TITLE" --infobox "\n   +==============================================+\n   |                                                |\n   |     CONCENTRADOS MONSERRATH  -  v2.0          |\n   |     Panel de despliegue y gestion del server  |\n   |                                                |\n   +==============================================+\n" 12 62 || true
         sleep 2
     fi
 }
 
 ui_msg() {
-    if $HAS_ZENITY; then gui --info --title="$TITLE" --width=560 --text="$1" 2>/dev/null
-    elif $HAS_WHIPTAIL; then whiptail --title "$TITLE" --msgbox "$1" 16 74
+    # Cerrar/Escapar el dialogo puede devolver exit != 0 -- eso NO es un error
+    # del script, solo el usuario cerrando un aviso. "|| true" evita que
+    # set -e mate el despliegue entero por un click de cierre.
+    if $HAS_ZENITY; then gui --info --title="$TITLE" --width=560 --text="$1" 2>/dev/null || true
+    elif $HAS_WHIPTAIL; then whiptail --title "$TITLE" --msgbox "$1" 16 74 || true
     else echo -e "\n$1\n"; read -rp "Enter para continuar..." _; fi
 }
 ui_input() {
-    # ui_input "titulo" "default" -> stdout
-    if $HAS_ZENITY; then gui --entry --title="$TITLE" --width=480 --text="$1" --entry-text="$2" 2>/dev/null
-    elif $HAS_WHIPTAIL; then whiptail --title "$TITLE" --inputbox "$1" 10 70 "$2" 3>&1 1>&2 2>&3
-    else read -rp "$1 [$2]: " _v; echo "${_v:-$2}"; fi
+    # ui_input "titulo" "default" -> stdout. Si se cancela el dialogo, cae al
+    # valor por defecto en vez de matar el script (mismo motivo que ui_msg).
+    local out
+    if $HAS_ZENITY; then out=$(gui --entry --title="$TITLE" --width=480 --text="$1" --entry-text="$2" 2>/dev/null) || out="$2"
+    elif $HAS_WHIPTAIL; then out=$(whiptail --title "$TITLE" --inputbox "$1" 10 70 "$2" 3>&1 1>&2 2>&3) || out="$2"
+    else read -rp "$1 [$2]: " _v; out="${_v:-$2}"; fi
+    echo "$out"
 }
 ui_yesno() {
     if $HAS_ZENITY; then gui --question --title="$TITLE" --width=480 --text="$1" 2>/dev/null
@@ -161,9 +170,9 @@ ui_menu() {
         done
         gui --list --radiolist --title="$TITLE" --width=680 --height=560 \
             --text="$title" --column="" --column="Opcion" --column="Accion" \
-            --print-column=2 --hide-column=2 "${rows[@]}" 2>/dev/null
+            --print-column=2 --hide-column=2 "${rows[@]}" 2>/dev/null || echo 0
     elif $HAS_WHIPTAIL; then
-        whiptail --title "$TITLE" --menu "$title" 24 78 14 "$@" 3>&1 1>&2 2>&3
+        whiptail --title "$TITLE" --menu "$title" 24 78 14 "$@" 3>&1 1>&2 2>&3 || echo 0
     else
         echo "$title"
         local i=1 opts=()
@@ -795,6 +804,23 @@ main_install() {
 
     [ -d "$SERVER_DIR" ] || die "No se encontro server/ en $PROJ — ejecuta este script desde la raiz del repo."
 
+    # Ya desplegado -- NO repetir el wizard interactivo completo (no tiene
+    # sentido re-preguntar dominio/DuckDNS/telefono de WhatsApp cada vez, y
+    # la espera de vinculacion de WhatsApp al final bloquearia el script sin
+    # que se note por que en pantalla no cambia nada). Este script SOLO
+    # despliega el servidor -- el panel de analisis (dashboard.py) es una
+    # herramienta aparte que el usuario abre por su cuenta cuando quiera.
+    if systemctl list-unit-files "${NODE_SVC}.service" &>/dev/null 2>&1 \
+        && systemctl cat "${NODE_SVC}.service" &>/dev/null 2>&1 \
+        && [ -f "$ENV_FILE" ]; then
+        info "Ya existe un despliegue de '$NODE_SVC' -- verificando que el servicio este arriba."
+        as_root systemctl start "$NODE_SVC" 2>/dev/null || true
+        wait_server_healthy "$(env_get PORT)" 20 || true
+        ok "Servidor arriba en http://127.0.0.1:$(env_get PORT)/app/"
+        info "Panel de analisis: python3 $PROJ/dashboard.py"
+        return 0
+    fi
+
     if [ -d "$PROJ/.git" ] && ui_yesno "Actualizar codigo desde git (git pull) antes de desplegar?"; then
         (cd "$PROJ" && git pull --ff-only 2>&1 | tail -10) || warn "git pull fallo — continuando con el codigo actual"
     fi
@@ -841,38 +867,18 @@ main_install() {
     [ -n "$(load_conf TUNNEL_URL)" ] && echo -e "  Publico: $(load_conf TUNNEL_URL)/app/"
     echo -e "  Logs   : $LOG_DIR/ (o: journalctl -u $NODE_SVC -f)"
     echo -e "  Gestion: ./deploy-linux.sh --menu"
+    echo -e "  Analisis: python3 $PROJ/dashboard.py"
     echo -e "${GREEN}${BOLD}  +======================================================+${NC}"
     echo ""
-
-    if has_gtk_dashboard; then
-        info "Abriendo panel de administracion..."
-        launch_dashboard
-    fi
 }
 
-has_gtk_dashboard() {
-    [ "${DEPLOY_NO_GUI:-}" = "1" ] && return 1
-    [ -n "${DISPLAY:-}" ] || return 1
-    has_cmd python3 || return 1
-    python3 -c "import gi; gi.require_version('Gtk','3.0'); from gi.repository import Gtk" 2>/dev/null
-}
-
-launch_dashboard() {
-    DEPLOY_SERVICE="$NODE_SVC" DEPLOY_TUNNEL_SERVICE="$CF_SVC" \
-    DEPLOY_PROJ="$PROJ" DEPLOY_LOG_DIR="$LOG_DIR" \
-    DISPLAY="$DISPLAY" XAUTHORITY="$XAUTHORITY" \
-    python3 "$PROJ/dashboard.py"
-}
+# NOTA: este script SOLO despliega y gestiona el servidor (systemd, firewall,
+# fail2ban, tunel). El panel de analisis (graficas, marca, ventas) vive en
+# dashboard.py y es una herramienta aparte -- el usuario la abre directo con
+# "python3 dashboard.py" cuando quiera, no se lanza automaticamente desde aqui.
 
 case "${1:-}" in
-    --menu)
-        if has_gtk_dashboard; then
-            launch_dashboard
-        else
-            warn "Sin entorno grafico (GTK3/python3-gi) detectado — usando panel de terminal."
-            management_menu
-        fi
-        ;;
+    --menu)      management_menu ;;
     --uninstall) uninstall_services ;;
     "")          main_install ;;
     *)           die "Uso: $0 [--menu|--uninstall]" ;;
