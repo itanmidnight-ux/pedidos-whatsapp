@@ -12,6 +12,8 @@ class ThemeProvider extends ChangeNotifier {
   ThemeData get darkTheme  => AppTheme.build(primary: _primary, accent: _accent, brightness: Brightness.dark);
   String get brandName => _brandName;
   String? get logoFilename => _logoFilename;
+  Color get primary => _primary;
+  Color get accent => _accent;
 
   Color _parseHex(String hex, Color fallback) {
     final clean = hex.replaceAll('#', '');

@@ -14,7 +14,7 @@ class AppTheme {
     required Color accent,
     required Brightness brightness,
   }) {
-    final scheme = ColorScheme.fromSeed(
+    var scheme = ColorScheme.fromSeed(
       seedColor: primary,
       brightness: brightness,
     ).copyWith(
@@ -22,6 +22,20 @@ class AppTheme {
       secondary: accent,
       error: errorColor,
     );
+
+    // Material 3 genera superficies con un tinte del color semilla (verde
+    // oliva) que en fondos grandes se ve apagado/sucio en vez de calido y
+    // profesional. En claro forzamos blanco real como base -- el color de
+    // marca queda en acentos (AppBar, botones, indicadores), no en el fondo.
+    if (brightness == Brightness.light) {
+      scheme = scheme.copyWith(
+        surface: Colors.white,
+        surfaceContainerLowest: Colors.white,
+        surfaceContainerLow: const Color(0xFFFAFAF7),
+        surfaceContainer: const Color(0xFFF5F4F0),
+        surfaceContainerHigh: const Color(0xFFEFEEE8),
+      );
+    }
 
     final onSurface = scheme.onSurface;
 
@@ -83,6 +97,18 @@ class AppTheme {
         backgroundColor: scheme.surface,
         indicatorColor: primary.withValues(alpha: 0.16),
         elevation: 8,
+      ),
+      // Transicion fade+scale unificada en todas las plataformas (Android,
+      // iOS, Web) en vez de la mezcla por defecto (Zoom en Android, Cupertino
+      // deslizante en iOS) -- se siente mas pulido y consistente.
+      pageTransitionsTheme: const PageTransitionsTheme(
+        builders: {
+          TargetPlatform.android: FadeForwardsPageTransitionsBuilder(),
+          TargetPlatform.iOS: FadeForwardsPageTransitionsBuilder(),
+          TargetPlatform.macOS: FadeForwardsPageTransitionsBuilder(),
+          TargetPlatform.linux: FadeForwardsPageTransitionsBuilder(),
+          TargetPlatform.windows: FadeForwardsPageTransitionsBuilder(),
+        },
       ),
     );
   }

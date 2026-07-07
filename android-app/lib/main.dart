@@ -52,6 +52,42 @@ class PedidosApp extends StatelessWidget {
       theme: themeProvider.lightTheme,
       darkTheme: themeProvider.darkTheme,
       themeMode: ThemeMode.system,
+      // Las pantallas se diseñaron para ancho de telefono/tablet chica. En
+      // navegador de escritorio (o cualquier viewport ancho) sin esto el
+      // contenido se estira a lo ancho de la ventana y todo -- logos, texto,
+      // filas -- se ve distorsionado. Se limita el ancho de contenido y se
+      // centra, con un fondo detras, como cualquier app de chat en web.
+      builder: (context, child) {
+        if (child == null) return const SizedBox.shrink();
+        final mq = MediaQuery.of(context);
+        final clampedTextScaler = mq.textScaler.clamp(
+          minScaleFactor: 0.9,
+          maxScaleFactor: 1.2,
+        );
+        return MediaQuery(
+          data: mq.copyWith(textScaler: clampedTextScaler),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              const maxContentWidth = 560.0;
+              if (constraints.maxWidth <= maxContentWidth) return child;
+              return ColoredBox(
+                color: const Color(0xFFEDEAE2),
+                child: Center(
+                  child: SizedBox(
+                    width: maxContentWidth,
+                    height: constraints.maxHeight,
+                    child: Material(
+                      elevation: 6,
+                      color: Theme.of(context).scaffoldBackgroundColor,
+                      child: child,
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        );
+      },
       home: Consumer<AppProvider>(
         builder: (_, provider, __) {
           if (!provider.isLoggedIn) return const LoginScreen();
