@@ -161,6 +161,7 @@ class _LoginScreenState extends State<LoginScreen>
   Widget build(BuildContext context) {
     final h = MediaQuery.of(context).size.height;
     final scheme = Theme.of(context).colorScheme;
+    final headerH = (h * 0.26).clamp(140.0, 200.0);
     return Scaffold(
       backgroundColor: scheme.primary,
       body: Stack(children: [
@@ -171,7 +172,7 @@ class _LoginScreenState extends State<LoginScreen>
         Positioned(
           top: 0, left: 0, right: 0,
           child: SizedBox(
-            height: h * 0.38,
+            height: headerH,
             child: Stack(alignment: Alignment.center, children: [
               // Wave
               Positioned.fill(
@@ -193,11 +194,11 @@ class _LoginScreenState extends State<LoginScreen>
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    SizedBox(height: MediaQuery.of(context).padding.top + 16),
+                    SizedBox(height: MediaQuery.of(context).padding.top + 8),
                     GestureDetector(
                       onTap: _onLogoTap,
                       child: Container(
-                        width: 90, height: 90,
+                        width: 66, height: 66,
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
                           color: Colors.white.withValues(alpha: 0.12),
@@ -208,18 +209,18 @@ class _LoginScreenState extends State<LoginScreen>
                               blurRadius: 20, offset: const Offset(0, 8)),
                           ],
                         ),
-                        child: const Center(child: Text('🌾', style: TextStyle(fontSize: 42))),
+                        child: const Center(child: Text('🌾', style: TextStyle(fontSize: 30))),
                       ),
                     ),
-                    const SizedBox(height: 14),
+                    const SizedBox(height: 8),
                     Text('CONCENTRADOS MONSERRATH',
                       style: TextStyle(
                         color: scheme.secondary, fontSize: 11, fontWeight: FontWeight.w900,
                         letterSpacing: 2.5)),
-                    const SizedBox(height: 6),
+                    const SizedBox(height: 4),
                     const Text('Tu pedido, nuestra prioridad',
                       style: TextStyle(
-                        color: Colors.white70, fontSize: 13, fontWeight: FontWeight.w400,
+                        color: Colors.white70, fontSize: 12, fontWeight: FontWeight.w400,
                         letterSpacing: 0.3)),
                   ],
                 ),
@@ -237,7 +238,7 @@ class _LoginScreenState extends State<LoginScreen>
               child: SlideTransition(
                 position: _slideAnim,
                 child: Column(children: [
-                  SizedBox(height: h * 0.34),
+                  SizedBox(height: headerH - 30),
 
                   // Login card
                   AnimatedBuilder(
@@ -259,32 +260,32 @@ class _LoginScreenState extends State<LoginScreen>
                         ],
                       ),
                       child: Padding(
-                        padding: const EdgeInsets.fromLTRB(24, 28, 24, 24),
+                        padding: const EdgeInsets.fromLTRB(24, 20, 24, 16),
                         child: Form(
                           key: _formKey,
                           child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
                             // Welcome header
                             Row(children: [
                               Container(
-                                width: 42, height: 42,
+                                width: 38, height: 38,
                                 decoration: BoxDecoration(
                                   color: scheme.primary.withValues(alpha: 0.1),
                                   borderRadius: BorderRadius.circular(12),
                                 ),
-                                child: Icon(Icons.storefront_rounded, color: scheme.primary, size: 22),
+                                child: Icon(Icons.storefront_rounded, color: scheme.primary, size: 20),
                               ),
                               const SizedBox(width: 12),
                               const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                                 Text('¡Bienvenido!',
                                   style: TextStyle(
-                                    fontSize: 20, fontWeight: FontWeight.w800,
+                                    fontSize: 18, fontWeight: FontWeight.w800,
                                     color: Color(0xFF1A1A1A))),
                                 Text('Ingresa para ver y pedir productos',
                                   style: TextStyle(
-                                    fontSize: 12, color: Colors.black45)),
+                                    fontSize: 11, color: Colors.black45)),
                               ]),
                             ]),
-                            const SizedBox(height: 24),
+                            const SizedBox(height: 16),
 
                             // Username
                             _buildField(
@@ -296,7 +297,7 @@ class _LoginScreenState extends State<LoginScreen>
                               autocorrect: false,
                               capitalize: TextCapitalization.none,
                             ),
-                            const SizedBox(height: 14),
+                            const SizedBox(height: 10),
 
                             // Password
                             _buildField(
@@ -309,7 +310,7 @@ class _LoginScreenState extends State<LoginScreen>
                               action: TextInputAction.done,
                               onSubmit: (_) { if (!_loading) _login(); },
                             ),
-                            const SizedBox(height: 12),
+                            const SizedBox(height: 8),
 
                             // Remember me
                             Row(children: [
@@ -354,7 +355,7 @@ class _LoginScreenState extends State<LoginScreen>
                                   )
                                 : const SizedBox.shrink(),
                             ),
-                            const SizedBox(height: 22),
+                            const SizedBox(height: 14),
 
                             // Login button
                             AppButton(
@@ -364,7 +365,7 @@ class _LoginScreenState extends State<LoginScreen>
                               icon: Icons.shopping_basket_rounded,
                             ),
 
-                            const SizedBox(height: 16),
+                            const SizedBox(height: 10),
                             // Register button
                             SizedBox(height: 48,
                               child: OutlinedButton(
@@ -388,7 +389,7 @@ class _LoginScreenState extends State<LoginScreen>
                                 ),
                               ),
                             ),
-                            const SizedBox(height: 12),
+                            const SizedBox(height: 8),
                             Row(children: [
                               Expanded(child: Divider(color: Colors.grey.shade200)),
                               Padding(
@@ -398,7 +399,7 @@ class _LoginScreenState extends State<LoginScreen>
                               ),
                               Expanded(child: Divider(color: Colors.grey.shade200)),
                             ]),
-                            const SizedBox(height: 8),
+                            const SizedBox(height: 4),
                             Center(child: TextButton.icon(
                               onPressed: () {
                                 ScaffoldMessenger.of(context).showSnackBar(
@@ -418,7 +419,7 @@ class _LoginScreenState extends State<LoginScreen>
                     ),
                   ),
 
-                  const SizedBox(height: 24),
+                  const SizedBox(height: 12),
                   // Security badges
                   Row(
                     mainAxisAlignment: MainAxisAlignment.center,
@@ -428,10 +429,10 @@ class _LoginScreenState extends State<LoginScreen>
                       _SecurityBadge(icon: Icons.verified_user_rounded, label: 'Datos protegidos'),
                     ],
                   ),
-                  const SizedBox(height: 20),
+                  const SizedBox(height: 8),
                   Text('v2.0 — Monserrath © 2025',
-                    style: TextStyle(color: Colors.white.withValues(alpha: 0.25), fontSize: 11)),
-                  const SizedBox(height: 16),
+                    style: TextStyle(color: Colors.white.withValues(alpha: 0.25), fontSize: 10)),
+                  const SizedBox(height: 10),
                 ]),
               ),
             ),
@@ -491,7 +492,7 @@ class _LoginScreenState extends State<LoginScreen>
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(14),
           borderSide: BorderSide(color: primary, width: 1.8)),
-        contentPadding: const EdgeInsets.symmetric(vertical: 16, horizontal: 16),
+        contentPadding: const EdgeInsets.symmetric(vertical: 13, horizontal: 16),
       ),
     );
   }
