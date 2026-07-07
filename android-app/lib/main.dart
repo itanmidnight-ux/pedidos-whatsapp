@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:onesignal_flutter/onesignal_flutter.dart';
 import 'providers/app_provider.dart';
+import 'providers/theme_provider.dart';
 import 'screens/login_screen.dart';
 import 'screens/dashboard_screen.dart';
 import 'screens/client_home_screen.dart';
@@ -25,9 +26,15 @@ void main() async {
     await OneSignal.Notifications.requestPermission(true);
   }
 
+  final themeProvider = ThemeProvider();
+  if (ApiService.isConfigured) await themeProvider.load();
+
   runApp(
-    ChangeNotifierProvider(
-      create: (_) => AppProvider(),
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (_) => AppProvider()),
+        ChangeNotifierProvider.value(value: themeProvider),
+      ],
       child: const PedidosApp(),
     ),
   );
@@ -38,62 +45,13 @@ class PedidosApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final themeProvider = context.watch<ThemeProvider>();
     return MaterialApp(
-      title: 'Concentrados Monserrath',
+      title: themeProvider.brandName,
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF1E6B2E),
-          brightness: Brightness.light,
-        ).copyWith(
-          primary:   const Color(0xFF1E6B2E),
-          secondary: const Color(0xFFD4800A),
-          surface:   const Color(0xFFF5F5F0),
-          onPrimary: Colors.white,
-        ),
-        scaffoldBackgroundColor: const Color(0xFFF5F5F0),
-        useMaterial3: true,
-        fontFamily: null,
-        appBarTheme: const AppBarTheme(
-          backgroundColor: Color(0xFF1E6B2E),
-          foregroundColor: Colors.white,
-          elevation: 0,
-          centerTitle: false,
-        ),
-        cardTheme: CardThemeData(
-          elevation: 2,
-          color: Colors.white,
-          shadowColor: Colors.black12,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        ),
-        navigationBarTheme: NavigationBarThemeData(
-          backgroundColor: Colors.white,
-          indicatorColor: const Color(0xFFC8E6C9),
-          elevation: 8,
-          shadowColor: Colors.black26,
-          labelTextStyle: WidgetStateProperty.all(
-            const TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
-        ),
-        filledButtonTheme: FilledButtonThemeData(
-          style: FilledButton.styleFrom(
-            backgroundColor: const Color(0xFF1E6B2E),
-            foregroundColor: Colors.white,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          ),
-        ),
-        inputDecorationTheme: InputDecorationTheme(
-          filled: true,
-          fillColor: Colors.white,
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide.none,
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: const BorderSide(color: Color(0xFF1E6B2E), width: 1.5),
-          ),
-        ),
-      ),
+      theme: themeProvider.lightTheme,
+      darkTheme: themeProvider.darkTheme,
+      themeMode: ThemeMode.system,
       home: Consumer<AppProvider>(
         builder: (_, provider, __) {
           if (!provider.isLoggedIn) return const LoginScreen();
