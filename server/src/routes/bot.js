@@ -2,19 +2,23 @@
 const express = require('express');
 const router  = express.Router();
 const { adminAuth } = require('../middleware/auth');
+const { getDB } = require('../db/database');
 
-// GET /api/bot/status — estado del bot (admin)
+// GET /api/bot/status — estado del bot + cola pendiente (admin)
 router.get('/status', adminAuth, (req, res) => {
+  const pending = getDB().prepare(
+    `SELECT COUNT(*) AS c FROM messages WHERE direction='outbound' AND sent=0`
+  ).get().c;
   try {
     const { getStatus } = require('../services/waBot');
-    res.json(getStatus());
+    res.json({ ...getStatus(), pendingQueue: pending });
   } catch {
-    res.json({ ready: false, hasQR: false });
+    res.json({ ready: false, hasQR: false, pendingQueue: pending });
   }
 });
 
-// GET /api/bot/qr — QR code como imagen PNG (público — QR expira en 20s, no es dato sensible)
-router.get('/qr', (req, res) => {
+// GET /api/bot/qr — QR code como imagen PNG (admin — vincular el QR da control total de la sesión de WhatsApp)
+router.get('/qr', adminAuth, (req, res) => {
   try {
     const { getQR } = require('../services/waBot');
     const qr = getQR();

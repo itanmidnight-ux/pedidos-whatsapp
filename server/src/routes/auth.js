@@ -168,9 +168,10 @@ router.post('/register', async (req, res) => {
 
   try {
     const hash = await bcrypt.hash(String(password), 10);
-    const result = db.prepare(
+    // active=0: cuenta queda pendiente de aprobación del admin (users_screen ya tiene el toggle)
+    db.prepare(
       `INSERT INTO users (username, password_hash, pin, display_name, role, active, email, address, nickname, bio)
-       VALUES (?,?,?,?,?,1,?,?,?,?)`
+       VALUES (?,?,?,?,?,0,?,?,?,?)`
     ).run(
       name, hash, hash,
       String(display_name).trim().slice(0, 100),
@@ -181,8 +182,10 @@ router.post('/register', async (req, res) => {
       bio      ? String(bio).trim().slice(0, 500)      : null,
     );
     clearAttempts(lockKey);
-    const user = db.prepare('SELECT * FROM users WHERE id=?').get(result.lastInsertRowid);
-    res.status(201).json(signToken(user));
+    res.status(201).json({
+      pending: true,
+      message: 'Cuenta creada. Un administrador debe aprobarla antes de que puedas iniciar sesión.',
+    });
   } catch (e) {
     recordFail(lockKey);
     res.status(500).json({ error: 'Error al crear cuenta' });

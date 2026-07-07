@@ -4,6 +4,7 @@ const path = require('path');
 const fs   = require('fs');
 const axios = require('axios');
 const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
+const logger = require('../utils/logger');
 
 // ── Directorios ───────────────────────────────────────────────
 const BOT_DIR   = path.join(process.env.APPDATA || process.env.HOME, 'pedidos-bot');
@@ -22,8 +23,48 @@ let isReady    = false;
 let pollTimer  = null;
 let currentQR  = null;   // stored as data-URL for admin endpoint
 let reconnectTimer = null;
+let mediaCleanupInterval = null;
 
 const POLL_MS = 3000;
+
+// ── Reconexión con backoff exponencial ─────────────────────────
+const BASE_RECONNECT_MS = 10_000;
+const MAX_RECONNECT_MS  = 5 * 60_000;
+const MAX_RECONNECT_ATTEMPTS = parseInt(process.env.BOT_MAX_RECONNECT_ATTEMPTS, 10) || 10;
+let reconnectAttempts  = 0;
+let reconnectExhausted = false;
+
+// ── Salud / métricas para el panel de admin ────────────────────
+let connectedSince = null;
+let lastMessageAt  = null;
+
+// ── Límite de mensajes salientes por hora (anti-baneo) ─────────
+const MAX_MSGS_PER_HOUR = parseInt(process.env.BOT_MAX_MSGS_PER_HOUR, 10) || 200;
+let sentTimestamps = [];
+let lastCapWarnAt  = 0;
+
+function canSendMore() {
+  const cutoff = Date.now() - 3_600_000;
+  sentTimestamps = sentTimestamps.filter(t => t > cutoff);
+  return sentTimestamps.length < MAX_MSGS_PER_HOUR;
+}
+
+// ── Limpieza de media descargada (evita llenar el disco) ───────
+const MEDIA_RETENTION_DAYS = parseInt(process.env.BOT_MEDIA_RETENTION_DAYS, 10) || 30;
+
+function cleanupOldMedia() {
+  const cutoff = Date.now() - MEDIA_RETENTION_DAYS * 86_400_000;
+  for (const dir of [MEDIA_DIR, DOCS_DIR]) {
+    let files;
+    try { files = fs.readdirSync(dir); } catch (_) { continue; }
+    for (const f of files) {
+      const fpath = path.join(dir, f);
+      try {
+        if (fs.statSync(fpath).mtimeMs < cutoff) fs.unlinkSync(fpath);
+      } catch (_) {}
+    }
+  }
+}
 
 const http = axios.create({
   baseURL: API_URL,
@@ -62,8 +103,9 @@ async function postInbound(phone, name, message, mediaType, mediaUrl, profilePic
       profile_pic_url: profilePicUrl || undefined,
       timestamp:       new Date().toISOString(),
     });
+    lastMessageAt = new Date().toISOString();
   } catch (e) {
-    if (e.response?.status !== 429) console.error('[bot] webhook err', e.message);
+    if (e.response?.status !== 429) logger.error({ err: e.message }, '[bot] webhook err');
   }
 }
 
@@ -83,6 +125,14 @@ async function pollOutbound() {
   try {
     const { data } = await http.get('/api/messages/outbound/pending');
     for (const msg of (data.messages || [])) {
+      if (!canSendMore()) {
+        const now = Date.now();
+        if (now - lastCapWarnAt > 5 * 60_000) {
+          lastCapWarnAt = now;
+          logger.warn({ max: MAX_MSGS_PER_HOUR }, '[bot] límite de mensajes/hora alcanzado — pausando envíos');
+        }
+        break;
+      }
       try {
         const to = toJid(msg.phone);
 
@@ -127,8 +177,10 @@ async function pollOutbound() {
         }
 
         await http.put(`/api/messages/${msg.id}/sent`);
+        sentTimestamps.push(Date.now());
+        lastMessageAt = new Date().toISOString();
         await delay(1500 + Math.random() * 2000);
-      } catch (e) { console.error('[bot] send err', msg.id, e.message); }
+      } catch (e) { logger.error({ err: e.message, orderId: msg.id }, '[bot] send err'); }
     }
   } catch (_) {}
 }
@@ -155,7 +207,7 @@ async function handleInbound(msg) {
       await postInbound(phone, name, t === 'ptt' ? '[Nota de voz]' : '[Audio]', 'audio', fname, profilePicUrl);
       await delay(1000);
       await client.sendMessage(from, '✅ Audio recibido. Un colaborador lo atenderá pronto.');
-    } catch (e) { console.error('[bot] audio err', e.message); }
+    } catch (e) { logger.error({ err: e.message }, '[bot] audio err'); }
     return;
   }
 
@@ -167,7 +219,7 @@ async function handleInbound(msg) {
       await postInbound(phone, name, caption, 'image', fname, profilePicUrl);
       await delay(1000);
       await client.sendMessage(from, '✅ Imagen recibida. Un colaborador la revisará pronto.');
-    } catch (e) { console.error('[bot] image err', e.message); }
+    } catch (e) { logger.error({ err: e.message }, '[bot] image err'); }
     return;
   }
 
@@ -179,7 +231,7 @@ async function handleInbound(msg) {
       await postInbound(phone, name, caption, 'video', fname, profilePicUrl);
       await delay(1000);
       await client.sendMessage(from, '✅ Video recibido. Un colaborador lo revisará pronto.');
-    } catch (e) { console.error('[bot] video err', e.message); }
+    } catch (e) { logger.error({ err: e.message }, '[bot] video err'); }
     return;
   }
 
@@ -192,7 +244,7 @@ async function handleInbound(msg) {
       await postInbound(phone, name, `[Documento: ${origName}]`, 'document', fname, profilePicUrl);
       await delay(1000);
       await client.sendMessage(from, '✅ Documento recibido. Un colaborador lo revisará.');
-    } catch (e) { console.error('[bot] doc err', e.message); }
+    } catch (e) { logger.error({ err: e.message }, '[bot] doc err'); }
     return;
   }
 
@@ -258,14 +310,14 @@ function _buildClient() {
       try {
         const code = await c.requestPairingCode(PHONE);
         const fmt  = code.match(/.{1,4}/g)?.join('-') ?? code;
-        console.log('[bot] ════════════════════════════════');
-        console.log(`[bot] CÓDIGO DE VINCULACIÓN: ${fmt}`);
-        console.log('[bot] WhatsApp → Dispositivos vinculados → Vincular con número de teléfono');
-        console.log('[bot] ════════════════════════════════');
+        logger.info('[bot] ════════════════════════════════');
+        logger.info(`[bot] CÓDIGO DE VINCULACIÓN: ${fmt}`);
+        logger.info('[bot] WhatsApp → Dispositivos vinculados → Vincular con número de teléfono');
+        logger.info('[bot] ════════════════════════════════');
         currentQR = null;
         return;
       } catch (e) {
-        console.log('[bot] Pairing code falló, usando QR fallback:', e.message);
+        logger.warn({ err: e.message }, '[bot] Pairing code falló, usando QR fallback');
       }
     }
     // Fallback: QR
@@ -273,41 +325,62 @@ function _buildClient() {
       const QRCode = require('qrcode');
       currentQR = await QRCode.toDataURL(qr);
     } catch (_) { currentQR = null; }
-    console.log('[bot] QR listo — GET /api/bot/qr');
+    logger.info('[bot] QR listo — GET /api/bot/qr');
   });
 
   c.on('authenticated', () => {
     currentQR = null;
-    console.log('[bot] ✅ Autenticado — sesión guardada');
+    logger.info('[bot] Autenticado — sesión guardada');
   });
 
   c.on('auth_failure', (msg) => {
-    console.error('[bot] ❌ Fallo de autenticación:', msg);
+    logger.error({ msg }, '[bot] Fallo de autenticación');
     currentQR = null;
   });
 
   c.on('ready', () => {
-    console.log('[bot] ✅ Conectado y listo');
+    logger.info('[bot] Conectado y listo');
     isReady   = true;
     currentQR = null;
+    connectedSince    = new Date().toISOString();
+    reconnectAttempts  = 0;
+    reconnectExhausted = false;
     if (pollTimer) clearInterval(pollTimer);
     pollTimer = setInterval(pollOutbound, POLL_MS);
   });
 
   c.on('disconnected', (reason) => {
-    console.log(`[bot] Desconectado (${reason}) — reconectando en 10s…`);
+    logger.warn({ reason }, '[bot] Desconectado');
     isReady = false;
+    connectedSince = null;
     if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
-    if (reconnectTimer) clearTimeout(reconnectTimer);
-    reconnectTimer = setTimeout(_reconnect, 10000);
+    scheduleReconnect();
   });
 
   c.on('message', async (msg) => {
     try { await handleInbound(msg); }
-    catch (e) { console.error('[bot] handler err', e.message); }
+    catch (e) { logger.error({ err: e.message }, '[bot] handler err'); }
   });
 
   return c;
+}
+
+function scheduleReconnect() {
+  if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+    if (!reconnectExhausted) {
+      reconnectExhausted = true;
+      logger.error(
+        { attempts: reconnectAttempts },
+        '[bot] reintentos de reconexión agotados — se requiere reinicio manual (POST /api/bot/restart)'
+      );
+    }
+    return;
+  }
+  const backoffMs = Math.min(BASE_RECONNECT_MS * 2 ** reconnectAttempts, MAX_RECONNECT_MS);
+  reconnectAttempts += 1;
+  logger.warn({ attempt: reconnectAttempts, backoffMs }, '[bot] reconectando');
+  if (reconnectTimer) clearTimeout(reconnectTimer);
+  reconnectTimer = setTimeout(_reconnect, backoffMs);
 }
 
 async function _reconnect() {
@@ -316,28 +389,41 @@ async function _reconnect() {
     client = _buildClient();
     await client.initialize();
   } catch (e) {
-    console.error('[bot] reconexión err:', e.message);
-    if (reconnectTimer) clearTimeout(reconnectTimer);
-    reconnectTimer = setTimeout(_reconnect, 15000);
+    logger.error({ err: e.message }, '[bot] reconexión err');
+    scheduleReconnect();
   }
 }
 
 // ── API pública ───────────────────────────────────────────────
 async function initBot() {
-  if (!PHONE) { console.warn('[bot] BOT_PHONE no configurado — bot desactivado'); return; }
-  console.log('[bot] Iniciando con whatsapp-web.js…');
+  if (!PHONE) { logger.warn('[bot] BOT_PHONE no configurado — bot desactivado'); return; }
+  logger.info('[bot] Iniciando con whatsapp-web.js…');
+  reconnectAttempts  = 0;
+  reconnectExhausted = false;
+  cleanupOldMedia();
+  if (!mediaCleanupInterval) {
+    mediaCleanupInterval = setInterval(cleanupOldMedia, 24 * 3_600_000).unref();
+  }
   client = _buildClient();
   await client.initialize();
 }
 
 function getStatus() {
+  const cutoff = Date.now() - 3_600_000;
   return {
     ready:  isReady,
     hasQR:  currentQR !== null,
     phone:  PHONE ? `+${PHONE.slice(0, 2)} ***${PHONE.slice(-4)}` : null,
+    connectedSince,
+    lastMessageAt,
+    reconnectAttempts,
+    maxReconnectAttempts: MAX_RECONNECT_ATTEMPTS,
+    reconnectExhausted,
+    sentLastHour: sentTimestamps.filter(t => t > cutoff).length,
+    maxMsgsPerHour: MAX_MSGS_PER_HOUR,
   };
 }
 
 function getQR() { return currentQR; }
 
-module.exports = { initBot, getStatus, getQR };
+module.exports = { initBot, getStatus, getQR, cleanupOldMedia, canSendMore, MEDIA_DIR, DOCS_DIR };

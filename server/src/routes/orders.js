@@ -1,7 +1,7 @@
 'use strict';
 const express = require('express');
 const router  = express.Router();
-const { jwtAuth, adminAuth } = require('../middleware/auth');
+const { staffAuth, adminAuth } = require('../middleware/auth');
 const { getDB } = require('../db/database');
 
 const ACTIVE_STATUSES = "'pending','claimed','en_camino'";
@@ -26,7 +26,7 @@ function findOrder(db, id) {
 }
 
 // GET /api/orders — active orders (pending + claimed + en_camino)
-router.get('/', jwtAuth, (req, res) => {
+router.get('/', staffAuth, (req, res) => {
   const db   = getDB();
   const rows = db.prepare(`
     SELECT o.*, c.phone, c.name AS customer_name,
@@ -41,7 +41,7 @@ router.get('/', jwtAuth, (req, res) => {
 });
 
 // GET /api/orders/history — delivered + cancelled last N days
-router.get('/history', jwtAuth, (req, res) => {
+router.get('/history', staffAuth, (req, res) => {
   const db   = getDB();
   const days = Math.min(Math.max(parseInt(req.query.days, 10) || 7, 1), 365);
   const cutoff = new Date(Date.now() - days * 86400000).toISOString().slice(0, 19).replace('T', ' ');
@@ -60,7 +60,7 @@ router.get('/history', jwtAuth, (req, res) => {
 });
 
 // GET /api/orders/stats — inventory totals + daily deliveries (admin only)
-router.get('/stats', jwtAuth, (req, res) => {
+router.get('/stats', staffAuth, (req, res) => {
   const db = getDB();
 
   // Product totals from active orders
@@ -105,7 +105,7 @@ router.get('/stats', jwtAuth, (req, res) => {
 });
 
 // GET /api/orders/:id
-router.get('/:id', jwtAuth, (req, res) => {
+router.get('/:id', staffAuth, (req, res) => {
   const db = getDB();
   const o  = findOrder(db, parseInt(req.params.id));
   if (!o) return res.status(404).json({ error: 'Pedido no encontrado' });
@@ -114,7 +114,7 @@ router.get('/:id', jwtAuth, (req, res) => {
 });
 
 // PUT /api/orders/:id/claim — soft-lock: any worker can claim, admin can reassign
-router.put('/:id/claim', jwtAuth, (req, res) => {
+router.put('/:id/claim', staffAuth, (req, res) => {
   const db = getDB();
   const id = parseInt(req.params.id);
   const o  = db.prepare('SELECT * FROM orders WHERE id=?').get(id);
@@ -137,7 +137,7 @@ router.put('/:id/claim', jwtAuth, (req, res) => {
 });
 
 // PUT /api/orders/:id/unclaim — worker unclaims own; admin unclaims any
-router.put('/:id/unclaim', jwtAuth, (req, res) => {
+router.put('/:id/unclaim', staffAuth, (req, res) => {
   const db = getDB();
   const id = parseInt(req.params.id);
   const o  = db.prepare('SELECT * FROM orders WHERE id=?').get(id);
@@ -151,7 +151,7 @@ router.put('/:id/unclaim', jwtAuth, (req, res) => {
 });
 
 // PUT /api/orders/:id/en_camino — claimer or admin
-router.put('/:id/en_camino', jwtAuth, (req, res) => {
+router.put('/:id/en_camino', staffAuth, (req, res) => {
   const db = getDB();
   const id = parseInt(req.params.id);
   const o  = db.prepare('SELECT * FROM orders WHERE id=?').get(id);
@@ -168,9 +168,7 @@ router.put('/:id/en_camino', jwtAuth, (req, res) => {
 });
 
 // PUT /api/orders/:id/deliver — mark entregado (worker/admin only)
-router.put('/:id/deliver', jwtAuth, (req, res) => {
-  if (!['admin', 'worker'].includes(req.user.role))
-    return res.status(403).json({ error: 'Solo empleados pueden marcar como entregado' });
+router.put('/:id/deliver', staffAuth, (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (!id || id <= 0) return res.status(400).json({ error: 'ID inválido' });
   const db = getDB();
@@ -192,7 +190,7 @@ router.put('/:id/cancel', adminAuth, (req, res) => {
 });
 
 // PUT /api/orders/:id/comment
-router.put('/:id/comment', jwtAuth, (req, res) => {
+router.put('/:id/comment', staffAuth, (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (!id || id <= 0) return res.status(400).json({ error: 'ID inválido' });
   const { comment } = req.body;
@@ -203,7 +201,7 @@ router.put('/:id/comment', jwtAuth, (req, res) => {
 });
 
 // Legacy route — keep backward compat
-router.get('/pending', jwtAuth, (req, res) => {
+router.get('/pending', staffAuth, (req, res) => {
   const today = new Date().toISOString().split('T')[0];
   const db    = getDB();
   const rows  = db.prepare(`

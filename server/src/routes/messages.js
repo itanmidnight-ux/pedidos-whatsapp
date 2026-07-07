@@ -4,7 +4,7 @@ const router  = express.Router();
 const path    = require('path');
 const fs      = require('fs');
 const multer  = require('multer');
-const { jwtAuth, apiKeyAuth } = require('../middleware/auth');
+const { staffAuth, adminAuth, apiKeyAuth } = require('../middleware/auth');
 const { getDB } = require('../db/database');
 
 // ── Media directory ───────────────────────────────────────────
@@ -32,7 +32,7 @@ const upload = multer({
 function validPhone(p) { return /^\d{7,15}$/.test(String(p || '').trim()); }
 
 // ── GET / — Conversaciones (no archivadas por defecto) ────────
-router.get('/', jwtAuth, (req, res) => {
+router.get('/', staffAuth, (req, res) => {
   const archived = req.query.archived === 'true' ? 1 : 0;
   const convs = getDB().prepare(`
     SELECT m.phone,
@@ -55,7 +55,7 @@ router.get('/', jwtAuth, (req, res) => {
 });
 
 // ── GET /flagged ──────────────────────────────────────────────
-router.get('/flagged', jwtAuth, (req, res) => {
+router.get('/flagged', staffAuth, (req, res) => {
   res.json(getDB().prepare(
     `SELECT * FROM messages WHERE flagged=1 ORDER BY created_at DESC LIMIT 50`
   ).all());
@@ -71,14 +71,14 @@ router.get('/outbound/pending', apiKeyAuth, (req, res) => {
 });
 
 // ── GET /promotional ──────────────────────────────────────────
-router.get('/promotional', jwtAuth, (req, res) => {
+router.get('/promotional', staffAuth, (req, res) => {
   res.json(getDB().prepare(
     `SELECT * FROM promotional_campaigns ORDER BY created_at DESC LIMIT 50`
   ).all());
 });
 
 // ── GET /media/:filename — Servir archivos de media y docs ───
-router.get('/media/:filename', jwtAuth, (req, res) => {
+router.get('/media/:filename', staffAuth, (req, res) => {
   const filename  = path.basename(req.params.filename);
   const inMedia   = path.join(MEDIA_DIR, filename);
   const inDocs    = path.join(DOCS_DIR,  filename);
@@ -90,7 +90,7 @@ router.get('/media/:filename', jwtAuth, (req, res) => {
 });
 
 // ── DELETE /conversation/:phone — Borrar conversación ─────────
-router.delete('/conversation/:phone', jwtAuth, (req, res) => {
+router.delete('/conversation/:phone', staffAuth, (req, res) => {
   const phone = req.params.phone.trim();
   if (!validPhone(phone)) return res.status(400).json({ error: 'phone inválido' });
   const db = getDB();
@@ -100,7 +100,7 @@ router.delete('/conversation/:phone', jwtAuth, (req, res) => {
 });
 
 // ── PUT /conversation/:phone/archive — Archivar/Desarchivar ───
-router.put('/conversation/:phone/archive', jwtAuth, (req, res) => {
+router.put('/conversation/:phone/archive', staffAuth, (req, res) => {
   const phone = req.params.phone.trim();
   if (!validPhone(phone)) return res.status(400).json({ error: 'phone inválido' });
   const { archived } = req.body;
@@ -112,7 +112,7 @@ router.put('/conversation/:phone/archive', jwtAuth, (req, res) => {
 });
 
 // ── PUT /:phone/read — Marcar conversación como leída ─────────
-router.put('/:phone/read', jwtAuth, (req, res) => {
+router.put('/:phone/read', staffAuth, (req, res) => {
   const phone = req.params.phone.trim();
   if (!validPhone(phone)) return res.status(400).json({ error: 'phone inválido' });
   getDB().prepare(
@@ -122,7 +122,7 @@ router.put('/:phone/read', jwtAuth, (req, res) => {
 });
 
 // ── GET /:phone — Conversación individual ────────────────────
-router.get('/:phone', jwtAuth, (req, res) => {
+router.get('/:phone', staffAuth, (req, res) => {
   if (!validPhone(req.params.phone)) return res.status(400).json({ error: 'phone inválido' });
   const msgs = getDB().prepare(
     `SELECT * FROM messages WHERE phone=? ORDER BY created_at ASC`
@@ -131,7 +131,7 @@ router.get('/:phone', jwtAuth, (req, res) => {
 });
 
 // ── PUT /:id/flag ─────────────────────────────────────────────
-router.put('/:id/flag', jwtAuth, (req, res) => {
+router.put('/:id/flag', staffAuth, (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (!id || id <= 0) return res.status(400).json({ error: 'ID inválido' });
   const { flagged, flag_reason } = req.body;
@@ -142,7 +142,7 @@ router.put('/:id/flag', jwtAuth, (req, res) => {
 });
 
 // ── POST /send-media — Enviar media al cliente ────────────────
-router.post('/send-media', jwtAuth, upload.single('file'), (req, res) => {
+router.post('/send-media', staffAuth, upload.single('file'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'Archivo requerido' });
   const { phone, media_type } = req.body;
   if (!validPhone(phone)) return res.status(400).json({ error: 'phone inválido' });
@@ -183,7 +183,7 @@ router.post('/send-media', jwtAuth, upload.single('file'), (req, res) => {
 });
 
 // ── POST /send — Enviar mensaje texto ────────────────────────
-router.post('/send', jwtAuth, (req, res) => {
+router.post('/send', staffAuth, (req, res) => {
   const raw = String(req.body.phone || '').replace(/\D/g, '');
   // Normalize Colombian 10-digit mobiles to full E.164
   const phone = (raw.length === 10 && raw.startsWith('3')) ? '57' + raw : raw;
@@ -202,7 +202,7 @@ router.post('/send', jwtAuth, (req, res) => {
 });
 
 // ── POST /promotional ─────────────────────────────────────────
-router.post('/promotional', jwtAuth, (req, res) => {
+router.post('/promotional', adminAuth, (req, res) => {
   const { message, phones } = req.body;
   if (!message || typeof message !== 'string' || message.trim().length === 0 || message.length > 1000)
     return res.status(400).json({ error: 'message requerido (máximo 1000 caracteres)' });

@@ -3,6 +3,7 @@ const PDFDocument = require('pdfkit');
 const fs   = require('fs');
 const path = require('path');
 const { getDB } = require('../db/database');
+const logger = require('../utils/logger');
 
 const TZ = 'America/Bogota';
 
@@ -220,7 +221,7 @@ async function generateDailyPDF() {
       .run(...orders.map(o => o.id));
   }
 
-  console.log(`[PDF] ${filepath} — ${orders.length} pedidos, ${chatPhones.length} chats`);
+  logger.info({ filepath, orders: orders.length, chats: chatPhones.length }, '[PDF] generado');
   return filepath;
 }
 
