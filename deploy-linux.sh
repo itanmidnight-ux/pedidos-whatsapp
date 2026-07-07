@@ -76,24 +76,59 @@ pkg_install() {
 HAS_WHIPTAIL=false
 has_cmd whiptail && HAS_WHIPTAIL=true
 
+# Tema visual "Olivo & Ambar" (mismos colores de marca que la app) para
+# que el panel de whiptail se sienta parte del mismo producto, no una
+# herramienta generica pegada encima.
+export NEWT_COLORS='
+root=white,black
+window=black,white
+border=green,white
+shadow=black,black
+title=black,green
+button=white,green
+actbutton=black,brown
+compactbutton=black,white
+checkbox=black,white
+actcheckbox=white,green
+entry=black,white
+disentry=black,white
+label=black,white
+listbox=black,white
+actlistbox=white,green
+textbox=black,white
+acttextbox=white,green
+helpline=white,black
+roottext=white,black
+emptyscale=,white
+fullscale=,green
+'
+
+TITLE="🌾 Concentrados Monserrath — Panel de Servidor"
+
+splash() {
+    $HAS_WHIPTAIL || return 0
+    whiptail --title "$TITLE" --infobox "\n   +==============================================+\n   |                                                |\n   |     CONCENTRADOS MONSERRATH  -  v2.0          |\n   |     Panel de despliegue y gestion del server  |\n   |                                                |\n   +==============================================+\n" 12 62
+    sleep 2
+}
+
 ui_msg() {
-    if $HAS_WHIPTAIL; then whiptail --title "Concentrados Monserrath" --msgbox "$1" 12 70
+    if $HAS_WHIPTAIL; then whiptail --title "$TITLE" --msgbox "$1" 16 74
     else echo -e "\n$1\n"; read -rp "Enter para continuar..." _; fi
 }
 ui_input() {
     # ui_input "titulo" "default" -> stdout
-    if $HAS_WHIPTAIL; then whiptail --title "Concentrados Monserrath" --inputbox "$1" 10 70 "$2" 3>&1 1>&2 2>&3
+    if $HAS_WHIPTAIL; then whiptail --title "$TITLE" --inputbox "$1" 10 70 "$2" 3>&1 1>&2 2>&3
     else read -rp "$1 [$2]: " _v; echo "${_v:-$2}"; fi
 }
 ui_yesno() {
-    if $HAS_WHIPTAIL; then whiptail --title "Concentrados Monserrath" --yesno "$1" 10 70
+    if $HAS_WHIPTAIL; then whiptail --title "$TITLE" --yesno "$1" 10 70
     else read -rp "$1 [s/N]: " _v; [[ "$_v" =~ ^[sSyY] ]]; fi
 }
 ui_menu() {
     # ui_menu "titulo" opt1 desc1 opt2 desc2 ... -> stdout = opcion elegida
     local title="$1"; shift
     if $HAS_WHIPTAIL; then
-        whiptail --title "Concentrados Monserrath — Panel de gestion" --menu "$title" 22 76 12 "$@" 3>&1 1>&2 2>&3
+        whiptail --title "$TITLE" --menu "$title" 24 78 14 "$@" 3>&1 1>&2 2>&3
     else
         echo "$title"
         local i=1 opts=()
@@ -590,27 +625,54 @@ security_audit() {
 # ================================================================
 #  Panel de gestion (menu principal, "GUI")
 # ================================================================
+status_icon() {
+    case "$1" in
+        active)  echo "🟢 activo" ;;
+        failed)  echo "🔴 fallo" ;;
+        *)       echo "⚪ $1" ;;
+    esac
+}
+
+dashboard() {
+    local port; port=$(env_get PORT); port="${port:-$DEFAULT_PORT}"
+    local node_status cf_status uptime mem bot_line
+    node_status=$(status_icon "$(systemctl is-active "$NODE_SVC" 2>/dev/null || echo 'no-instalado')")
+    cf_status=$(status_icon "$(systemctl is-active "$CF_SVC" 2>/dev/null || echo 'no-instalado')")
+    uptime=$(systemctl show "$NODE_SVC" -p ActiveEnterTimestamp 2>/dev/null | cut -d= -f2)
+    mem=$(systemctl show "$NODE_SVC" -p MemoryCurrent 2>/dev/null | cut -d= -f2)
+    [ -n "$mem" ] && [ "$mem" != "[not set]" ] && mem="$((mem / 1024 / 1024)) MB" || mem="?"
+    bot_line=$(curl -fsS --max-time 2 "http://127.0.0.1:${port}/api/bot/status" 2>/dev/null | grep -oE '"ready":(true|false)' || echo "")
+    local bot_txt="sin datos (revisa login admin)"
+    [[ "$bot_line" == *true*  ]] && bot_txt="🟢 WhatsApp conectado"
+    [[ "$bot_line" == *false* ]] && bot_txt="🟡 WhatsApp reconectando"
+
+    ui_msg "📊 ESTADO DEL SERVIDOR\n\n🖥️  Servidor Node    : $node_status\n☁️  Tunel Cloudflare : $cf_status\n💬 Bot WhatsApp     : $bot_txt\n🔌 Puerto (local)   : $port\n🧠 Memoria en uso   : $mem\n⏱️  Activo desde     : ${uptime:-?}\n🌐 Publico          : $(load_conf TUNNEL_URL || echo 'no configurado')"
+}
+
 management_menu() {
+    splash
     while true; do
         local port; port=$(env_get PORT); port="${port:-$DEFAULT_PORT}"
-        local status; status=$(systemctl is-active "$NODE_SVC" 2>/dev/null || echo "no-instalado")
+        local status; status=$(status_icon "$(systemctl is-active "$NODE_SVC" 2>/dev/null || echo 'no-instalado')")
         local choice
-        choice=$(ui_menu "Servidor: $status | Puerto: $port\nElige una accion:" \
-            1 "Ver estado detallado del servicio" \
-            2 "Reiniciar servidor" \
-            3 "Detener servidor" \
-            4 "Iniciar servidor" \
-            5 "Ver logs en vivo (Ctrl+C para salir)" \
-            6 "Re-vincular WhatsApp (borra sesion actual)" \
-            7 "Cambiar puerto" \
-            8 "Regenerar secretos (API_KEY / JWT_SECRET)" \
-            9 "Configurar DuckDNS" \
-            10 "Configurar dominio propio (nginx + HTTPS)" \
-            11 "Auditoria de seguridad" \
-            12 "Actualizar codigo (git pull + reinstalar)" \
-            13 "Desinstalar todo" \
-            0 "Salir")
+        choice=$(ui_menu "Servidor: $status   |   Puerto: $port\n\nElige una accion:" \
+            D "📊 Dashboard — estado en vivo" \
+            1 "🔎 Ver estado detallado del servicio" \
+            2 "🔄 Reiniciar servidor" \
+            3 "⏸️  Detener servidor" \
+            4 "▶️  Iniciar servidor" \
+            5 "📜 Ver logs en vivo (Ctrl+C para salir)" \
+            6 "📱 Re-vincular WhatsApp (borra sesion actual)" \
+            7 "🔌 Cambiar puerto" \
+            8 "🔑 Regenerar secretos (API_KEY / JWT_SECRET)" \
+            9 "🌐 Configurar DuckDNS" \
+            10 "🔒 Configurar dominio propio (nginx + HTTPS)" \
+            11 "🛡️  Auditoria de seguridad" \
+            12 "⬆️  Actualizar codigo (git pull + reinstalar)" \
+            13 "🗑️  Desinstalar todo" \
+            0 "🚪 Salir")
         case "$choice" in
+            D) dashboard ;;
             1) ui_msg "$(systemctl status "$NODE_SVC" --no-pager 2>&1 | head -25)" ;;
             2) as_root systemctl restart "$NODE_SVC" && ok "Reiniciado" ;;
             3) as_root systemctl stop "$NODE_SVC" && ok "Detenido" ;;
@@ -653,9 +715,10 @@ uninstall_services() {
 #  MAIN
 # ================================================================
 main_install() {
+    splash
     echo ""
     echo -e "${GREEN}${BOLD}  +================================================+${NC}"
-    echo -e "${GREEN}${BOLD}  |  CONCENTRADOS MONSERRATH v2.0 — Deploy Linux    |${NC}"
+    echo -e "${GREEN}${BOLD}  |  🌾 CONCENTRADOS MONSERRATH v2.0 — Deploy Linux |${NC}"
     echo -e "${GREEN}${BOLD}  +================================================+${NC}"
 
     [ -d "$SERVER_DIR" ] || die "No se encontro server/ en $PROJ — ejecuta este script desde la raiz del repo."
@@ -676,9 +739,9 @@ main_install() {
 
     local access_method
     access_method=$(ui_menu "Como quieres exponer el servidor a internet?" \
-        1 "Cloudflare Tunnel (recomendado: sin abrir puertos, HTTPS automatico)" \
-        2 "Dominio propio + nginx + Let's Encrypt (requiere abrir 80/443)" \
-        3 "Solo red local / VPN (no exponer a internet)")
+        1 "☁️  Cloudflare Tunnel (recomendado: sin abrir puertos, HTTPS auto)" \
+        2 "🔒 Dominio propio + nginx + Let's Encrypt (abre 80/443)" \
+        3 "🏠 Solo red local / VPN (no exponer a internet)")
 
     case "$access_method" in
         1) install_cloudflared; setup_cloudflared_tunnel "$port"; harden_firewall false ;;
