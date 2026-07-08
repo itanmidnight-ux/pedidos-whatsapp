@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_slidable/flutter_slidable.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:intl/intl.dart';
@@ -286,14 +287,14 @@ class _MessagesScreenState extends State<MessagesScreen> with SingleTickerProvid
     );
   }
 
-  // Mismas reglas del backend (routes/messages.js): solo digitos, celular
-  // colombiano de 10 (empieza en 3) se completa con el indicativo 57. Debe
-  // coincidir exacto o el chat nuevo consulta un phone distinto al que
-  // realmente queda guardado al enviar el primer mensaje.
-  String _normalizePhone(String raw) {
+  // Mismo criterio del backend (routes/messages.js): celular colombiano,
+  // siempre 10 digitos empezando en 3, se completa con el indicativo 57.
+  // Debe coincidir exacto o el chat nuevo consulta un phone distinto al
+  // que realmente queda guardado al enviar el primer mensaje.
+  String? _normalizeColombianMobile(String raw) {
     final digits = raw.replaceAll(RegExp(r'\D'), '');
-    if (digits.length == 10 && digits.startsWith('3')) return '57$digits';
-    return digits;
+    if (digits.length != 10 || !digits.startsWith('3')) return null;
+    return '57$digits';
   }
 
   Future<void> _showNewChatDialog() async {
@@ -311,11 +312,19 @@ class _MessagesScreenState extends State<MessagesScreen> with SingleTickerProvid
               controller: phoneCtrl,
               keyboardType: TextInputType.phone,
               autofocus: true,
+              maxLength: 10,
+              inputFormatters: [
+                FilteringTextInputFormatter.digitsOnly,
+                LengthLimitingTextInputFormatter(10),
+              ],
               decoration: InputDecoration(
-                labelText: 'Número de teléfono',
-                hintText: 'Ej: 3138207044',
+                labelText: 'Celular colombiano',
+                hintText: '3138207044',
+                helperText: 'Solo el número, sin +57',
                 errorText: error,
-                prefixIcon: const Icon(Icons.phone_outlined),
+                counterText: '',
+                prefixIcon: const SizedBox(width: 56, child: Center(
+                  child: Text('+57', style: TextStyle(fontWeight: FontWeight.w600)))),
               ),
             ),
             const SizedBox(height: 12),
@@ -332,9 +341,9 @@ class _MessagesScreenState extends State<MessagesScreen> with SingleTickerProvid
             TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancelar')),
             FilledButton(
               onPressed: () {
-                final normalized = _normalizePhone(phoneCtrl.text);
-                if (normalized.length < 7 || normalized.length > 15) {
-                  setDialogState(() => error = 'Número inválido (7 a 15 dígitos)');
+                final normalized = _normalizeColombianMobile(phoneCtrl.text);
+                if (normalized == null) {
+                  setDialogState(() => error = 'Celular colombiano: 10 dígitos, empieza en 3');
                   return;
                 }
                 Navigator.pop(dialogContext, normalized);
