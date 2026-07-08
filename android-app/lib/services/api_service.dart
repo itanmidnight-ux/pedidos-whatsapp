@@ -177,6 +177,9 @@ class ApiService {
       'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       'txt': 'text/plain',
       'zip': 'application/zip',
+      // Extension propia para no chocar con video/webm: el navegador graba
+      // audio en contenedor webm (MediaRecorder no soporta aac/m4a en Web).
+      'weba': 'audio/webm',
     };
     // Antes esto caía a 'image/jpeg' para cualquier extensión desconocida
     // (ej. documentos) -- application/octet-stream es el fallback genérico
@@ -406,14 +409,18 @@ class ApiService {
     if (res.statusCode != 200) throw Exception('Error archivando conversación');
   }
 
-  static Future<void> sendMediaMessage(String phone, String filePath, String mediaType) async {
+  // Recibe bytes en vez de una ruta de archivo -- MultipartFile.fromPath
+  // usa dart:io File por debajo, que no existe en Flutter Web (tira
+  // UnsupportedError antes de llegar siquiera a hacer la petición). Con
+  // bytes funciona igual en Web, Android y escritorio.
+  static Future<void> sendMediaMessage(String phone, Uint8List bytes, String filename, String mediaType) async {
     final uri     = Uri.parse('$_serverUrl/api/messages/send-media');
     final request = http.MultipartRequest('POST', uri);
     request.headers.addAll(_headersNoContent);
     request.fields['phone']      = phone;
     request.fields['media_type'] = mediaType;
-    request.files.add(await http.MultipartFile.fromPath('file', filePath,
-      contentType: _mimeOf(filePath)));
+    request.files.add(http.MultipartFile.fromBytes('file', bytes,
+      filename: filename, contentType: _mimeOf(filename)));
     final streamed = await _client.send(request).timeout(const Duration(seconds: 60));
     if (streamed.statusCode != 200) throw Exception('Error enviando media');
   }
@@ -486,11 +493,18 @@ class ApiService {
   static String profilePicUrl(String filename) =>
     '$_serverUrl/api/users/profile-pic/${Uri.encodeComponent(filename)}';
 
-  static Future<String> uploadLogo(String filePath) async {
+  static Future<String> uploadLogo(String? filePath, {Uint8List? bytes, String? filename}) async {
     final uri = Uri.parse('$_serverUrl/api/settings/logo');
     final request = http.MultipartRequest('POST', uri);
     request.headers.addAll(_headersNoContent);
-    request.files.add(await http.MultipartFile.fromPath('logo', filePath, contentType: _mimeOf(filePath)));
+    if (bytes != null) {
+      request.files.add(http.MultipartFile.fromBytes('logo', bytes,
+        filename: filename ?? 'logo.jpg', contentType: _mimeOf(filename ?? 'logo.jpg')));
+    } else if (filePath != null) {
+      request.files.add(await http.MultipartFile.fromPath('logo', filePath, contentType: _mimeOf(filePath)));
+    } else {
+      throw Exception('Se requiere filePath o bytes');
+    }
     final streamed = await _client.send(request).timeout(const Duration(seconds: 30));
     final body = await streamed.stream.bytesToString();
     if (streamed.statusCode != 200) throw Exception(_tryParseError(body) ?? 'Error subiendo logo');
@@ -507,12 +521,19 @@ class ApiService {
   }
 
   // ── Product images ───────────────────────────────────────
-  static Future<String> uploadProductImage(int productId, String filePath) async {
+  static Future<String> uploadProductImage(int productId, String? filePath, {Uint8List? bytes, String? filename}) async {
     final uri     = Uri.parse('$_serverUrl/api/products/$productId/images');
     final request = http.MultipartRequest('POST', uri);
     request.headers.addAll(_headersNoContent);
-    request.files.add(await http.MultipartFile.fromPath('image', filePath,
-      contentType: _mimeOf(filePath)));
+    if (bytes != null) {
+      request.files.add(http.MultipartFile.fromBytes('image', bytes,
+        filename: filename ?? 'image.jpg', contentType: _mimeOf(filename ?? 'image.jpg')));
+    } else if (filePath != null) {
+      request.files.add(await http.MultipartFile.fromPath('image', filePath,
+        contentType: _mimeOf(filePath)));
+    } else {
+      throw Exception('Se requiere filePath o bytes');
+    }
     final streamed = await _client.send(request).timeout(const Duration(seconds: 60));
     final body = await streamed.stream.bytesToString();
     if (streamed.statusCode != 201) {

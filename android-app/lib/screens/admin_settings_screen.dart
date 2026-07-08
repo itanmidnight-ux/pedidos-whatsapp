@@ -130,7 +130,8 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
     final file = await picker.pickImage(source: ImageSource.gallery, maxWidth: 512);
     if (file == null) return;
     try {
-      await ApiService.uploadLogo(file.path);
+      final bytes = await file.readAsBytes();
+      await ApiService.uploadLogo(null, bytes: bytes, filename: file.name);
       if (mounted) await context.read<ThemeProvider>().reload();
       if (mounted) _snack('Logo actualizado', success: true);
     } catch (e) {

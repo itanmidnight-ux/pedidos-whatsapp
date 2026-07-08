@@ -30,6 +30,16 @@ const GREETING_WORDS = [
   'como están', 'cómo están', 'ome', 'parce', 'llave', 'epa', 'epale',
 ];
 
+// Cierre/agradecimiento tras un pedido ya confirmado -- sin esto, "gracias"
+// no matcheaba ningun producto y el bot reabría el flujo preguntando de
+// nuevo "¿cuál deseas pedir?" como si fuera un intento de pedido fallido.
+const CLOSING_WORDS = [
+  'gracias', 'muchas gracias', 'mil gracias', 'grasias', 'muy amable',
+  'listo', 'listo gracias', 'vale', 'perfecto', 'genial', 'excelente',
+  'de acuerdo', 'entendido', 'todo bien', 'esta bien', 'está bien',
+  'ok gracias', 'oka gracias', 'bien gracias', 'de una', 'eso es',
+];
+
 const COMPLAINT_WORDS = [
   'no me han pagado', 'no han llegado', 'no llegó', 'no llego', 'nunca llegó',
   'problema', 'reclamo', 'queja', 'me cobraron', 'me engañaron', 'mal servicio',
@@ -160,6 +170,11 @@ function extractAddress(text) {
 function isGreeting(text) {
   const norm = normalize(text);
   return GREETING_WORDS.some(g => norm.startsWith(normalize(g)) || norm === normalize(g));
+}
+
+function isClosing(text) {
+  const norm = normalize(text);
+  return CLOSING_WORDS.some(w => norm === normalize(w) || norm.startsWith(normalize(w) + ' ') || norm.startsWith(normalize(w) + ','));
 }
 
 function hasOrderContent(text) {
@@ -558,6 +573,6 @@ async function getIntent(text) {
 
 module.exports = {
   parseOrderMessage, parseMultiItems, fuzzyProductMatch, extractAddress,
-  isGreeting, isComplaint, isConfirmation, isDenial,
+  isGreeting, isClosing, isComplaint, isConfirmation, isDenial,
   hasOrderContent, findAmbiguousCategory, getIntent,
 };

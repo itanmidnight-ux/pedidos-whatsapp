@@ -3,7 +3,7 @@ const router  = express.Router();
 const { apiKeyAuth } = require('../middleware/auth');
 const {
   parseOrderMessage, parseMultiItems, fuzzyProductMatch, extractAddress,
-  isGreeting, isComplaint, isConfirmation, isDenial,
+  isGreeting, isClosing, isComplaint, isConfirmation, isDenial,
   hasOrderContent, findAmbiguousCategory,
 } = require('../services/llmParser');
 const { getDB } = require('../db/database');
@@ -143,6 +143,14 @@ router.post('/message', apiKeyAuth, async (req, res) => {
     const menuLines = products.map((p, i) => `  ${i+1}. ${p.name} — $${Number(p.price).toLocaleString('es-CO')}`).join('\n');
     const reply = `¡Hola! 👋 Bienvenido a *Concentrados Monserrath*.\n\n📦 *Productos disponibles:*\n${menuLines || '  (sin productos)'}\n\nEscríbenos tu pedido con la dirección de entrega.`;
     queueBotReply(db, phone, reply);
+    return res.json({ success: false });
+  }
+
+  // ── Cierre/agradecimiento sin pedido pendiente -- responder amable y
+  // NO reabrir el flujo de pedido (antes esto caia al fallback de "no
+  // identifiqué el producto" y volvia a preguntar que querian pedir) ────
+  if (isClosing(message) && !pending && !hasOrderContent(message)) {
+    queueBotReply(db, phone, '¡Con gusto! 😊 Cualquier cosa que necesites, aquí estamos.');
     return res.json({ success: false });
   }
 

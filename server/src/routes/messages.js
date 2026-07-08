@@ -156,6 +156,7 @@ router.post('/send-media', staffAuth, upload.single('file'), (req, res) => {
   const mimeExt = {
     'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif',
     'audio/mp4': 'm4a', 'audio/aac': 'aac', 'audio/ogg': 'ogg', 'audio/mpeg': 'mp3',
+    'audio/webm': 'weba', // audio grabado desde navegador (Chrome/Firefox no soportan aac/m4a)
     'video/mp4': 'mp4', 'video/quicktime': 'mov', 'video/webm': 'webm',
     'application/pdf': 'pdf',
   };

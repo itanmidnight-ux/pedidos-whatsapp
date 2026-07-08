@@ -194,9 +194,10 @@ async function pollOutbound() {
                 break;
               case 'audio':
               case 'voice': {
-                const mimetype = ext === 'ogg' ? 'audio/ogg; codecs=opus'
-                               : ext === 'mp3' ? 'audio/mpeg'
-                               : ext === 'aac' ? 'audio/aac'
+                const mimetype = ext === 'ogg'  ? 'audio/ogg; codecs=opus'
+                               : ext === 'mp3'  ? 'audio/mpeg'
+                               : ext === 'aac'  ? 'audio/aac'
+                               : ext === 'weba' ? 'audio/webm; codecs=opus'
                                : 'audio/mp4';
                 await sock.sendMessage(jid, { audio: buffer, mimetype, ptt: true });
                 break;
@@ -465,7 +466,12 @@ async function _connect() {
 
   sock.ev.on('creds.update', saveCreds);
   sock.ev.on('connection.update', handleConnectionUpdate);
-  sock.ev.on('messages.upsert', async ({ messages }) => {
+  sock.ev.on('messages.upsert', async ({ messages, type }) => {
+    // 'notify' = mensaje nuevo de verdad. 'append'/otros = resync de
+    // historial que WhatsApp reenvia en cada reconexion -- sin este filtro
+    // se reprocesan mensajes viejos como si fueran nuevos y el bot vuelve
+    // a contestar (a veces varias veces) cosas que ya habia respondido.
+    if (type !== 'notify') return;
     for (const msg of messages) {
       try { await handleInbound(msg); }
       catch (e) { logger.error({ err: e.message }, '[bot] handler err'); }

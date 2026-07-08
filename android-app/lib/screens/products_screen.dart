@@ -108,7 +108,9 @@ class _ProductsScreenState extends State<ProductsScreen> {
                     final product = await context.read<AppProvider>().createProduct(
                       Product(name: capturedName, aliases: [], price: price));
                     if (capturedImage != null && product.id != null) {
-                      await ApiService.uploadProductImage(product.id!, capturedImage.path);
+                      final bytes = await capturedImage.readAsBytes();
+                      await ApiService.uploadProductImage(product.id!, null,
+                        bytes: bytes, filename: capturedImage.name);
                       await context.read<AppProvider>().refreshProducts();
                     }
                   } catch (e) {
@@ -307,7 +309,9 @@ class _ProductsScreenState extends State<ProductsScreen> {
                     final picked = await picker.pickImage(source: ImageSource.gallery, imageQuality: 80);
                     if (picked == null) return;
                     try {
-                      final filename = await ApiService.uploadProductImage(p.id!, picked.path);
+                      final bytes = await picked.readAsBytes();
+                      final filename = await ApiService.uploadProductImage(p.id!, null,
+                        bytes: bytes, filename: picked.name);
                       setModal(() => images.add(filename));
                       await context.read<AppProvider>().refreshProducts();
                     } catch (_) {}

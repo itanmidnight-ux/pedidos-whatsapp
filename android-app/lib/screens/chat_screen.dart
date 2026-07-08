@@ -1,9 +1,11 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
@@ -144,7 +146,8 @@ class _ChatScreenState extends State<ChatScreen> {
       );
       if (file == null) return;
       setState(() => _sending = true);
-      await ApiService.sendMediaMessage(widget.phone, file.path, 'image');
+      final bytes = await file.readAsBytes();
+      await ApiService.sendMediaMessage(widget.phone, bytes, file.name, 'image');
       await _load();
     } catch (_) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(
@@ -164,7 +167,8 @@ class _ChatScreenState extends State<ChatScreen> {
       );
       if (file == null) return;
       setState(() => _sending = true);
-      await ApiService.sendMediaMessage(widget.phone, file.path, 'video');
+      final bytes = await file.readAsBytes();
+      await ApiService.sendMediaMessage(widget.phone, bytes, file.name, 'video');
       await _load();
     } catch (_) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(
@@ -177,11 +181,13 @@ class _ChatScreenState extends State<ChatScreen> {
   // ── Send document ────────────────────────────────────────
   Future<void> _pickAndSendDocument() async {
     try {
-      final result = await FilePicker.platform.pickFiles();
-      final path = result?.files.single.path;
-      if (path == null) return;
+      // withData: true fuerza a leer los bytes en memoria -- en Web no hay
+      // ruta de archivo real (path siempre null), solo bytes.
+      final result = await FilePicker.platform.pickFiles(withData: true);
+      final picked = result?.files.single;
+      if (picked?.bytes == null) return;
       setState(() => _sending = true);
-      await ApiService.sendMediaMessage(widget.phone, path, 'document');
+      await ApiService.sendMediaMessage(widget.phone, picked!.bytes!, picked.name, 'document');
       await _load();
     } catch (_) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(
@@ -194,12 +200,19 @@ class _ChatScreenState extends State<ChatScreen> {
   // ── Audio recording ──────────────────────────────────────
   Future<void> _startRecording() async {
     if (!await _recorder.hasPermission()) return;
-    final dir  = await getTemporaryDirectory();
-    final path = '${dir.path}/rec_${DateTime.now().millisecondsSinceEpoch}.m4a';
-    await _recorder.start(
-      const RecordConfig(encoder: AudioEncoder.aacLc, bitRate: 64000, sampleRate: 44100),
-      path: path,
-    );
+    // El MediaRecorder del navegador no soporta aac/m4a (Chrome/Firefox
+    // solo graban en contenedor webm/opus) -- con aacLc en Web el propio
+    // record_web tira "not supported" antes de arrancar. En nativo (Android/
+    // escritorio) aacLc si funciona y da un .m4a real.
+    final config = kIsWeb
+      ? const RecordConfig(encoder: AudioEncoder.opus, bitRate: 64000, sampleRate: 44100)
+      : const RecordConfig(encoder: AudioEncoder.aacLc, bitRate: 64000, sampleRate: 44100);
+    String path = 'audio';
+    if (!kIsWeb) {
+      final dir = await getTemporaryDirectory();
+      path = '${dir.path}/rec_${DateTime.now().millisecondsSinceEpoch}.m4a';
+    }
+    await _recorder.start(config, path: path);
     setState(() { _recording = true; _recSeconds = 0; });
     _recTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) setState(() => _recSeconds++);
@@ -208,14 +221,25 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _stopAndSendRecording() async {
     _recTimer?.cancel();
-    final filePath = await _recorder.stop();
+    // En Web esto es una blob: URL (no una ruta de dart:io) -- en nativo es
+    // la ruta real del archivo grabado.
+    final result = await _recorder.stop();
     setState(() { _recording = false; _recSeconds = 0; });
-    if (filePath == null) return;
+    if (result == null) return;
     setState(() => _sending = true);
     try {
-      await ApiService.sendMediaMessage(widget.phone, filePath, 'audio');
+      Uint8List bytes;
+      String filename;
+      if (kIsWeb) {
+        bytes    = (await http.get(Uri.parse(result))).bodyBytes;
+        filename = 'audio_${DateTime.now().millisecondsSinceEpoch}.weba';
+      } else {
+        bytes    = await File(result).readAsBytes();
+        filename = result.split('/').last;
+      }
+      await ApiService.sendMediaMessage(widget.phone, bytes, filename, 'audio');
       await _load();
-      try { File(filePath).deleteSync(); } catch (_) {}
+      if (!kIsWeb) { try { File(result).deleteSync(); } catch (_) {} }
     } catch (_) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Error enviando audio')));
