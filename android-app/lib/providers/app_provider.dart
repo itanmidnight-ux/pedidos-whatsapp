@@ -112,7 +112,12 @@ class AppProvider extends ChangeNotifier {
         await LocalDB.saveOrders(fresh);
         orders = fresh;
       } else { orders = await LocalDB.getOrders(); }
-    } catch (_) { orders = await LocalDB.getOrders(); }
+    } catch (_) {
+      // Si el fallback offline también falla (ej. LocalDB en Flutter Web,
+      // que no soporta sqflite), no debe dejar `loading` trabado en true
+      // para siempre -- por eso el finally de abajo, sin importar qué pase.
+      try { orders = await LocalDB.getOrders(); } catch (_) {}
+    }
     loading = false; notifyListeners();
   }
 

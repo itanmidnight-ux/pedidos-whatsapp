@@ -52,7 +52,13 @@ class PedidosApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: themeProvider.lightTheme,
       darkTheme: themeProvider.darkTheme,
-      themeMode: ThemeMode.system,
+      // ThemeMode.system se ve roto en cualquier SO/navegador con preferencia
+      // oscura (ej. Kali por defecto): darkTheme nunca tuvo el mismo trabajo
+      // de diseño que lightTheme (ver app_theme.dart) y termina en un
+      // Material 3 dark sin ajustar -- superficie casi negra, look "app
+      // rota". Fijo a claro hasta que exista un modo oscuro diseñado de
+      // verdad, no el default sin tocar.
+      themeMode: ThemeMode.light,
       // Breakpoints tipo Material (móvil / tablet / desktop-TV). Las pantallas
       // con lista+detalle (chat, pedidos) usan NavigationRail propio a partir
       // de kTabletBreakpoint -- aquí solo evitamos que el contenido se estire

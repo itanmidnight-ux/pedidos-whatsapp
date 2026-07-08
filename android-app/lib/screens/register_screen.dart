@@ -140,7 +140,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
       body: SafeArea(
         child: SingleChildScrollView(
           keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-          child: Column(children: [
+          // Mismo límite que login_screen: sin esto, Column(stretch) infla el
+          // formulario a todo el ancho de la ventana en tablet/desktop.
+          child: Align(
+            alignment: Alignment.topCenter,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 440),
+              child: Column(children: [
             // Header strip
             Container(
               width: double.infinity,
@@ -312,6 +318,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
               ),
             ),
           ]),
+            ),
+          ),
         ),
       ),
     );

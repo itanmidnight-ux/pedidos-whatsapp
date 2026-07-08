@@ -233,7 +233,17 @@ class _LoginScreenState extends State<LoginScreen>
         SafeArea(
           child: SingleChildScrollView(
             keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-            child: FadeTransition(
+            child: Align(
+              alignment: Alignment.topCenter,
+              // El formulario se diseñó para ancho de teléfono -- sin este
+              // límite, Column(crossAxisAlignment.stretch) lo estira a todo
+              // el ancho disponible (900-1280px en tablet/desktop), dejando
+              // los campos absurdamente anchos. Una tarjeta de login angosta
+              // centrada sobre el fondo de marca es el patrón esperado en
+              // cualquier app web, no solo en teléfono.
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 440),
+                child: FadeTransition(
               opacity: _fadeAnim,
               child: SlideTransition(
                 position: _slideAnim,
@@ -434,6 +444,8 @@ class _LoginScreenState extends State<LoginScreen>
                     style: TextStyle(color: Colors.white.withValues(alpha: 0.25), fontSize: 10)),
                   const SizedBox(height: 10),
                 ]),
+              ),
+                ),
               ),
             ),
           ),

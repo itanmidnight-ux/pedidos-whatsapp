@@ -1,14 +1,23 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart' as p;
 import '../models/order.dart';
 import '../models/product.dart';
 import '../models/estado.dart';
 
+/// Caché offline para uso en teléfono (sqflite). sqflite no tiene
+/// implementación en Flutter Web -- sin el guard `kIsWeb`, cualquier llamada
+/// aquí lanza una excepción no manejada la primera vez que algo intenta
+/// cachear (por ejemplo dentro del catch de AppProvider.refreshOrders, que
+/// usa esto como fallback offline), dejando `loading` trabado en true para
+/// siempre: la app entera se queda con el spinner de carga infinito en el
+/// navegador. En web esta caché simplemente no aplica (no hay modo offline).
 class LocalDB {
   static Database? _db;
 
   static Future<Database> get _database async {
+    if (kIsWeb) throw UnsupportedError('LocalDB no está disponible en Flutter Web');
     _db ??= await _open();
     return _db!;
   }
@@ -72,6 +81,7 @@ class LocalDB {
 
   // ── Products ──────────────────────────────────────────────
   static Future<void> cacheProducts(List<Product> products) async {
+    if (kIsWeb) return;
     final db = await _database;
     final batch = db.batch();
     batch.delete('cached_products');
@@ -93,6 +103,7 @@ class LocalDB {
   }
 
   static Future<List<Product>> getCachedProducts() async {
+    if (kIsWeb) return [];
     final db = await _database;
     final rows = await db.query('cached_products', orderBy: 'favorite DESC, name ASC');
     return rows.map((r) => Product(
@@ -109,6 +120,7 @@ class LocalDB {
 
   // ── Estados ───────────────────────────────────────────────
   static Future<void> cacheEstados(List<Estado> estados) async {
+    if (kIsWeb) return;
     final db = await _database;
     final batch = db.batch();
     batch.delete('cached_estados');
@@ -130,6 +142,7 @@ class LocalDB {
   }
 
   static Future<List<Estado>> getCachedEstados() async {
+    if (kIsWeb) return [];
     final db = await _database;
     final rows = await db.query('cached_estados', orderBy: 'created_at DESC');
     final now = DateTime.now();
@@ -157,24 +170,28 @@ class LocalDB {
 
   // ── App state (notification tracking) ────────────────────
   static Future<int> getLastEstadoId() async {
+    if (kIsWeb) return 0;
     final db  = await _database;
     final row = await db.query('app_state', where: 'key=?', whereArgs: ['last_estado_id']);
     return int.tryParse(row.firstOrNull?['value'] as String? ?? '0') ?? 0;
   }
 
   static Future<void> setLastEstadoId(int id) async {
+    if (kIsWeb) return;
     final db = await _database;
     await db.insert('app_state', {'key': 'last_estado_id', 'value': id.toString()},
       conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   static Future<int> getLastProductId() async {
+    if (kIsWeb) return 0;
     final db  = await _database;
     final row = await db.query('app_state', where: 'key=?', whereArgs: ['last_product_id']);
     return int.tryParse(row.firstOrNull?['value'] as String? ?? '0') ?? 0;
   }
 
   static Future<void> setLastProductId(int id) async {
+    if (kIsWeb) return;
     final db = await _database;
     await db.insert('app_state', {'key': 'last_product_id', 'value': id.toString()},
       conflictAlgorithm: ConflictAlgorithm.replace);
@@ -182,6 +199,7 @@ class LocalDB {
 
   // ── Orders cache ──────────────────────────────────────────
   static Future<void> saveOrders(List<Order> orders) async {
+    if (kIsWeb) return;
     final db  = await _database;
     final now = DateTime.now().millisecondsSinceEpoch;
     final batch = db.batch();
@@ -197,6 +215,7 @@ class LocalDB {
   }
 
   static Future<List<Order>> getOrders() async {
+    if (kIsWeb) return [];
     final db   = await _database;
     final rows = await db.query('cached_orders', orderBy: 'id DESC');
     const active = {'pending', 'claimed', 'en_camino'};
@@ -217,6 +236,7 @@ class LocalDB {
   }
 
   static Future<List<Map<String, dynamic>>> getPendingSync() async {
+    if (kIsWeb) return [];
     final db   = await _database;
     final rows = await db.query('pending_sync', orderBy: 'id ASC');
     return rows.map((r) => {
@@ -227,6 +247,7 @@ class LocalDB {
   }
 
   static Future<void> clearPendingSync() async {
+    if (kIsWeb) return;
     final db = await _database;
     await db.delete('pending_sync');
   }
@@ -244,31 +265,37 @@ class LocalDB {
   }
 
   static Future<void> markDelivered(int id) async {
+    if (kIsWeb) return;
     await _updateOrder(id, (o) => o.status = 'entregado');
     await _addSync('deliver', id);
   }
 
   static Future<void> updateComment(int id, String comment) async {
+    if (kIsWeb) return;
     await _updateOrder(id, (o) => o.comment = comment);
     await _addSync('comment', id, data: {'comment': comment});
   }
 
   static Future<void> claimOrder(int id) async {
+    if (kIsWeb) return;
     await _updateOrder(id, (o) => o.status = 'claimed');
     await _addSync('claim', id);
   }
 
   static Future<void> unclaimOrder(int id) async {
+    if (kIsWeb) return;
     await _updateOrder(id, (o) => o.status = 'pending');
     await _addSync('unclaim', id);
   }
 
   static Future<void> markEnCamino(int id) async {
+    if (kIsWeb) return;
     await _updateOrder(id, (o) => o.status = 'en_camino');
     await _addSync('en_camino', id);
   }
 
   static Future<void> cancelOrder(int id, String reason) async {
+    if (kIsWeb) return;
     await _updateOrder(id, (o) => o.status = 'cancelled');
     await _addSync('cancel', id, data: {'reason': reason});
   }
