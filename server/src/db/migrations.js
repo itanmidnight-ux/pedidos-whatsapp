@@ -153,6 +153,13 @@ const MIGRATIONS = [
     UPDATE orders
     SET delivered_at = strftime('%Y-%m-%dT%H:%M:%fZ', datetime(delivered_at, '+5 hours'))
     WHERE delivered_at IS NOT NULL AND delivered_at NOT LIKE '%Z'` },
+  { name: '043_login_events', sql: `
+    CREATE TABLE login_events (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id    INTEGER NOT NULL REFERENCES users(id),
+      logged_in_at TEXT NOT NULL
+    )` },
+  { name: '044_login_events_index', sql: 'CREATE INDEX idx_login_events_user ON login_events(user_id, logged_in_at)' },
 ];
 
 function runMigrations(db) {

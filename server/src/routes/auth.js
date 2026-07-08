@@ -103,6 +103,11 @@ router.post('/token', (req, res) => {
       });
     }
     clearAttempts(lockKey);
+    // Hora de entrada -- solo staff (admin/worker); clientes no marcan turno
+    if (['admin', 'worker'].includes(user.role)) {
+      db.prepare(`INSERT INTO login_events (user_id, logged_in_at) VALUES (?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))`)
+        .run(user.id);
+    }
     res.json(signToken(user));
   });
 });

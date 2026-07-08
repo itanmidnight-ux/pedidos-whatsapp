@@ -1315,7 +1315,7 @@ class SalesModule:
         sales_today = query("""
             SELECT COALESCE(SUM(oi.product_price*oi.quantity),0) FROM orders o
             JOIN order_items oi ON oi.order_id=o.id
-            WHERE o.status IN ('entregado','delivered') AND date(o.delivered_at)=date('now')
+            WHERE o.status IN ('entregado','delivered') AND date(o.delivered_at,'localtime')=date('now','localtime')
         """)
         self.card_today.set_value(fmt_money(sales_today[0][0] if sales_today else 0))
 
@@ -1345,9 +1345,9 @@ class SalesModule:
 
         # Gráfico de ingresos 7 días
         rows = query("""
-            SELECT date(o.delivered_at) d, SUM(oi.product_price*oi.quantity) t
+            SELECT date(o.delivered_at,'localtime') d, SUM(oi.product_price*oi.quantity) t
             FROM orders o JOIN order_items oi ON oi.order_id=o.id
-            WHERE o.status IN ('entregado','delivered') AND o.delivered_at >= date('now','-6 days')
+            WHERE o.status IN ('entregado','delivered') AND date(o.delivered_at,'localtime') >= date('now','-6 days','localtime')
             GROUP BY d ORDER BY d
         """)
         by_date = {r[0]: r[1] for r in rows}
@@ -1393,9 +1393,9 @@ class SalesModule:
 
         # Ventas por día — últimos 14 días
         day_rows = query("""
-            SELECT date(o.delivered_at) d, COUNT(DISTINCT o.id) n, SUM(oi.product_price*oi.quantity) t
+            SELECT date(o.delivered_at,'localtime') d, COUNT(DISTINCT o.id) n, SUM(oi.product_price*oi.quantity) t
             FROM orders o JOIN order_items oi ON oi.order_id=o.id
-            WHERE o.status IN ('entregado','delivered') AND o.delivered_at >= date('now','-13 days')
+            WHERE o.status IN ('entregado','delivered') AND date(o.delivered_at,'localtime') >= date('now','-13 days','localtime')
             GROUP BY d ORDER BY d DESC
         """)
         by_day = {r[0]: (r[1], r[2]) for r in day_rows}
@@ -1428,7 +1428,7 @@ class SalesModule:
             FROM orders o
             JOIN order_items oi ON oi.order_id = o.id
             LEFT JOIN customers c ON c.id = o.customer_id
-            WHERE o.status IN ('entregado','delivered') AND date(o.delivered_at) = ?
+            WHERE o.status IN ('entregado','delivered') AND date(o.delivered_at,'localtime') = ?
             ORDER BY o.delivered_at
         """, (iso_date,))
 
@@ -1518,7 +1518,7 @@ class OrdersModule:
               COUNT(*) FILTER (WHERE status='claimed') AS claimed,
               COUNT(*) FILTER (WHERE status='en_camino') AS en_camino,
               COUNT(*) FILTER (WHERE status IN ('entregado','delivered')
-                               AND date(delivered_at)=date('now')) AS today
+                               AND date(delivered_at,'localtime')=date('now','localtime')) AS today
             FROM orders
         """)
         if stats:
@@ -2030,7 +2030,7 @@ class EmployeesModule:
         table_title.get_style_context().add_class('section-title')
         self.box.pack_start(table_title, False, False, 0)
 
-        self.store = Gtk.ListStore(int, str, str, int, str, str)
+        self.store = Gtk.ListStore(int, str, str, int, str, str, int)  # ultima col: user_id (oculto)
         tree = Gtk.TreeView(model=self.store)
         for i, (colname, w) in enumerate([
             ('#', 40), ('Usuario', 140), ('Nombre', 200),
@@ -2043,6 +2043,10 @@ class EmployeesModule:
             if i in (0, 3):
                 renderer.set_property('xalign', 1.0)
             tree.append_column(col)
+        tree.connect('row-activated', self._on_employee_activated)
+        hint = Gtk.Label(label='Doble clic en un empleado para ver su historial de horas de entrada', xalign=0)
+        hint.get_style_context().add_class('label-dim')
+        self.box.pack_start(hint, False, False, 0)
         scroll = Gtk.ScrolledWindow()
         scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
         scroll.add(tree)
@@ -2123,18 +2127,18 @@ class EmployeesModule:
                 eff_str = f'{eff:.1f} ped/h'
             else:
                 eff_str = '—'
-            self.store.append([i, username, name, count, avg_str, eff_str])
+            self.store.append([i, username, name, count, avg_str, eff_str, uid])
             chart_data.append((name.split()[0] if name else username, count))
 
         self.chart_employees.set_data(chart_data)
 
         # Tiempos por día (7 días)
         time_rows = query("""
-            SELECT date(o.delivered_at) d,
+            SELECT date(o.delivered_at,'localtime') d,
                    ROUND(AVG((julianday(o.delivered_at) - julianday(o.requested_at)) * 24 * 60)) AS mins
             FROM orders o
             WHERE o.status IN ('entregado','delivered')
-              AND o.delivered_at >= date('now','-6 days')
+              AND date(o.delivered_at,'localtime') >= date('now','-6 days','localtime')
             GROUP BY d ORDER BY d
         """)
         by_date = {r[0]: r[1] for r in time_rows}
@@ -2146,10 +2150,10 @@ class EmployeesModule:
 
         # Entregas por día (7 días)
         deliv_rows = query("""
-            SELECT date(delivered_at) d, COUNT(*) c
+            SELECT date(delivered_at,'localtime') d, COUNT(*) c
             FROM orders
             WHERE status IN ('entregado','delivered')
-              AND delivered_at >= date('now','-6 days')
+              AND date(delivered_at,'localtime') >= date('now','-6 days','localtime')
             GROUP BY d ORDER BY d
         """)
         by_date_d = {r[0]: r[1] for r in deliv_rows}
@@ -2158,6 +2162,49 @@ class EmployeesModule:
             d = (datetime.date.today() - datetime.timedelta(days=i))
             data_d.append((d.strftime('%d/%m'), by_date_d.get(d.isoformat(), 0)))
         self.chart_deliv.set_data(data_d)
+
+    def _on_employee_activated(self, tree, path, column):
+        row = tree.get_model()[path]
+        self._show_employee_detail(row[6], row[2] or row[1])
+
+    def _show_employee_detail(self, user_id, name):
+        """Historial de horas de entrada del empleado -- se registra cada
+        vez que inicia sesion (auth.js POST /token)."""
+        dialog = Gtk.Dialog(title=f'Horario de entrada — {name}', transient_for=self.parent,
+                            modal=True, destroy_with_parent=True)
+        dialog.add_buttons('Cerrar', Gtk.ResponseType.CLOSE)
+        dialog.set_default_size(420, 480)
+        box = dialog.get_content_area()
+        box.set_spacing(10)
+        box.set_border_width(14)
+
+        logins = query("""
+            SELECT logged_in_at FROM login_events
+            WHERE user_id = ? ORDER BY logged_in_at DESC LIMIT 60
+        """, (user_id,))
+
+        store = Gtk.ListStore(str, str)
+        tree = Gtk.TreeView(model=store)
+        tree.get_style_context().add_class('mono')
+        for i, colname in enumerate(['Fecha', 'Hora de entrada']):
+            renderer = Gtk.CellRendererText()
+            col = Gtk.TreeViewColumn(colname, renderer, text=i)
+            col.set_resizable(True)
+            tree.append_column(col)
+        for (iso,) in logins:
+            dt = datetime.datetime.fromisoformat(iso.replace('Z', '+00:00')).astimezone()
+            store.append([dt.strftime('%d/%m/%Y'), dt.strftime('%H:%M:%S')])
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        scroll.add(tree)
+        box.pack_start(scroll, True, True, 0)
+
+        if not logins:
+            box.pack_start(Gtk.Label(label='Sin registros de entrada todavía.'), False, False, 0)
+
+        box.show_all()
+        dialog.run()
+        dialog.destroy()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
