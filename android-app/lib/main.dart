@@ -4,7 +4,6 @@ import 'package:provider/provider.dart';
 import 'package:onesignal_flutter/onesignal_flutter.dart';
 import 'providers/app_provider.dart';
 import 'providers/theme_provider.dart';
-import 'theme/breakpoints.dart';
 import 'screens/login_screen.dart';
 import 'screens/dashboard_screen.dart';
 import 'screens/client_home_screen.dart';
@@ -59,12 +58,11 @@ class PedidosApp extends StatelessWidget {
       // rota". Fijo a claro hasta que exista un modo oscuro diseñado de
       // verdad, no el default sin tocar.
       themeMode: ThemeMode.light,
-      // Breakpoints tipo Material (móvil / tablet / desktop-TV). Las pantallas
-      // con lista+detalle (chat, pedidos) usan NavigationRail propio a partir
-      // de kTabletBreakpoint -- aquí solo evitamos que el contenido se estire
-      // sin límite en pantallas muy anchas (monitor, TV) y le damos más aire
-      // que en móvil, en vez del recuadro fijo de 560px de antes (que dejaba
-      // toda la pantalla ancha como una tarjeta angosta flotando en el vacío).
+      // Sin caja de ancho fijo global: cada pantalla ancha (dashboard,
+      // chat, login) ya resuelve su propio límite de contenido donde hace
+      // falta (NavigationRail, ConstrainedBox de formulario, etc). Forzar
+      // aquí un SizedBox centrado dejaba franjas vacías a los costados en
+      // monitores de PC en vez de usar la pantalla completa.
       builder: (context, child) {
         if (child == null) return const SizedBox.shrink();
         final mq = MediaQuery.of(context);
@@ -74,27 +72,7 @@ class PedidosApp extends StatelessWidget {
         );
         return MediaQuery(
           data: mq.copyWith(textScaler: clampedTextScaler),
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final w = constraints.maxWidth;
-              if (w <= kTabletBreakpoint) return child; // móvil: ancho completo
-              final maxContentWidth = w <= kDesktopBreakpoint ? 900.0 : 1280.0;
-              return ColoredBox(
-                color: const Color(0xFFEDEAE2),
-                child: Center(
-                  child: SizedBox(
-                    width: maxContentWidth,
-                    height: constraints.maxHeight,
-                    child: Material(
-                      elevation: 6,
-                      color: Theme.of(context).scaffoldBackgroundColor,
-                      child: child,
-                    ),
-                  ),
-                ),
-              );
-            },
-          ),
+          child: child,
         );
       },
       home: Consumer<AppProvider>(
