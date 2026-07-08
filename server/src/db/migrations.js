@@ -130,6 +130,29 @@ const MIGRATIONS = [
   { name: '039_bot_config_seed', sql: `
     INSERT OR IGNORE INTO bot_config (id, phone_encrypted, status, paused) VALUES (1, NULL, 'disconnected', 0)` },
   { name: '040_customers_wa_jid', sql: 'ALTER TABLE customers ADD COLUMN wa_jid TEXT' },
+  // Antes createOrder() solo insertaba en order_items para pedidos
+  // multi-producto -- los pedidos de un solo producto (la mayoria) nunca
+  // tuvieron su item, asi que /analytics/products y /analytics/summary
+  // (que solo leen order_items) los ignoraban por completo. Se rellena con
+  // cantidad 1 -- es lo unico que se puede reconstruir de pedidos viejos
+  // donde la cantidad real dicha en el mensaje jamas se guardo en ningun lado.
+  { name: '041_backfill_order_items', sql: `
+    INSERT INTO order_items (order_id, product_id, product_name, product_price, quantity)
+    SELECT o.id, o.product_id, o.product_name, o.product_price, 1
+    FROM orders o
+    WHERE o.product_id IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM order_items oi WHERE oi.order_id = o.id)` },
+  // delivered_at se guardaba con datetime('now','localtime') -- hora
+  // Colombia (UTC-5) sin marca de zona -- mientras requested_at siempre fue
+  // UTC real (Z). julianday() restaba ambas como si fueran UTC, dando
+  // tiempos de entrega negativos (~-300 min, exactamente el offset). Se
+  // corrigen los valores ya guardados sumando el offset fijo de Colombia
+  // (no tiene horario de verano) para volverlos UTC real. El filtro
+  // NOT LIKE '%Z' hace la migracion segura de re-ejecutar sin duplicar el ajuste.
+  { name: '042_fix_delivered_at_timezone', sql: `
+    UPDATE orders
+    SET delivered_at = strftime('%Y-%m-%dT%H:%M:%fZ', datetime(delivered_at, '+5 hours'))
+    WHERE delivered_at IS NOT NULL AND delivered_at NOT LIKE '%Z'` },
 ];
 
 function runMigrations(db) {

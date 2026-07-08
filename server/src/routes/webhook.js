@@ -344,10 +344,15 @@ function createOrder(db, customer, data, message, timestamp, res) {
 
   const orderId = ins.lastInsertRowid;
 
-  // Insertar items si vienen del multi-parser
+  // Insertar items -- del multi-parser si vienen, o el item unico del pedido
+  // simple (antes NO se guardaba nunca aca, asi que /analytics/products y
+  // /analytics/summary -- que solo leen order_items -- ignoraban totalmente
+  // los pedidos de un solo producto, que son la mayoria).
+  const itemIns = db.prepare('INSERT INTO order_items (order_id,product_id,product_name,product_price,quantity) VALUES (?,?,?,?,?)');
   if (Array.isArray(data.items) && data.items.length) {
-    const itemIns = db.prepare('INSERT INTO order_items (order_id,product_id,product_name,product_price,quantity) VALUES (?,?,?,?,?)');
     for (const it of data.items) itemIns.run(orderId, it.product_id, it.product_name, it.product_price, it.quantity || 1);
+  } else if (data.product_id) {
+    itemIns.run(orderId, data.product_id, sanitize(data.product_name, 200), prod?.price ?? null, data.quantity || 1);
   }
 
   const order = db.prepare('SELECT * FROM orders WHERE id=?').get(orderId);

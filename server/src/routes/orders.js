@@ -81,13 +81,14 @@ router.get('/stats', staffAuth, (req, res) => {
     ORDER BY total DESC
   `).all();
 
-  // Delivered per day — last 7 days
+  // Delivered per day — last 7 days (dia calendario LOCAL, no UTC: un pedido
+  // entregado a las 11pm en Colombia no debe contarse como del dia siguiente)
   const dailyRows = db.prepare(`
-    SELECT date(delivered_at) AS day, COUNT(*) AS count
+    SELECT date(delivered_at, 'localtime') AS day, COUNT(*) AS count
     FROM orders
     WHERE status IN ('entregado','delivered')
-      AND date(delivered_at) >= date('now','-6 days')
-    GROUP BY date(delivered_at)
+      AND date(delivered_at, 'localtime') >= date('now','-6 days','localtime')
+    GROUP BY date(delivered_at, 'localtime')
     ORDER BY day ASC
   `).all();
 
@@ -97,7 +98,7 @@ router.get('/stats', staffAuth, (req, res) => {
       COUNT(*) FILTER (WHERE status='pending') AS pending,
       COUNT(*) FILTER (WHERE status='claimed') AS claimed,
       COUNT(*) FILTER (WHERE status='en_camino') AS en_camino,
-      COUNT(*) FILTER (WHERE status IN ('entregado','delivered') AND date(delivered_at)=date('now')) AS delivered_today
+      COUNT(*) FILTER (WHERE status IN ('entregado','delivered') AND date(delivered_at,'localtime')=date('now','localtime')) AS delivered_today
     FROM orders
   `).get();
 
@@ -172,7 +173,10 @@ router.put('/:id/deliver', staffAuth, (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (!id || id <= 0) return res.status(400).json({ error: 'ID inválido' });
   const db = getDB();
-  db.prepare(`UPDATE orders SET status='entregado', delivered_at=datetime('now','localtime') WHERE id=?`).run(id);
+  // UTC, igual que requested_at (new Date().toISOString() en JS) -- antes
+  // se guardaba en hora local sin marca de zona, y julianday() las restaba
+  // como si ambas fueran UTC, dando tiempos de entrega negativos.
+  db.prepare(`UPDATE orders SET status='entregado', delivered_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`).run(id);
   res.json(findOrder(db, id));
 });
 

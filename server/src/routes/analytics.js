@@ -11,7 +11,7 @@ router.get('/summary', adminAuth, (req, res) => {
     SELECT COALESCE(SUM(oi.product_price * oi.quantity), 0) AS total
     FROM orders o
     JOIN order_items oi ON oi.order_id = o.id
-    WHERE o.status IN ('entregado','delivered') AND date(o.delivered_at) = date('now')
+    WHERE o.status IN ('entregado','delivered') AND date(o.delivered_at,'localtime') = date('now','localtime')
   `).get().total;
 
   const avgTicket = db.prepare(`
@@ -43,9 +43,9 @@ router.get('/summary', adminAuth, (req, res) => {
 
   // Ingresos por día -- últimos 7 días, para el gráfico de barras
   const dayRows = db.prepare(`
-    SELECT date(o.delivered_at) AS d, SUM(oi.product_price * oi.quantity) AS total
+    SELECT date(o.delivered_at,'localtime') AS d, SUM(oi.product_price * oi.quantity) AS total
     FROM orders o JOIN order_items oi ON oi.order_id = o.id
-    WHERE o.status IN ('entregado','delivered') AND o.delivered_at >= date('now','-6 days')
+    WHERE o.status IN ('entregado','delivered') AND date(o.delivered_at,'localtime') >= date('now','-6 days','localtime')
     GROUP BY d ORDER BY d
   `).all();
   const byDate = Object.fromEntries(dayRows.map(r => [r.d, r.total]));
