@@ -41,6 +41,15 @@ dev_dependencies:
 flutter:
   uses-material-design: true
 
+# file_picker 8.x quedó anclado a flutter_plugin_android_lifecycle en su
+# version mas reciente (2.0.35), que exige compileSdk>=36 para todo lo que
+# depende de ella -- pero el AAR de file_picker sigue compilado contra 34,
+# asi que rompe el build. Se fija una version anterior que no exige ese
+# piso; file_picker 11.x lo arregla pero rompe la compilacion Kotlin nativa
+# bajo AGP 9 en este entorno.
+dependency_overrides:
+  flutter_plugin_android_lifecycle: 2.0.22
+
 flutter_launcher_icons:
   android: true
   ios: false
