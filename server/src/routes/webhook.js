@@ -85,6 +85,7 @@ router.post('/message', apiKeyAuth, async (req, res) => {
   const rawTs        = req.body.timestamp;
   const rawMediaType = req.body.media_type;  // 'audio' | 'image' | undefined
   const rawMediaUrl  = req.body.media_url;   // filename stored on disk
+  const rawJid       = req.body.jid;         // JID real de WhatsApp (@s.whatsapp.net o @lid)
 
   if (!rawPhone || !/^\d{7,15}$/.test(String(rawPhone).trim()))
     return res.status(400).json({ error: 'phone inválido' });
@@ -94,17 +95,19 @@ router.post('/message', apiKeyAuth, async (req, res) => {
   const phone     = String(rawPhone).trim();
   const message   = sanitize(rawMessage, 1000);
   const name      = rawName ? sanitize(rawName, 100) : null;
+  const jid       = rawJid ? sanitize(rawJid, 100) : null;
   const timestamp = rawTs && !isNaN(Date.parse(rawTs))
     ? new Date(rawTs).toISOString() : new Date().toISOString();
   const db = getDB();
 
-  // Guardar cliente y actualizar profile pic si viene
+  // Guardar cliente, jid real (para poder responderle) y profile pic si viene
   const picUrl = req.body.profile_pic_url || null;
-  db.prepare(`INSERT INTO customers (phone, name, profile_pic_url) VALUES (?, ?, ?)
+  db.prepare(`INSERT INTO customers (phone, name, profile_pic_url, wa_jid) VALUES (?, ?, ?, ?)
     ON CONFLICT(phone) DO UPDATE SET
       name = COALESCE(excluded.name, name),
-      profile_pic_url = COALESCE(excluded.profile_pic_url, profile_pic_url)`)
-    .run(phone, name, picUrl);
+      profile_pic_url = COALESCE(excluded.profile_pic_url, profile_pic_url),
+      wa_jid = COALESCE(excluded.wa_jid, wa_jid)`)
+    .run(phone, name, picUrl, jid);
 
   // Mensaje de media — guardar directo, sin NLP
   if (rawMediaType && rawMediaUrl) {

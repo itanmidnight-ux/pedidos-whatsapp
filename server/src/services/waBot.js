@@ -122,10 +122,10 @@ async function sendTyping(jid, durationMs = 1500) {
   } catch (_) {}
 }
 
-async function postInbound(phone, name, message, mediaType, mediaUrl, profilePicUrl) {
+async function postInbound(jid, phone, name, message, mediaType, mediaUrl, profilePicUrl) {
   try {
     await http.post('/api/webhook/message', {
-      phone, name, message,
+      phone, name, message, jid,
       media_type:      mediaType    || undefined,
       media_url:       mediaUrl     || undefined,
       profile_pic_url: profilePicUrl || undefined,
@@ -171,7 +171,7 @@ async function pollOutbound() {
         break;
       }
       try {
-        const jid = toJid(msg.phone);
+        const jid = msg.wa_jid || toJid(msg.phone);
 
         if (msg.media_url) {
           const inMedia = path.join(MEDIA_DIR, msg.media_url);
@@ -243,7 +243,7 @@ async function handleInbound(msg) {
     try {
       const isPtt = !!content.audioMessage.ptt;
       const fname = await downloadAndSave(msg, phone, isPtt ? 'ogg' : 'mp4');
-      await postInbound(phone, name, isPtt ? '[Nota de voz]' : '[Audio]', 'audio', fname, profilePicUrl);
+      await postInbound(jid, phone, name, isPtt ? '[Nota de voz]' : '[Audio]', 'audio', fname, profilePicUrl);
       await delay(1000);
       await sock.sendMessage(jid, { text: '✅ Audio recibido. Un colaborador lo atenderá pronto.' });
     } catch (e) { logger.error({ err: e.message }, '[bot] audio err'); }
@@ -255,7 +255,7 @@ async function handleInbound(msg) {
     try {
       const fname   = await downloadAndSave(msg, phone, 'jpg');
       const caption = content.imageMessage.caption || '[Imagen]';
-      await postInbound(phone, name, caption, 'image', fname, profilePicUrl);
+      await postInbound(jid, phone, name, caption, 'image', fname, profilePicUrl);
       await delay(1000);
       await sock.sendMessage(jid, { text: '✅ Imagen recibida. Un colaborador la revisará pronto.' });
     } catch (e) { logger.error({ err: e.message }, '[bot] image err'); }
@@ -267,7 +267,7 @@ async function handleInbound(msg) {
     try {
       const fname   = await downloadAndSave(msg, phone, 'mp4');
       const caption = content.videoMessage.caption || '[Video]';
-      await postInbound(phone, name, caption, 'video', fname, profilePicUrl);
+      await postInbound(jid, phone, name, caption, 'video', fname, profilePicUrl);
       await delay(1000);
       await sock.sendMessage(jid, { text: '✅ Video recibido. Un colaborador lo revisará pronto.' });
     } catch (e) { logger.error({ err: e.message }, '[bot] video err'); }
@@ -280,7 +280,7 @@ async function handleInbound(msg) {
       const origName = content.documentMessage.fileName || 'documento';
       const ext      = origName.includes('.') ? origName.split('.').pop() : 'bin';
       const fname    = await downloadAndSave(msg, phone, ext, DOCS_DIR);
-      await postInbound(phone, name, `[Documento: ${origName}]`, 'document', fname, profilePicUrl);
+      await postInbound(jid, phone, name, `[Documento: ${origName}]`, 'document', fname, profilePicUrl);
       await delay(1000);
       await sock.sendMessage(jid, { text: '✅ Documento recibido. Un colaborador lo revisará.' });
     } catch (e) { logger.error({ err: e.message }, '[bot] doc err'); }
@@ -291,7 +291,7 @@ async function handleInbound(msg) {
   if (type === 'stickerMessage') {
     try {
       const fname = await downloadAndSave(msg, phone, 'webp');
-      await postInbound(phone, name, '[Sticker]', 'image', fname, profilePicUrl);
+      await postInbound(jid, phone, name, '[Sticker]', 'image', fname, profilePicUrl);
     } catch (_) {}
     return;
   }
@@ -304,13 +304,13 @@ async function handleInbound(msg) {
     const locName = loc.name || '';
     const label   = locName || `${String(lat).slice(0, 9)}, ${String(lng).slice(0, 9)}`;
     const mapsUrl = `https://maps.google.com/?q=${lat},${lng}`;
-    await postInbound(phone, name, `📍 Ubicación: ${label}\n${mapsUrl}`, null, null, profilePicUrl);
+    await postInbound(jid, phone, name, `📍 Ubicación: ${label}\n${mapsUrl}`, null, null, profilePicUrl);
     return;
   }
 
   // ── REACCIÓN ─────────────────────────────────────────────
   if (type === 'reactionMessage') {
-    await postInbound(phone, name, `[Reacción: ${content.reactionMessage.text || '❤️'}]`, null, null, profilePicUrl);
+    await postInbound(jid, phone, name, `[Reacción: ${content.reactionMessage.text || '❤️'}]`, null, null, profilePicUrl);
     return;
   }
 
@@ -319,7 +319,7 @@ async function handleInbound(msg) {
   if (!text) return;
   const typingMs = 800 + Math.min(text.length * 18, 2500);
   await sendTyping(jid, typingMs);
-  await postInbound(phone, name, text, null, null, profilePicUrl);
+  await postInbound(jid, phone, name, text, null, null, profilePicUrl);
 }
 
 // ── Conexión / eventos baileys ──────────────────────────────────

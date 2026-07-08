@@ -64,9 +64,13 @@ router.get('/flagged', staffAuth, (req, res) => {
 // ── GET /outbound/pending — (bot) ─────────────────────────────
 router.get('/outbound/pending', apiKeyAuth, (req, res) => {
   res.json({
-    messages: getDB().prepare(
-      `SELECT * FROM messages WHERE direction='outbound' AND sent=0 ORDER BY created_at ASC`
-    ).all(),
+    messages: getDB().prepare(`
+      SELECT m.*, c.wa_jid AS wa_jid
+      FROM messages m
+      LEFT JOIN customers c ON c.phone = m.phone
+      WHERE m.direction='outbound' AND m.sent=0
+      ORDER BY m.created_at ASC
+    `).all(),
   });
 });
 

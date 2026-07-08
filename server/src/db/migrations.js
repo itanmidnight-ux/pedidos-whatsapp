@@ -129,6 +129,7 @@ const MIGRATIONS = [
     )` },
   { name: '039_bot_config_seed', sql: `
     INSERT OR IGNORE INTO bot_config (id, phone_encrypted, status, paused) VALUES (1, NULL, 'disconnected', 0)` },
+  { name: '040_customers_wa_jid', sql: 'ALTER TABLE customers ADD COLUMN wa_jid TEXT' },
 ];
 
 function runMigrations(db) {
