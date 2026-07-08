@@ -119,6 +119,16 @@ const MIGRATIONS = [
     )` },
   { name: '036_products_stock', sql: 'ALTER TABLE products ADD COLUMN stock INTEGER' },
   { name: '037_products_low_stock_threshold', sql: 'ALTER TABLE products ADD COLUMN low_stock_threshold INTEGER' },
+  { name: '038_bot_config_table', sql: `
+    CREATE TABLE IF NOT EXISTS bot_config (
+      id              INTEGER PRIMARY KEY CHECK (id = 1),
+      phone_encrypted TEXT,
+      status          TEXT NOT NULL DEFAULT 'disconnected',
+      paused          INTEGER NOT NULL DEFAULT 0,
+      updated_at      TEXT DEFAULT (datetime('now','localtime'))
+    )` },
+  { name: '039_bot_config_seed', sql: `
+    INSERT OR IGNORE INTO bot_config (id, phone_encrypted, status, paused) VALUES (1, NULL, 'disconnected', 0)` },
 ];
 
 function runMigrations(db) {
