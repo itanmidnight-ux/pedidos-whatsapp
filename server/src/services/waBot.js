@@ -227,7 +227,12 @@ async function handleInbound(msg) {
   const rawJid = msg.key.remoteJid || '';
   if (!rawJid || rawJid.endsWith('@g.us') || rawJid === 'status@broadcast') return;
 
-  const jid     = jidNormalizedUser(rawJid);
+  // WhatsApp identifica cada vez mas contactos por @lid (privacidad/multi-
+  // device) en vez del numero real. Cuando eso pasa, el propio stanza trae
+  // aparte el numero real en sender_pn -- si esta, usarlo siempre: da el
+  // telefono correcto para mostrar Y un JID @s.whatsapp.net que si se puede
+  // responder (a un @lid reconstruido a mano nunca le llega nada).
+  const jid     = msg.key.senderPn ? jidNormalizedUser(msg.key.senderPn) : jidNormalizedUser(rawJid);
   const phone   = jid.split('@')[0];
   const name    = msg.pushName || phone;
 
