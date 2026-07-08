@@ -199,6 +199,8 @@ headerbar button:active {{ background: {SURFACE_3}; }}
 }}
 .stat-trend-up   {{ color: {SUCCESS}; font-size: 11px; font-weight: 600; }}
 .stat-trend-down {{ color: {DANGER};  font-size: 11px; font-weight: 600; }}
+.day-bar-bg {{ background-color: {BORDER}; border-radius: 3px; }}
+.day-bar-fg {{ background-color: {BRAND};  border-radius: 3px; }}
 
 /* ─── Status pills / dots ────────────────────────── */
 .status-pill {{
@@ -1267,27 +1269,18 @@ class SalesModule:
         charts_row.pack_start(right_box, False, False, 0)
         right_box.set_size_request(360, -1)
 
-        # ─── Ventas por día (con detalle por día al hacer doble clic) ─
-        days_title = Gtk.Label(label='VENTAS POR DÍA — ÚLTIMOS 14 DÍAS (doble clic para el detalle)', xalign=0)
+        # ─── Ventas por día (tarjetas clickeables, no listado) ────────
+        days_title = Gtk.Label(label='VENTAS POR DÍA — ÚLTIMOS 14 DÍAS (clic para el detalle)', xalign=0)
         days_title.get_style_context().add_class('section-title')
         self.box.pack_start(days_title, False, False, 0)
 
-        self.days_store = Gtk.ListStore(str, int, str, str)  # fecha, pedidos, total, fecha_iso (oculta)
-        days_tree = Gtk.TreeView(model=self.days_store)
-        days_tree.get_style_context().add_class('mono')
-        for i, colname in enumerate(['Fecha', 'Pedidos entregados', 'Total']):
-            renderer = Gtk.CellRendererText()
-            col = Gtk.TreeViewColumn(colname, renderer, text=i)
-            if i in (1, 2):
-                renderer.set_property('xalign', 1.0)
-            col.set_resizable(True)
-            days_tree.append_column(col)
-        days_tree.connect('row-activated', self._on_day_activated)
-        days_scroll = Gtk.ScrolledWindow()
-        days_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
-        days_scroll.add(days_tree)
-        days_scroll.set_min_content_height(180)
-        self.box.pack_start(days_scroll, False, False, 0)
+        self.days_flow = Gtk.FlowBox()
+        self.days_flow.set_selection_mode(Gtk.SelectionMode.NONE)
+        self.days_flow.set_homogeneous(True)
+        self.days_flow.set_column_spacing(10)
+        self.days_flow.set_row_spacing(10)
+        self.days_flow.set_max_children_per_line(7)
+        self.box.pack_start(self.days_flow, False, False, 0)
 
         # ─── Top productos ───────────────────────────────────────────
         top_title = Gtk.Label(label='TOP 10 PRODUCTOS VENDIDOS', xalign=0)
@@ -1399,17 +1392,51 @@ class SalesModule:
             GROUP BY d ORDER BY d DESC
         """)
         by_day = {r[0]: (r[1], r[2]) for r in day_rows}
-        self.days_store.clear()
+        for child in self.days_flow.get_children():
+            self.days_flow.remove(child)
+        max_total = max((t for _, t in by_day.values()), default=0) or 1
         for i in range(0, 14):
             d = datetime.date.today() - datetime.timedelta(days=i)
             iso = d.isoformat()
             n, t = by_day.get(iso, (0, 0))
-            self.days_store.append([d.strftime('%A %d/%m').capitalize(), n, fmt_money(t or 0), iso])
+            self.days_flow.add(self._build_day_card(d, n, t or 0, iso, max_total))
+        self.days_flow.show_all()
 
-    def _on_day_activated(self, tree, path, column):
-        model = tree.get_model()
-        row = model[path]
-        self._show_day_detail(row[3], row[0])
+    def _build_day_card(self, d, count, total, iso, max_total):
+        """Tarjeta clickeable con barra de intensidad relativa al dia de
+        mayor venta -- reemplaza el listado plano de antes (se veia como
+        una tabla apretada de texto en vez de un dashboard)."""
+        btn = Gtk.Button()
+        btn.set_relief(Gtk.ReliefStyle.NONE)
+        btn.get_style_context().add_class('stat-card')
+        btn.connect('clicked', lambda *_: self._show_day_detail(iso, d.strftime('%A %d/%m').capitalize()))
+
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        lbl_date = Gtk.Label(label=d.strftime('%a %d/%m').capitalize(), xalign=0)
+        lbl_date.get_style_context().add_class('stat-label')
+        vbox.pack_start(lbl_date, False, False, 0)
+
+        lbl_total = Gtk.Label(label=fmt_money(total), xalign=0)
+        lbl_total.get_style_context().add_class('stat-value')
+        lbl_total.get_style_context().add_class('mono')
+        vbox.pack_start(lbl_total, False, False, 0)
+
+        bar_bg = Gtk.Box()
+        bar_bg.set_size_request(-1, 5)
+        bar_bg.get_style_context().add_class('day-bar-bg')
+        bar_fg = Gtk.Box()
+        bar_fg.get_style_context().add_class('day-bar-fg')
+        ratio = max(0.03, min(1.0, total / max_total)) if total else 0
+        bar_fg.set_size_request(int(140 * ratio), 5)
+        bar_bg.pack_start(bar_fg, False, False, 0)
+        vbox.pack_start(bar_bg, False, False, 2)
+
+        lbl_count = Gtk.Label(label=f'{count} pedido{"s" if count != 1 else ""}', xalign=0)
+        lbl_count.get_style_context().add_class('stat-sub')
+        vbox.pack_start(lbl_count, False, False, 0)
+
+        btn.add(vbox)
+        return btn
 
     def _show_day_detail(self, iso_date, label):
         """Subventana con el detalle de pedidos de un día + acceso al PDF diario
