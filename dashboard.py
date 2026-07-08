@@ -1006,6 +1006,7 @@ class MonitorModule:
 
     def __init__(self, parent):
         self.parent = parent
+        self._current_tunnel_url = None
         self.box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
 
         # Header del módulo
@@ -1091,10 +1092,33 @@ class MonitorModule:
         actions.pack_start(make_btn('⇄ Reiniciar túnel', 'btn-flat', small=True,
                             on_click=lambda _w: self._run(f'systemctl restart {TUNNEL_SERVICE}')),
                             False, False, 0)
+        actions.pack_start(make_btn('⎘ Copiar URL túnel', 'btn-flat', small=True,
+                            on_click=lambda _w: self._copy_tunnel_url()),
+                            False, False, 0)
 
     def _run(self, cmd):
         sh(cmd)
         GLib.timeout_add(1500, lambda: (self.parent.refresh_all(), False)[1])
+
+    def _get_tunnel_url(self):
+        """URL publica actual del tunel rapido -- cambia en cada reinicio de
+        cloudflared (no es un tunel con dominio fijo), asi que hay que leerla
+        del log cada vez en vez de asumir que sigue siendo la misma."""
+        try:
+            with open(f'{LOG_DIR}/tunnel.log', 'r', errors='ignore') as f:
+                content = f.read()
+            matches = re.findall(r'https://[a-z0-9-]+\.trycloudflare\.com', content)
+            return matches[-1] if matches else None
+        except OSError:
+            return None
+
+    def _copy_tunnel_url(self):
+        if not self._current_tunnel_url:
+            self.parent.show_toast('Túnel inactivo — no hay URL para copiar')
+            return
+        clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
+        clipboard.set_text(self._current_tunnel_url, -1)
+        self.parent.show_toast(f'URL copiada: {self._current_tunnel_url}')
 
     def _run_with_tunnel(self, action):
         """Inicia/detiene/reinicia el servidor Node Y el tunel Cloudflare juntos
@@ -1124,6 +1148,8 @@ class MonitorModule:
         tactive = sh(f'systemctl is-active {TUNNEL_SERVICE} 2>/dev/null') or 'no instalado'
         self.card_tunnel.set_value(tactive.upper())
         self._set_dot(self.dot_tunnel, tactive == 'active', failed=(tactive == 'failed'))
+        self._current_tunnel_url = self._get_tunnel_url() if tactive == 'active' else None
+        self.card_tunnel.set_sub(self._current_tunnel_url or TUNNEL_SERVICE)
 
         # Bot WhatsApp (vía API HTTP)
         bot = http_get('/api/bot/status')
