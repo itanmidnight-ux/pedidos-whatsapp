@@ -9,6 +9,8 @@ import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:video_player/video_player.dart';
+import 'package:file_picker/file_picker.dart';
 import '../models/message.dart';
 import '../services/api_service.dart';
 import '../widgets/empty_state.dart';
@@ -39,6 +41,8 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _sending    = false;
   bool _recording  = false;
   bool _hasText    = false;
+  bool _loadError  = false;
+  bool _loadingFirst = true;
   int  _recSeconds = 0;
   Timer? _pollTimer;
   Timer? _recTimer;
@@ -89,11 +93,18 @@ class _ChatScreenState extends State<ChatScreen> {
     try {
       final msgs = await ApiService.getMessages(widget.phone);
       if (mounted) {
-        setState(() => _messages = msgs);
+        setState(() { _messages = msgs; _loadError = false; _loadingFirst = false; });
         _scrollDown();
       }
       if (markRead) ApiService.markConversationRead(widget.phone).catchError((_) {});
-    } catch (_) {}
+    } catch (_) {
+      // Silencioso en el poll de fondo (cada 2s reintenta solo) -- pero si es
+      // la carga inicial o ya llevamos varios fallos, se lo mostramos al
+      // usuario en vez de dejarlo mirando una pantalla vacía sin explicación.
+      if (mounted && (_loadingFirst || _messages.isEmpty)) {
+        setState(() { _loadError = true; _loadingFirst = false; });
+      }
+    }
   }
 
   void _scrollDown() {
@@ -138,6 +149,43 @@ class _ChatScreenState extends State<ChatScreen> {
     } catch (_) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Error enviando imagen')));
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
+  }
+
+  // ── Send video ───────────────────────────────────────────
+  Future<void> _pickAndSendVideo() async {
+    final picker = ImagePicker();
+    try {
+      final file = await picker.pickVideo(
+        source: ImageSource.gallery,
+        maxDuration: const Duration(minutes: 5),
+      );
+      if (file == null) return;
+      setState(() => _sending = true);
+      await ApiService.sendMediaMessage(widget.phone, file.path, 'video');
+      await _load();
+    } catch (_) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Error enviando video')));
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
+  }
+
+  // ── Send document ────────────────────────────────────────
+  Future<void> _pickAndSendDocument() async {
+    try {
+      final result = await FilePicker.platform.pickFiles();
+      final path = result?.files.single.path;
+      if (path == null) return;
+      setState(() => _sending = true);
+      await ApiService.sendMediaMessage(widget.phone, path, 'document');
+      await _load();
+    } catch (_) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Error enviando documento')));
     } finally {
       if (mounted) setState(() => _sending = false);
     }
@@ -258,6 +306,59 @@ class _ChatScreenState extends State<ChatScreen> {
     return bytes;
   }
 
+  // ── Video playback ───────────────────────────────────────
+  bool _videoDownloading = false;
+
+  Future<void> _playVideo(Message msg) async {
+    if (msg.mediaUrl == null || _videoDownloading) return;
+    setState(() => _videoDownloading = true);
+    try {
+      final bytes = await ApiService.downloadMedia(msg.mediaUrl!);
+      if (bytes == null) throw Exception('sin datos');
+      final dir  = await getTemporaryDirectory();
+      final ext  = msg.mediaUrl!.contains('.') ? msg.mediaUrl!.split('.').last.split('?').first : 'mp4';
+      final file = File('${dir.path}/video_${msg.id}.$ext');
+      await file.writeAsBytes(bytes);
+      if (!mounted) return;
+      await Navigator.push(context, MaterialPageRoute(
+        builder: (_) => _VideoPlayerScreen(path: file.path),
+        fullscreenDialog: true,
+      ));
+    } catch (_) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No se pudo cargar el video')));
+    } finally {
+      if (mounted) setState(() => _videoDownloading = false);
+    }
+  }
+
+  // ── Documento ────────────────────────────────────────────
+  bool _docDownloading = false;
+
+  Future<void> _openDocument(Message msg) async {
+    if (msg.mediaUrl == null || _docDownloading) return;
+    setState(() => _docDownloading = true);
+    try {
+      final bytes = await ApiService.downloadMedia(msg.mediaUrl!);
+      if (bytes == null) throw Exception('sin datos');
+      final dir  = await getTemporaryDirectory();
+      final file = File('${dir.path}/${msg.documentFileName}');
+      await file.writeAsBytes(bytes);
+      final uri = Uri.file(file.path);
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri);
+      } else if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Documento guardado: ${file.path}')));
+      }
+    } catch (_) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No se pudo abrir el documento')));
+    } finally {
+      if (mounted) setState(() => _docDownloading = false);
+    }
+  }
+
   // ── Phone call ───────────────────────────────────────────
   Future<void> _call() async {
     final uri = Uri(scheme: 'tel', path: '+57${widget.phone}');
@@ -312,7 +413,11 @@ class _ChatScreenState extends State<ChatScreen> {
                 ? _buildAudioContent(msg)
                 : msg.isImage
                   ? _buildImageContent(msg)
-                  : Text(msg.content, style: const TextStyle(fontSize: 14, color: Color(0xFF1A1A1A))),
+                  : msg.isVideo
+                    ? _buildVideoContent(msg)
+                    : msg.isDocument
+                      ? _buildDocumentContent(msg)
+                      : Text(msg.content, style: const TextStyle(fontSize: 14, color: Color(0xFF1A1A1A))),
             ),
             // Time + status
             Padding(
@@ -397,6 +502,47 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  Widget _buildVideoContent(Message msg) {
+    final screenW = MediaQuery.of(context).size.width;
+    final w = (screenW * 0.65).clamp(160.0, 260.0);
+    return GestureDetector(
+      onTap: () => _playVideo(msg),
+      child: Container(
+        width: w, height: w * 0.75,
+        decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(10)),
+        child: Center(
+          child: _videoDownloading
+            ? const CircularProgressIndicator(color: Colors.white, strokeWidth: 2)
+            : const Icon(Icons.play_circle_fill_rounded, color: Colors.white, size: 44),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDocumentContent(Message msg) {
+    final scheme = Theme.of(context).colorScheme;
+    return GestureDetector(
+      onTap: () => _openDocument(msg),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minWidth: 180),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Container(
+            width: 40, height: 40,
+            decoration: BoxDecoration(color: scheme.primary.withValues(alpha: 0.12), shape: BoxShape.circle),
+            child: _docDownloading
+              ? Padding(padding: const EdgeInsets.all(10),
+                  child: CircularProgressIndicator(strokeWidth: 2, color: scheme.primary))
+              : Icon(Icons.insert_drive_file_rounded, color: scheme.primary, size: 22),
+          ),
+          const SizedBox(width: 8),
+          Flexible(child: Text(msg.documentFileName,
+            style: const TextStyle(fontSize: 13, color: Color(0xFF1A1A1A)),
+            overflow: TextOverflow.ellipsis, maxLines: 2)),
+        ]),
+      ),
+    );
+  }
+
   // ── Input bar ────────────────────────────────────────────
   Widget _buildInputBar() {
     final scheme = Theme.of(context).colorScheme;
@@ -436,11 +582,27 @@ class _ChatScreenState extends State<ChatScreen> {
       color: Colors.white,
       padding: const EdgeInsets.only(left: 6, right: 8, top: 6, bottom: 6),
       child: Row(children: [
-        // Attach image
-        IconButton(
+        // Adjuntar (foto / video / documento)
+        PopupMenuButton<String>(
           icon: const Icon(Icons.attach_file_rounded, color: Colors.grey),
-          onPressed: _sending ? null : _pickAndSendImage,
-          tooltip: 'Enviar imagen',
+          tooltip: 'Adjuntar',
+          enabled: !_sending,
+          onSelected: (v) {
+            if (v == 'image') _pickAndSendImage();
+            if (v == 'video') _pickAndSendVideo();
+            if (v == 'document') _pickAndSendDocument();
+          },
+          itemBuilder: (_) => const [
+            PopupMenuItem(value: 'image', child: Row(children: [
+              Icon(Icons.image_rounded, color: Colors.grey), SizedBox(width: 8), Text('Foto'),
+            ])),
+            PopupMenuItem(value: 'video', child: Row(children: [
+              Icon(Icons.videocam_rounded, color: Colors.grey), SizedBox(width: 8), Text('Video'),
+            ])),
+            PopupMenuItem(value: 'document', child: Row(children: [
+              Icon(Icons.insert_drive_file_rounded, color: Colors.grey), SizedBox(width: 8), Text('Documento'),
+            ])),
+          ],
         ),
         // Text field
         Expanded(
@@ -563,7 +725,19 @@ class _ChatScreenState extends State<ChatScreen> {
       appBar: _buildAppBar(),
       body: Column(children: [
         Expanded(
-          child: _messages.isEmpty
+          child: _loadError && _messages.isEmpty
+            ? Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+                const Icon(Icons.cloud_off_rounded, size: 40, color: Colors.grey),
+                const SizedBox(height: 10),
+                const Text('No se pudieron cargar los mensajes', style: TextStyle(color: Colors.grey)),
+                const SizedBox(height: 12),
+                FilledButton.icon(
+                  onPressed: () => _load(),
+                  icon: const Icon(Icons.refresh_rounded, size: 18),
+                  label: const Text('Reintentar'),
+                ),
+              ]))
+            : _messages.isEmpty
             ? const EmptyState(icon: Icons.chat_bubble_outline_rounded, title: 'Sin mensajes aún')
             : ListView.builder(
                 controller: _scroll,
@@ -575,6 +749,71 @@ class _ChatScreenState extends State<ChatScreen> {
         ),
         _buildInputBar(),
       ]),
+    );
+  }
+}
+
+/// Reproductor de video de pantalla completa mínimo (play/pausa + barra de
+/// progreso) -- suficiente para revisar un video recibido/enviado por el
+/// bot, sin depender de un paquete de UI extra (chewie).
+class _VideoPlayerScreen extends StatefulWidget {
+  final String path;
+  const _VideoPlayerScreen({required this.path});
+
+  @override
+  State<_VideoPlayerScreen> createState() => _VideoPlayerScreenState();
+}
+
+class _VideoPlayerScreenState extends State<_VideoPlayerScreen> {
+  late final VideoPlayerController _controller;
+  bool _ready = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = VideoPlayerController.file(File(widget.path))
+      ..initialize().then((_) {
+        if (mounted) setState(() => _ready = true);
+        _controller.play();
+      });
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.black,
+        iconTheme: const IconThemeData(color: Colors.white),
+      ),
+      body: Center(
+        child: _ready
+          ? AspectRatio(
+              aspectRatio: _controller.value.aspectRatio,
+              child: Stack(alignment: Alignment.bottomCenter, children: [
+                VideoPlayer(_controller),
+                VideoProgressIndicator(_controller, allowScrubbing: true,
+                  colors: const VideoProgressColors(playedColor: Colors.white)),
+              ]),
+            )
+          : const CircularProgressIndicator(color: Colors.white),
+      ),
+      floatingActionButton: _ready
+        ? FloatingActionButton(
+            backgroundColor: Colors.white,
+            onPressed: () => setState(() =>
+              _controller.value.isPlaying ? _controller.pause() : _controller.play()),
+            child: Icon(
+              _controller.value.isPlaying ? Icons.pause : Icons.play_arrow,
+              color: Colors.black),
+          )
+        : null,
     );
   }
 }

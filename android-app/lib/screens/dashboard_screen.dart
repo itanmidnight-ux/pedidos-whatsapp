@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_provider.dart';
 import '../services/api_service.dart';
+import '../theme/breakpoints.dart';
 import '../widgets/order_card.dart';
 import '../widgets/company_header.dart';
 import '../widgets/empty_state.dart';
@@ -82,6 +83,8 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
         : const ['Pedidos Activos', 'Mensajes'];
     final safeTab = _tab < bottomTitles.length ? _tab : 0;
 
+    final isWide = MediaQuery.of(context).size.width >= kDesktopBreakpoint;
+
     return Scaffold(
       backgroundColor: scheme.surface,
       appBar: CompanyHeader(
@@ -142,7 +145,13 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
             }),
         ]),
       ),
-      body: IndexedStack(index: safeTab, children: [
+      body: _buildBody(context, provider, scheme, safeTab, isWide),
+      bottomNavigationBar: isWide ? null : _buildBottomNav(provider, scheme, safeTab),
+    );
+  }
+
+  Widget _buildBody(BuildContext context, AppProvider provider, ColorScheme scheme, int safeTab, bool isWide) {
+    final content = IndexedStack(index: safeTab, children: [
         // PEDIDOS (all roles)
         Column(children: [
           SizedBox(
@@ -203,40 +212,72 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
         if (provider.isAdmin) const ProductsScreen(),
         // MENSAJES (all roles)
         const MessagesScreen(),
-      ]),
-      bottomNavigationBar: NavigationBar(
+      ]);
+
+    if (!isWide) return content;
+
+    // Desktop/TV: rail lateral en vez de nav inferior -- una barra de 72px
+    // pegada abajo del todo se ve fuera de lugar en una pantalla grande.
+    return Row(children: [
+      NavigationRail(
         selectedIndex: safeTab,
         onDestinationSelected: (i) => setState(() => _tab = i),
+        labelType: NavigationRailLabelType.all,
         backgroundColor: Colors.white,
         indicatorColor: scheme.primary.withValues(alpha: 0.16),
-        destinations: [
-          NavigationDestination(
-            icon: Badge(
-              isLabelVisible: provider.orders.isNotEmpty,
-              label: Text('${provider.orders.length}'),
-              backgroundColor: scheme.secondary,
-              child: const Icon(Icons.dashboard_rounded)),
-            selectedIcon: Icon(Icons.dashboard_rounded, color: scheme.primary),
-            label: 'Pedidos'),
-          if (provider.isAdmin)
-            NavigationDestination(
-              icon: const Icon(Icons.inventory_2_outlined),
-              selectedIcon: Icon(Icons.inventory_2_rounded, color: scheme.primary),
-              label: 'Productos'),
-          NavigationDestination(
-            icon: Badge(
-              isLabelVisible: provider.flaggedCount > 0,
-              label: Text('${provider.flaggedCount}'),
-              backgroundColor: Colors.red,
-              child: const Icon(Icons.chat_bubble_outline_rounded)),
-            selectedIcon: Badge(
-              isLabelVisible: provider.flaggedCount > 0,
-              label: Text('${provider.flaggedCount}'),
-              backgroundColor: Colors.red,
-              child: Icon(Icons.chat_bubble_rounded, color: scheme.primary)),
-            label: 'Mensajes'),
-        ],
+        destinations: _navDestinations(provider, scheme)
+            .map((d) => NavigationRailDestination(icon: d.icon, selectedIcon: d.selectedIcon, label: Text(d.label)))
+            .toList(),
       ),
+      const VerticalDivider(width: 1),
+      Expanded(child: content),
+    ]);
+  }
+
+  Widget _buildBottomNav(AppProvider provider, ColorScheme scheme, int safeTab) {
+    return NavigationBar(
+      selectedIndex: safeTab,
+      onDestinationSelected: (i) => setState(() => _tab = i),
+      backgroundColor: Colors.white,
+      indicatorColor: scheme.primary.withValues(alpha: 0.16),
+      destinations: _navDestinations(provider, scheme)
+          .map((d) => NavigationDestination(icon: d.icon, selectedIcon: d.selectedIcon, label: d.label))
+          .toList(),
     );
   }
+
+  List<_NavItem> _navDestinations(AppProvider provider, ColorScheme scheme) => [
+        _NavItem(
+          icon: Badge(
+            isLabelVisible: provider.orders.isNotEmpty,
+            label: Text('${provider.orders.length}'),
+            backgroundColor: scheme.secondary,
+            child: const Icon(Icons.dashboard_rounded)),
+          selectedIcon: Icon(Icons.dashboard_rounded, color: scheme.primary),
+          label: 'Pedidos'),
+        if (provider.isAdmin)
+          _NavItem(
+            icon: const Icon(Icons.inventory_2_outlined),
+            selectedIcon: Icon(Icons.inventory_2_rounded, color: scheme.primary),
+            label: 'Productos'),
+        _NavItem(
+          icon: Badge(
+            isLabelVisible: provider.flaggedCount > 0,
+            label: Text('${provider.flaggedCount}'),
+            backgroundColor: Colors.red,
+            child: const Icon(Icons.chat_bubble_outline_rounded)),
+          selectedIcon: Badge(
+            isLabelVisible: provider.flaggedCount > 0,
+            label: Text('${provider.flaggedCount}'),
+            backgroundColor: Colors.red,
+            child: Icon(Icons.chat_bubble_rounded, color: scheme.primary)),
+          label: 'Mensajes'),
+      ];
+}
+
+class _NavItem {
+  final Widget icon;
+  final Widget selectedIcon;
+  final String label;
+  const _NavItem({required this.icon, required this.selectedIcon, required this.label});
 }

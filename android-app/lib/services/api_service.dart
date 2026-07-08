@@ -170,8 +170,18 @@ class ApiService {
       'mov': 'video/quicktime', 'webm': 'video/webm',
       'ogg': 'audio/ogg',  'mp3': 'audio/mpeg',
       'm4a': 'audio/mp4',  'aac': 'audio/aac',
+      'pdf': 'application/pdf',
+      'doc': 'application/msword',
+      'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'xls': 'application/vnd.ms-excel',
+      'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'txt': 'text/plain',
+      'zip': 'application/zip',
     };
-    return MediaType.parse(t[ext] ?? 'image/jpeg');
+    // Antes esto caía a 'image/jpeg' para cualquier extensión desconocida
+    // (ej. documentos) -- application/octet-stream es el fallback genérico
+    // correcto para "no sé qué es esto".
+    return MediaType.parse(t[ext] ?? 'application/octet-stream');
   }
 
   // ── Auth ────────────────────────────────────────────────

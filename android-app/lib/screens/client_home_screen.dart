@@ -7,6 +7,7 @@ import '../providers/app_provider.dart';
 import '../services/api_service.dart';
 import '../services/notification_service.dart';
 import '../services/local_db.dart';
+import '../theme/breakpoints.dart';
 import 'client_products_screen.dart';
 import 'client_cart_screen.dart';
 import 'client_estados_screen.dart';
@@ -87,6 +88,17 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> with WidgetsBinding
   @override
   Widget build(BuildContext context) {
     final size = MediaQuery.of(context).size;
+    final isWide = size.width >= kDesktopBreakpoint;
+    final content = IndexedStack(index: _tab, children: [
+          const ClientProductsScreen(),
+          ClientCartScreen(key: _cartKey),
+          ClientEstadosScreen(
+            estados: _estados,
+            onRefresh: _loadEstados,
+          ),
+          const ClientProfileScreen(),
+        ]);
+
     return Scaffold(
       backgroundColor: Theme.of(context).colorScheme.surface,
       body: Column(children: [
@@ -105,17 +117,17 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> with WidgetsBinding
             ]),
           ),
         // ── Content ───────────────────────────────────────
-        Expanded(child: IndexedStack(index: _tab, children: [
-          const ClientProductsScreen(),
-          ClientCartScreen(key: _cartKey),
-          ClientEstadosScreen(
-            estados: _estados,
-            onRefresh: _loadEstados,
-          ),
-          const ClientProfileScreen(),
-        ])),
+        Expanded(
+          child: isWide
+              ? Row(children: [
+                  _buildNavRail(),
+                  const VerticalDivider(width: 1),
+                  Expanded(child: content),
+                ])
+              : content,
+        ),
       ]),
-      bottomNavigationBar: _buildBottomNav(),
+      bottomNavigationBar: isWide ? null : _buildBottomNav(),
     );
   }
 
@@ -283,6 +295,56 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> with WidgetsBinding
           icon:         const Icon(Icons.person_outline_rounded),
           selectedIcon: Icon(Icons.person_rounded, color: scheme.primary),
           label: 'Perfil',
+        ),
+      ],
+    );
+  }
+
+  // Mismo set de destinos que _buildBottomNav pero como NavigationRail --
+  // para tablet/desktop/TV, donde una barra pegada abajo del todo se ve
+  // fuera de lugar y desperdicia el ancho disponible a los costados.
+  Widget _buildNavRail() {
+    final scheme = Theme.of(context).colorScheme;
+    return NavigationRail(
+      selectedIndex: _tab,
+      onDestinationSelected: (i) {
+        setState(() { _tab = i; });
+        if (i == 1) _cartKey.currentState?.reload();
+        if (i == 2) setState(() => _newEstados = 0);
+      },
+      labelType: NavigationRailLabelType.all,
+      backgroundColor: Colors.white,
+      indicatorColor: scheme.primary.withValues(alpha: 0.16),
+      destinations: [
+        const NavigationRailDestination(
+          icon: Icon(Icons.storefront_outlined),
+          selectedIcon: Icon(Icons.storefront_rounded),
+          label: Text('Tienda'),
+        ),
+        const NavigationRailDestination(
+          icon: Icon(Icons.shopping_cart_outlined),
+          selectedIcon: Icon(Icons.shopping_cart_rounded),
+          label: Text('Carrito'),
+        ),
+        NavigationRailDestination(
+          icon: Stack(clipBehavior: Clip.none, children: [
+            const Icon(Icons.auto_stories_outlined),
+            if (_newEstados > 0)
+              Positioned(right: -4, top: -4,
+                child: Container(
+                  padding: const EdgeInsets.all(3),
+                  decoration: BoxDecoration(color: scheme.secondary, shape: BoxShape.circle),
+                  child: Text('$_newEstados',
+                    style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold)),
+                )),
+          ]),
+          selectedIcon: const Icon(Icons.auto_stories_rounded),
+          label: const Text('Estados'),
+        ),
+        const NavigationRailDestination(
+          icon: Icon(Icons.person_outline_rounded),
+          selectedIcon: Icon(Icons.person_rounded),
+          label: Text('Perfil'),
         ),
       ],
     );

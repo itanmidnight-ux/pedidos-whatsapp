@@ -21,7 +21,17 @@ class Message {
   bool get isOutbound  => direction == 'outbound';
   bool get isAudio     => mediaType == 'audio';
   bool get isImage     => mediaType == 'image';
+  bool get isVideo     => mediaType == 'video';
+  bool get isDocument  => mediaType == 'document';
   bool get isMediaMsg  => mediaType != null;
+
+  /// El backend guarda el nombre original del documento en el texto del
+  /// mensaje como "[Documento: nombre.pdf]" (media_url solo tiene un nombre
+  /// generado). Se extrae para mostrarlo en la burbuja.
+  String get documentFileName {
+    final m = RegExp(r'\[Documento: (.+)\]').firstMatch(content);
+    return m?.group(1) ?? mediaUrl ?? 'documento';
+  }
 
   factory Message.fromJson(Map<String, dynamic> j) => Message(
     id:           j['id'],
@@ -71,6 +81,8 @@ class Conversation {
   String get lastMsgPreview {
     if (lastMediaType == 'audio') return 'Mensaje de voz';
     if (lastMediaType == 'image') return 'Imagen';
+    if (lastMediaType == 'video') return 'Video';
+    if (lastMediaType == 'document') return 'Documento';
     return lastMsg ?? '';
   }
 
