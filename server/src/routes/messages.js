@@ -39,15 +39,15 @@ router.get('/', staffAuth, (req, res) => {
            COALESCE(c.name, m.customer_name) AS customer_name,
            c.profile_pic_url,
            COALESCE(c.archived, 0) AS archived,
-      (SELECT content    FROM messages WHERE phone=m.phone ORDER BY created_at DESC LIMIT 1) AS last_msg,
-      (SELECT created_at FROM messages WHERE phone=m.phone ORDER BY created_at DESC LIMIT 1) AS last_at,
-      (SELECT media_type FROM messages WHERE phone=m.phone ORDER BY created_at DESC LIMIT 1) AS last_media_type,
-      (SELECT COUNT(*)   FROM messages WHERE phone=m.phone AND direction='inbound' AND sent=0) AS unread,
-      (SELECT COUNT(*)   FROM messages WHERE phone=m.phone AND flagged=1) AS flagged_count,
-      (SELECT flag_reason FROM messages WHERE phone=m.phone AND flagged=1 ORDER BY created_at DESC LIMIT 1) AS flag_reason
+      (SELECT content    FROM messages WHERE phone=m.phone AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1) AS last_msg,
+      (SELECT created_at FROM messages WHERE phone=m.phone AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1) AS last_at,
+      (SELECT media_type FROM messages WHERE phone=m.phone AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1) AS last_media_type,
+      (SELECT COUNT(*)   FROM messages WHERE phone=m.phone AND direction='inbound' AND sent=0 AND deleted_at IS NULL) AS unread,
+      (SELECT COUNT(*)   FROM messages WHERE phone=m.phone AND flagged=1 AND deleted_at IS NULL) AS flagged_count,
+      (SELECT flag_reason FROM messages WHERE phone=m.phone AND flagged=1 AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1) AS flag_reason
     FROM messages m
     LEFT JOIN customers c ON c.phone = m.phone
-    WHERE COALESCE(c.archived, 0) = ?
+    WHERE COALESCE(c.archived, 0) = ? AND m.deleted_at IS NULL
     GROUP BY m.phone
     ORDER BY flagged_count DESC, last_at DESC
   `).all(archived);
@@ -57,7 +57,7 @@ router.get('/', staffAuth, (req, res) => {
 // ── GET /flagged ──────────────────────────────────────────────
 router.get('/flagged', staffAuth, (req, res) => {
   res.json(getDB().prepare(
-    `SELECT * FROM messages WHERE flagged=1 ORDER BY created_at DESC LIMIT 50`
+    `SELECT * FROM messages WHERE flagged=1 AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 50`
   ).all());
 });
 
@@ -94,11 +94,13 @@ router.get('/media/:filename', staffAuth, (req, res) => {
 });
 
 // ── DELETE /conversation/:phone — Borrar conversación ─────────
+// Soft-delete: desaparece de la app pero el texto queda en la base para
+// siempre, para poder exportarlo despues (pestaña Datos > exportar PDF).
 router.delete('/conversation/:phone', staffAuth, (req, res) => {
   const phone = req.params.phone.trim();
   if (!validPhone(phone)) return res.status(400).json({ error: 'phone inválido' });
   const db = getDB();
-  db.prepare('DELETE FROM messages WHERE phone=?').run(phone);
+  db.prepare(`UPDATE messages SET deleted_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE phone=? AND deleted_at IS NULL`).run(phone);
   db.prepare('DELETE FROM pending_orders WHERE phone=?').run(phone);
   res.json({ success: true });
 });
@@ -129,7 +131,7 @@ router.put('/:phone/read', staffAuth, (req, res) => {
 router.get('/:phone', staffAuth, (req, res) => {
   if (!validPhone(req.params.phone)) return res.status(400).json({ error: 'phone inválido' });
   const msgs = getDB().prepare(
-    `SELECT * FROM messages WHERE phone=? ORDER BY created_at ASC`
+    `SELECT * FROM messages WHERE phone=? AND deleted_at IS NULL ORDER BY created_at ASC`
   ).all(req.params.phone.trim());
   res.json(msgs);
 });

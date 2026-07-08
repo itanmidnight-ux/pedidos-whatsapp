@@ -225,4 +225,168 @@ async function generateDailyPDF() {
   return filepath;
 }
 
-module.exports = { generateDailyPDF };
+// ── Reporte por rango de fechas (pestaña "Datos" del dashboard) ────────
+// A diferencia de generateDailyPDF: incluye pedidos de CUALQUIER estado
+// (no solo entregados) y TODOS los mensajes del rango, incluidos los ya
+// borrados por el staff (deleted_at) -- el requisito es que el texto de
+// los chats quede disponible para exportar aunque ya no se vea en la app.
+async function generateRangeReportPDF(fromISO, toISO) {
+  const db = getDB();
+  const fromLabel = new Date(fromISO).toLocaleDateString('es-CO', { timeZone: TZ, day: '2-digit', month: 'long', year: 'numeric' });
+  const toLabel   = new Date(toISO).toLocaleDateString('es-CO',   { timeZone: TZ, day: '2-digit', month: 'long', year: 'numeric' });
+
+  const orders = db.prepare(`
+    SELECT o.*, c.phone, c.name AS customer_name,
+           u.display_name AS delivered_by_name
+    FROM orders o
+    LEFT JOIN customers c ON o.customer_id = c.id
+    LEFT JOIN users     u ON o.claimed_by  = u.id
+    WHERE date(o.requested_at, 'localtime') BETWEEN ? AND ?
+    ORDER BY o.requested_at ASC
+  `).all(fromISO, toISO);
+
+  const itemsStmt = db.prepare('SELECT * FROM order_items WHERE order_id=?');
+  orders.forEach(o => { o.items = itemsStmt.all(o.id); });
+
+  const messages = db.prepare(`
+    SELECT m.*, COALESCE(c.name, m.customer_name) AS display_name
+    FROM messages m
+    LEFT JOIN customers c ON c.phone = m.phone
+    WHERE date(m.created_at, 'localtime') BETWEEN ? AND ?
+    ORDER BY m.phone, m.created_at ASC
+  `).all(fromISO, toISO);
+
+  const chatsByPhone = {};
+  for (const msg of messages) {
+    if (!chatsByPhone[msg.phone]) {
+      chatsByPhone[msg.phone] = { displayName: msg.display_name || msg.phone, msgs: [] };
+    }
+    chatsByPhone[msg.phone].msgs.push(msg);
+  }
+  const chatPhones = Object.keys(chatsByPhone);
+
+  const reportsDir = process.env.REPORTS_DIR || path.join(__dirname, '../../reports');
+  if (!fs.existsSync(reportsDir)) fs.mkdirSync(reportsDir, { recursive: true });
+
+  const filename = `reporte-${fromISO}_a_${toISO}.pdf`;
+  const filepath = path.join(reportsDir, filename);
+  const doc = new PDFDocument({ margin: 40, size: 'A4', bufferPages: true });
+  const stream = fs.createWriteStream(filepath);
+  doc.pipe(stream);
+
+  doc.rect(0, 0, doc.page.width, 120).fill('#0D4F1C');
+  doc.fillColor('white').fontSize(22).font('Helvetica-Bold')
+     .text('CONCENTRADOS MONSERRATH', 40, 30, { align: 'center' });
+  doc.fontSize(14).font('Helvetica')
+     .text('Reporte de Datos — Pedidos y Chats', { align: 'center' });
+  doc.fontSize(11).fillColor('#a5d6a7')
+     .text(`${fromLabel}  —  ${toLabel}`, { align: 'center' });
+  doc.moveDown(3.5);
+
+  const delivered    = orders.filter(o => ['entregado', 'delivered'].includes(o.status));
+  const cancelled     = orders.filter(o => o.status === 'cancelled');
+  const totalIngresos = delivered.reduce((s, o) => s + (Number(o.product_price) || 0), 0);
+
+  const summaryData = [
+    ['📦 Pedidos totales',     `${orders.length}`],
+    ['✅ Entregados',          `${delivered.length}`],
+    ['❌ Cancelados',          `${cancelled.length}`],
+    ['💰 Ingresos del rango',  `$${totalIngresos.toLocaleString('es-CO')}`],
+    ['💬 Conversaciones',      `${chatPhones.length}`],
+    ['📨 Mensajes totales',    `${messages.length}`],
+  ];
+
+  doc.fillColor('#333').fontSize(13).font('Helvetica-Bold').fillColor('#1B5E20')
+     .text('Resumen del rango');
+  doc.moveDown(0.3);
+  for (const [label, val] of summaryData) {
+    doc.fontSize(11).font('Helvetica').fillColor('#555')
+       .text(label + ': ', { continued: true })
+       .font('Helvetica-Bold').fillColor('#111').text(val);
+  }
+
+  doc.addPage();
+  sectionHeader(doc, `📦  PEDIDOS  (${orders.length})`);
+  if (!orders.length) {
+    doc.fontSize(12).fillColor('#777').text('Sin pedidos en este rango.', { align: 'center' });
+  } else {
+    orders.forEach((order, idx) => {
+      if (doc.y > 680) doc.addPage();
+      const productLabel = order.items?.length > 1
+        ? order.items.map(it => `${it.quantity}x ${it.product_name}`).join(', ')
+        : order.product_name;
+      doc.fontSize(12).font('Helvetica-Bold').fillColor('#1B5E20')
+         .text(`#${idx + 1}  ${productLabel}  [${order.status}]`);
+      doc.font('Helvetica').fontSize(10).fillColor('#333');
+      [
+        ['Cliente',    order.customer_name || order.phone || 'N/A'],
+        ['Teléfono',   order.phone || 'N/A'],
+        ['Entregó',    order.delivered_by_name || 'N/A'],
+        ['Dirección',  order.delivery_address || 'N/A'],
+        ['Precio',     order.product_price ? `$${Number(order.product_price).toLocaleString('es-CO')}` : 'N/A'],
+        ['Fiado',      order.is_fiado ? '✓ SÍ' : 'No'],
+        ['Solicitado', fmt(order.requested_at)],
+        ['Entregado',  fmt(order.delivered_at)],
+        ['Mensaje WA', order.wa_message || '—'],
+      ].forEach(([lbl, val]) => {
+        doc.fillColor('#888').text(`${lbl}: `, { continued: true })
+           .fillColor('#222').text(String(val).slice(0, 120));
+      });
+      divider(doc);
+    });
+  }
+
+  doc.addPage();
+  sectionHeader(doc, `💬  CHATS  (${chatPhones.length} conversaciones, incluye borrados)`);
+  if (!chatPhones.length) {
+    doc.fontSize(12).fillColor('#777').text('Sin mensajes en este rango.', { align: 'center' });
+  } else {
+    for (const phone of chatPhones) {
+      const chat = chatsByPhone[phone];
+      if (doc.y > 650) doc.addPage();
+      doc.fontSize(12).font('Helvetica-Bold').fillColor('#1B5E20').text(chat.displayName);
+      doc.fontSize(9).font('Helvetica').fillColor('#888')
+         .text(phone.length === 12 && phone.startsWith('57')
+           ? `+57 ${phone.substring(2,5)} ${phone.substring(5,8)} ${phone.substring(8)}`
+           : `+${phone}`);
+      doc.moveDown(0.3);
+      for (const msg of chat.msgs) {
+        if (doc.y > 720) doc.addPage();
+        const isOut = msg.direction === 'outbound';
+        const tag   = isOut ? '[Bot/Admin]' : '[Cliente]';
+        const color = isOut ? '#1565C0' : '#333';
+        const time  = fmtTime(msg.created_at);
+        const delTag = msg.deleted_at ? ' (borrado)' : '';
+        doc.fontSize(9).font('Helvetica-Bold').fillColor(color)
+           .text(`${time}  ${tag}${delTag}  `, { continued: true })
+           .font('Helvetica').fillColor('#222')
+           .text(
+             msg.media_type === 'audio' ? '🎵 Mensaje de voz'
+           : msg.media_type === 'image' ? '📷 Imagen'
+           : String(msg.content || '').slice(0, 300),
+           { lineBreak: true });
+      }
+      divider(doc);
+    }
+  }
+
+  const pages = doc.bufferedPageRange();
+  for (let i = 0; i < pages.count; i++) {
+    doc.switchToPage(i);
+    doc.fontSize(8).fillColor('#aaa')
+       .text(`Página ${i + 1} de ${pages.count}  •  ${filename}`,
+         doc.page.margins.left, doc.page.height - 30,
+         { align: 'center', lineBreak: false });
+  }
+
+  doc.end();
+  await new Promise((resolve, reject) => {
+    stream.on('finish', resolve);
+    stream.on('error', reject);
+  });
+
+  logger.info({ filepath, orders: orders.length, chats: chatPhones.length }, '[PDF] reporte de rango generado');
+  return filepath;
+}
+
+module.exports = { generateDailyPDF, generateRangeReportPDF };

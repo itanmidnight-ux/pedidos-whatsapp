@@ -564,6 +564,22 @@ def http_put(path, data, timeout=5):
         return None
 
 
+def http_delete(path, data=None, timeout=5):
+    url = API_BASE + path
+    api_key = env_get('API_KEY')
+    body = json.dumps(data or {}).encode('utf-8')
+    req = urllib.request.Request(url, data=body, method='DELETE', headers={
+        'X-API-Key': api_key,
+        'Authorization': 'Bearer ' + _get_admin_token(),
+        'Content-Type': 'application/json',
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode('utf-8'))
+    except Exception:
+        return None
+
+
 # Cache del token admin (renovado cada 6h)
 _ADMIN_TOKEN = {'value': '', 'expires': 0}
 
@@ -2235,6 +2251,164 @@ class EmployeesModule:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# MÓDULO: DATOS
+# ══════════════════════════════════════════════════════════════════════════════
+
+class DataModule:
+    """Exportar historial completo (pedidos + chats, incluidos los ya
+    borrados) a PDF por rango de fechas, y administrar pedidos viejos con
+    seleccion multiple (uno por uno o todos a la vez)."""
+
+    def __init__(self, parent):
+        self.parent = parent
+        self.box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
+
+        header = SectionHeader('Datos y exportación',
+                               'Exportar historial completo a PDF, o eliminar pedidos antiguos',
+                               make_btn('↻ Actualizar', 'btn-flat', small=True, on_click=lambda *_: self.refresh()))
+        self.box.pack_start(header, False, False, 0)
+
+        # ─── Exportar a PDF por rango ────────────────────────────────
+        export_title = Gtk.Label(label='EXPORTAR A PDF', xalign=0)
+        export_title.get_style_context().add_class('section-title')
+        self.box.pack_start(export_title, False, False, 0)
+
+        export_card = Gtk.Box(spacing=10)
+        export_card.get_style_context().add_class('stat-card')
+        self.box.pack_start(export_card, False, False, 0)
+
+        today    = datetime.date.today()
+        week_ago = today - datetime.timedelta(days=7)
+
+        export_card.pack_start(Gtk.Label(label='Desde:'), False, False, 0)
+        self.from_entry = Gtk.Entry()
+        self.from_entry.set_text(week_ago.isoformat())
+        self.from_entry.set_width_chars(12)
+        export_card.pack_start(self.from_entry, False, False, 0)
+
+        export_card.pack_start(Gtk.Label(label='Hasta:'), False, False, 0)
+        self.to_entry = Gtk.Entry()
+        self.to_entry.set_text(today.isoformat())
+        self.to_entry.set_width_chars(12)
+        export_card.pack_start(self.to_entry, False, False, 0)
+
+        export_card.pack_start(make_btn('📄 Exportar a PDF', 'btn-primary', small=True,
+                                         on_click=lambda *_: self._export_pdf()), False, False, 0)
+        export_card.pack_start(Gtk.Label(label=''), True, True, 0)
+
+        hint = Gtk.Label(
+            label='Incluye pedidos de cualquier estado y todos los mensajes del rango '
+                  '(incluye conversaciones ya borradas de la app -- el texto siempre queda guardado).',
+            xalign=0)
+        hint.get_style_context().add_class('label-dim')
+        hint.set_line_wrap(True)
+        self.box.pack_start(hint, False, False, 0)
+
+        # ─── Tabla de pedidos con selección múltiple ─────────────────
+        table_title = Gtk.Label(label='PEDIDOS — ÚLTIMOS 300 (selección múltiple para eliminar)', xalign=0)
+        table_title.get_style_context().add_class('section-title')
+        self.box.pack_start(table_title, False, False, 0)
+
+        toolbar = Gtk.Box(spacing=8)
+        self.box.pack_start(toolbar, False, False, 0)
+        self.select_all_chk = Gtk.CheckButton(label='Seleccionar todos')
+        self.select_all_chk.connect('toggled', self._on_select_all)
+        toolbar.pack_start(self.select_all_chk, False, False, 0)
+        self.selected_lbl = Gtk.Label(label='0 seleccionados')
+        self.selected_lbl.get_style_context().add_class('label-dim')
+        toolbar.pack_start(self.selected_lbl, False, False, 0)
+        toolbar.pack_start(Gtk.Label(label=''), True, True, 0)
+        toolbar.pack_start(make_btn('🗑 Eliminar seleccionados', 'btn-warn', small=True,
+                                     on_click=lambda *_: self._delete_selected()), False, False, 0)
+
+        # store: seleccionado, id, fecha, producto, cliente, estado, total
+        self.store = Gtk.ListStore(bool, int, str, str, str, str, str)
+        tree = Gtk.TreeView(model=self.store)
+        toggle = Gtk.CellRendererToggle()
+        toggle.connect('toggled', self._on_row_toggled)
+        tree.append_column(Gtk.TreeViewColumn('', toggle, active=0))
+        for colname, idx in [('#Pedido', 1), ('Fecha', 2), ('Producto', 3),
+                              ('Cliente', 4), ('Estado', 5), ('Total', 6)]:
+            renderer = Gtk.CellRendererText()
+            col = Gtk.TreeViewColumn(colname, renderer, text=idx)
+            col.set_resizable(True)
+            tree.append_column(col)
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        scroll.add(tree)
+        scroll.set_min_content_height(320)
+        self.box.pack_start(scroll, True, True, 0)
+
+    def refresh(self):
+        self.select_all_chk.set_active(False)
+        rows = query("""
+            SELECT o.id, o.requested_at, COALESCE(o.product_name,'—'),
+                   COALESCE(c.name, c.phone, '—'), o.status, o.product_price
+            FROM orders o
+            LEFT JOIN customers c ON c.id = o.customer_id
+            ORDER BY o.requested_at DESC
+            LIMIT 300
+        """)
+        self.store.clear()
+        for oid, req_at, product, customer, status, price in rows:
+            fecha = (req_at or '')[:16].replace('T', ' ')
+            total = fmt_money(price) if price else '—'
+            self.store.append([False, oid, fecha, product, customer, status, total])
+        self._update_selected_count()
+
+    def _on_row_toggled(self, renderer, path):
+        self.store[path][0] = not self.store[path][0]
+        self._update_selected_count()
+
+    def _on_select_all(self, chk):
+        active = chk.get_active()
+        for row in self.store:
+            row[0] = active
+        self._update_selected_count()
+
+    def _update_selected_count(self):
+        n = sum(1 for row in self.store if row[0])
+        self.selected_lbl.set_text(f'{n} seleccionados')
+
+    def _delete_selected(self):
+        ids = [row[1] for row in self.store if row[0]]
+        if not ids:
+            self.parent.show_toast('No hay pedidos seleccionados')
+            return
+        dialog = Gtk.MessageDialog(
+            transient_for=self.parent, flags=0,
+            message_type=Gtk.MessageType.WARNING,
+            buttons=Gtk.ButtonsType.YES_NO,
+            text=f'¿Eliminar {len(ids)} pedido(s) seleccionado(s)?\nEsta acción no se puede deshacer.')
+        response = dialog.run()
+        dialog.destroy()
+        if response != Gtk.ResponseType.YES:
+            return
+        result = http_delete('/api/orders/bulk', {'ids': ids})
+        if result and result.get('success'):
+            self.parent.show_toast(f'{result.get("deleted", 0)} pedido(s) eliminado(s)')
+            self.refresh()
+        else:
+            self.parent.show_toast('Error eliminando pedidos')
+
+    def _export_pdf(self):
+        from_date = self.from_entry.get_text().strip()
+        to_date   = self.to_entry.get_text().strip()
+        if not re.match(r'^\d{4}-\d{2}-\d{2}$', from_date) or not re.match(r'^\d{4}-\d{2}-\d{2}$', to_date):
+            self.parent.show_toast('Fechas inválidas — formato AAAA-MM-DD')
+            return
+        self.parent.show_toast('Generando reporte, esto puede tardar unos segundos...')
+        result = http_post('/api/reports/export-range', {'from': from_date, 'to': to_date}, timeout=30)
+        if result and result.get('success'):
+            filepath = result.get('filepath')
+            self.parent.show_toast(f'Reporte generado: {result.get("filename")}')
+            if filepath and os.path.exists(filepath):
+                sh(f'xdg-open "{filepath}" 2>/dev/null &')
+        else:
+            self.parent.show_toast('Error generando el reporte')
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # MÓDULO: MARCA
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -2929,6 +3103,7 @@ class DashboardWindow(Gtk.ApplicationWindow):
         self._add_module('bot',     'Bot WhatsApp', BotModule)
         self._add_module('sales',   'Ventas', SalesModule)
         self._add_module('employees','Empleados', EmployeesModule)
+        self._add_module('data',    'Datos', DataModule)
 
         # Sección: CONFIGURACIÓN
         cfg_label = Gtk.Label(label='CONFIGURACIÓN')

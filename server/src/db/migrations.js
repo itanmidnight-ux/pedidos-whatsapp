@@ -160,6 +160,10 @@ const MIGRATIONS = [
       logged_in_at TEXT NOT NULL
     )` },
   { name: '044_login_events_index', sql: 'CREATE INDEX idx_login_events_user ON login_events(user_id, logged_in_at)' },
+  // Antes "Borrar conversacion" hacia DELETE fisico -- se perdia el texto
+  // para siempre. Ahora se marca deleted_at (soft-delete): desaparece de
+  // la vista normal pero queda intacto en la base para exportar a PDF.
+  { name: '045_messages_deleted_at', sql: 'ALTER TABLE messages ADD COLUMN deleted_at TEXT' },
 ];
 
 function runMigrations(db) {
