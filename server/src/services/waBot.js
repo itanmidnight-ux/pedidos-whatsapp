@@ -221,6 +221,44 @@ async function pollOutbound() {
   } catch (_) {}
 }
 
+// Antes del fix de sender_pn, un contacto @lid quedaba guardado con su
+// numero interno en vez del real -- eso crea un cliente/chat duplicado
+// del mismo contacto. En cuanto identificamos su numero real, se fusiona
+// todo (mensajes, pedidos, pendientes) bajo el numero correcto y se borra
+// el duplicado viejo.
+function mergeStaleLidCustomer(rawJid, realPhone) {
+  if (!rawJid.endsWith('@lid')) return;
+  const stalePhone = jidNormalizedUser(rawJid).split('@')[0];
+  if (!stalePhone || stalePhone === realPhone) return;
+  const db    = getDB();
+  const stale = db.prepare('SELECT * FROM customers WHERE phone=?').get(stalePhone);
+  if (!stale) return;
+  const real  = db.prepare('SELECT * FROM customers WHERE phone=?').get(realPhone);
+
+  db.transaction(() => {
+    db.prepare('UPDATE messages SET phone=? WHERE phone=?').run(realPhone, stalePhone);
+
+    if (db.prepare('SELECT 1 FROM pending_orders WHERE phone=?').get(stalePhone)) {
+      if (db.prepare('SELECT 1 FROM pending_orders WHERE phone=?').get(realPhone)) {
+        db.prepare('DELETE FROM pending_orders WHERE phone=?').run(stalePhone);
+      } else {
+        db.prepare('UPDATE pending_orders SET phone=? WHERE phone=?').run(realPhone, stalePhone);
+      }
+    }
+
+    if (real) {
+      db.prepare('UPDATE orders SET customer_id=? WHERE customer_id=?').run(real.id, stale.id);
+      db.prepare('UPDATE customers SET name=COALESCE(name,?), profile_pic_url=COALESCE(profile_pic_url,?) WHERE id=?')
+        .run(stale.name, stale.profile_pic_url, real.id);
+      db.prepare('DELETE FROM customers WHERE id=?').run(stale.id);
+    } else {
+      db.prepare('UPDATE customers SET phone=? WHERE id=?').run(realPhone, stale.id);
+    }
+  })();
+
+  logger.info({ from: stalePhone, to: realPhone }, '[bot] fusionado chat duplicado @lid con numero real');
+}
+
 // ── Manejar mensajes entrantes ────────────────────────────────
 async function handleInbound(msg) {
   if (msg.key.fromMe) return;
@@ -234,6 +272,9 @@ async function handleInbound(msg) {
   // responder (a un @lid reconstruido a mano nunca le llega nada).
   const jid     = msg.key.senderPn ? jidNormalizedUser(msg.key.senderPn) : jidNormalizedUser(rawJid);
   const phone   = jid.split('@')[0];
+  if (msg.key.senderPn) {
+    try { mergeStaleLidCustomer(rawJid, phone); } catch (e) { logger.error({ err: e.message }, '[bot] merge lid err'); }
+  }
   const name    = msg.pushName || phone;
 
   let profilePicUrl = null;

@@ -286,6 +286,75 @@ class _MessagesScreenState extends State<MessagesScreen> with SingleTickerProvid
     );
   }
 
+  // Mismas reglas del backend (routes/messages.js): solo digitos, celular
+  // colombiano de 10 (empieza en 3) se completa con el indicativo 57. Debe
+  // coincidir exacto o el chat nuevo consulta un phone distinto al que
+  // realmente queda guardado al enviar el primer mensaje.
+  String _normalizePhone(String raw) {
+    final digits = raw.replaceAll(RegExp(r'\D'), '');
+    if (digits.length == 10 && digits.startsWith('3')) return '57$digits';
+    return digits;
+  }
+
+  Future<void> _showNewChatDialog() async {
+    final phoneCtrl = TextEditingController();
+    final nameCtrl  = TextEditingController();
+    String? error;
+
+    final phone = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) => AlertDialog(
+          title: const Text('Nuevo chat'),
+          content: Column(mainAxisSize: MainAxisSize.min, children: [
+            TextField(
+              controller: phoneCtrl,
+              keyboardType: TextInputType.phone,
+              autofocus: true,
+              decoration: InputDecoration(
+                labelText: 'Número de teléfono',
+                hintText: 'Ej: 3138207044',
+                errorText: error,
+                prefixIcon: const Icon(Icons.phone_outlined),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: nameCtrl,
+              textCapitalization: TextCapitalization.words,
+              decoration: const InputDecoration(
+                labelText: 'Nombre (opcional)',
+                prefixIcon: Icon(Icons.person_outline),
+              ),
+            ),
+          ]),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancelar')),
+            FilledButton(
+              onPressed: () {
+                final normalized = _normalizePhone(phoneCtrl.text);
+                if (normalized.length < 7 || normalized.length > 15) {
+                  setDialogState(() => error = 'Número inválido (7 a 15 dígitos)');
+                  return;
+                }
+                Navigator.pop(dialogContext, normalized);
+              },
+              child: const Text('Iniciar chat'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    final name = nameCtrl.text.trim();
+    phoneCtrl.dispose();
+    nameCtrl.dispose();
+    if (phone == null || !mounted) return;
+    await Navigator.push(context, MaterialPageRoute(
+      builder: (_) => ChatScreen(phone: phone, name: name.isNotEmpty ? name : phone)));
+    _load();
+  }
+
   List<Conversation> _filterConvs(List<Conversation> list) {
     if (_query.isEmpty) return list;
     return list.where((c) =>
@@ -392,6 +461,13 @@ class _MessagesScreenState extends State<MessagesScreen> with SingleTickerProvid
           ],
         )),
       ]),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: _showNewChatDialog,
+        icon: const Icon(Icons.chat_outlined),
+        label: const Text('Nuevo chat'),
+        backgroundColor: scheme.primary,
+        foregroundColor: Colors.white,
+      ),
     );
   }
 }
