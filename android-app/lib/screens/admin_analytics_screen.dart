@@ -132,8 +132,8 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> with Single
   Widget _buildProductsTab() {
     final p = _products;
     if (p == null) return const EmptyState(icon: Icons.inventory_2_rounded, title: 'Sin datos todavía');
-    final top = (p['top_products'] as List).cast<Map<String, dynamic>>();
-    final low = (p['low_stock'] as List).cast<Map<String, dynamic>>();
+    final top = (p['top_products'] as List? ?? []).cast<Map<String, dynamic>>();
+    final low = (p['low_stock'] as List? ?? []).cast<Map<String, dynamic>>();
     return ListView(padding: const EdgeInsets.all(16), children: [
       if (low.isNotEmpty) ...[
         Text('Stock bajo', style: Theme.of(context).textTheme.titleLarge),
@@ -157,7 +157,7 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> with Single
   Widget _buildEmployeesTab() {
     final e = _employees;
     if (e == null) return const EmptyState(icon: Icons.engineering_rounded, title: 'Sin datos todavía');
-    final list = (e['employees'] as List).cast<Map<String, dynamic>>();
+    final list = (e['employees'] as List? ?? []).cast<Map<String, dynamic>>();
     if (list.isEmpty) return const EmptyState(icon: Icons.engineering_rounded, title: 'Sin entregas registradas');
     return ListView.builder(
       padding: const EdgeInsets.all(16),
@@ -177,7 +177,7 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> with Single
   Widget _buildCustomersTab() {
     final c = _customers;
     if (c == null) return const EmptyState(icon: Icons.people_outline_rounded, title: 'Sin datos todavía');
-    final top = (c['top_customers'] as List).cast<Map<String, dynamic>>();
+    final top = (c['top_customers'] as List? ?? []).cast<Map<String, dynamic>>();
     return ListView(padding: const EdgeInsets.all(16), children: [
       GridView.count(
         crossAxisCount: 2, shrinkWrap: true, physics: const NeverScrollableScrollPhysics(),

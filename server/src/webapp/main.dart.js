@@ -117081,44 +117081,51 @@ n=A.bP(new A.a5g(o,l),200,l)
 m=this.c
 m.toString
 return A.j2(A.b([s,B.bT,q,B.aK,new A.eU(n,l,l),B.bT,A.U("Distribuci\xf3n de pedidos",l,l,l,l,A.y(m).ok.r,l,l,l),B.aK,new A.eU(A.bP(new A.ace(p,l),220,l),l,l)],r),l,B.cD,l,B.L,!1)},
-alX(){var s,r,q,p,o,n=this,m=null,l=n.f
-if(l==null)return B.Qe
-s=J.al(l)
-r=t.j
-q=t.P
-p=J.ki(r.a(s.i(l,"top_products")),q)
-o=J.ki(r.a(s.i(l,"low_stock")),q)
-q=t.p
-s=A.b([],q)
-if(!o.gag(o)){r=n.c
-r.toString
-q=A.b([A.U("Stock bajo",m,m,m,m,A.y(r).ok.r,m,m,m),B.aK],q)
-B.b.S(q,new A.a3(o,new A.aJb(n),o.$ti.h("a3<aj.E,e>")))
-q.push(B.bT)
-B.b.S(s,q)}r=n.c
-r.toString
-s.push(A.U("M\xe1s vendidos",m,m,m,m,A.y(r).ok.r,m,m,m))
-s.push(B.aK)
-if(p.gA(0)===0)s.push(B.Qc)
-B.b.S(s,new A.a3(p,new A.aJc(),p.$ti.h("a3<aj.E,e>")))
-return A.j2(s,m,B.cD,m,B.L,!1)},
-alC(){var s,r=this.r
-if(r==null)return B.Q9
-s=J.ki(t.j.a(J.as(r,"employees")),t.P)
-if(s.gA(0)===0)return B.Qh
-return A.vm(null,new A.aJa(s),J.bU(s.a),B.cD,!1,B.L)},
+alX(){var s,r,q,p,o,n,m=this,l=null,k=m.f
+if(k==null)return B.Qe
+s=J.al(k)
+r=t.kc
+q=r.a(s.i(k,"top_products"))
+if(q==null)q=[]
+p=t.P
+o=J.ki(q,p)
+s=r.a(s.i(k,"low_stock"))
+n=J.ki(s==null?[]:s,p)
+s=t.p
+r=A.b([],s)
+if(!n.gag(n)){q=m.c
+q.toString
+s=A.b([A.U("Stock bajo",l,l,l,l,A.y(q).ok.r,l,l,l),B.aK],s)
+B.b.S(s,new A.a3(n,new A.aJb(m),n.$ti.h("a3<aj.E,e>")))
+s.push(B.bT)
+B.b.S(r,s)}s=m.c
+s.toString
+r.push(A.U("M\xe1s vendidos",l,l,l,l,A.y(s).ok.r,l,l,l))
+r.push(B.aK)
+if(o.gA(0)===0)r.push(B.Qc)
+B.b.S(r,new A.a3(o,new A.aJc(),o.$ti.h("a3<aj.E,e>")))
+return A.j2(r,l,B.cD,l,B.L,!1)},
+alC(){var s,r,q=this.r
+if(q==null)return B.Q9
+s=t.kc.a(J.as(q,"employees"))
+if(s==null)s=[]
+r=J.ki(s,t.P)
+if(r.gA(0)===0)return B.Qh
+return A.vm(null,new A.aJa(r),J.bU(r.a),B.cD,!1,B.L)},
 alz(){var s,r,q,p,o=null,n=this.w
 if(n==null)return B.Qb
 s=J.al(n)
-r=J.ki(t.j.a(s.i(n,"top_customers")),t.P)
-q=t.p
-s=A.bcF(1.8,A.b([A.L1(B.uB,"Clientes nuevos (30d)",A.r(s.i(n,"new_customers"))),A.L1(B.S1,"Recurrentes",A.r(s.i(n,"returning_customers")))],q),2,12,12,B.B7,!0)
+r=t.kc.a(s.i(n,"top_customers"))
+if(r==null)r=[]
+q=J.ki(r,t.P)
+r=t.p
+s=A.bcF(1.8,A.b([A.L1(B.uB,"Clientes nuevos (30d)",A.r(s.i(n,"new_customers"))),A.L1(B.S1,"Recurrentes",A.r(s.i(n,"returning_customers")))],r),2,12,12,B.B7,!0)
 p=this.c
 p.toString
-q=A.b([s,B.bT,A.U("Top clientes",o,o,o,o,A.y(p).ok.r,o,o,o),B.aK],q)
-if(r.gA(0)===0)q.push(B.Qj)
-B.b.S(q,new A.a3(r,new A.aJ9(),r.$ti.h("a3<aj.E,e>")))
-return A.j2(q,o,B.cD,o,B.L,!1)}}
+r=A.b([s,B.bT,A.U("Top clientes",o,o,o,o,A.y(p).ok.r,o,o,o),B.aK],r)
+if(q.gA(0)===0)r.push(B.Qj)
+B.b.S(r,new A.a3(q,new A.aJ9(),q.$ti.h("a3<aj.E,e>")))
+return A.j2(r,o,B.cD,o,B.L,!1)}}
 A.aJd.prototype={
 $0(){return this.a.x=!0},
 $S:0}
