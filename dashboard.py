@@ -1241,6 +1241,28 @@ class SalesModule:
         charts_row.pack_start(right_box, False, False, 0)
         right_box.set_size_request(360, -1)
 
+        # ─── Ventas por día (con detalle por día al hacer doble clic) ─
+        days_title = Gtk.Label(label='VENTAS POR DÍA — ÚLTIMOS 14 DÍAS (doble clic para el detalle)', xalign=0)
+        days_title.get_style_context().add_class('section-title')
+        self.box.pack_start(days_title, False, False, 0)
+
+        self.days_store = Gtk.ListStore(str, int, str, str)  # fecha, pedidos, total, fecha_iso (oculta)
+        days_tree = Gtk.TreeView(model=self.days_store)
+        days_tree.get_style_context().add_class('mono')
+        for i, colname in enumerate(['Fecha', 'Pedidos entregados', 'Total']):
+            renderer = Gtk.CellRendererText()
+            col = Gtk.TreeViewColumn(colname, renderer, text=i)
+            if i in (1, 2):
+                renderer.set_property('xalign', 1.0)
+            col.set_resizable(True)
+            days_tree.append_column(col)
+        days_tree.connect('row-activated', self._on_day_activated)
+        days_scroll = Gtk.ScrolledWindow()
+        days_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        days_scroll.add(days_tree)
+        days_scroll.set_min_content_height(180)
+        self.box.pack_start(days_scroll, False, False, 0)
+
         # ─── Top productos ───────────────────────────────────────────
         top_title = Gtk.Label(label='TOP 10 PRODUCTOS VENDIDOS', xalign=0)
         top_title.get_style_context().add_class('section-title')
@@ -1342,6 +1364,82 @@ class SalesModule:
         self.top_store.clear()
         for i, (name, qty, val) in enumerate(top, 1):
             self.top_store.append([i, name, qty, fmt_money(val)])
+
+        # Ventas por día — últimos 14 días
+        day_rows = query("""
+            SELECT date(o.delivered_at) d, COUNT(DISTINCT o.id) n, SUM(oi.product_price*oi.quantity) t
+            FROM orders o JOIN order_items oi ON oi.order_id=o.id
+            WHERE o.status IN ('entregado','delivered') AND o.delivered_at >= date('now','-13 days')
+            GROUP BY d ORDER BY d DESC
+        """)
+        by_day = {r[0]: (r[1], r[2]) for r in day_rows}
+        self.days_store.clear()
+        for i in range(0, 14):
+            d = datetime.date.today() - datetime.timedelta(days=i)
+            iso = d.isoformat()
+            n, t = by_day.get(iso, (0, 0))
+            self.days_store.append([d.strftime('%A %d/%m').capitalize(), n, fmt_money(t or 0), iso])
+
+    def _on_day_activated(self, tree, path, column):
+        model = tree.get_model()
+        row = model[path]
+        self._show_day_detail(row[3], row[0])
+
+    def _show_day_detail(self, iso_date, label):
+        """Subventana con el detalle de pedidos de un día + acceso al PDF diario
+        (generado automáticamente a las 23:59 por el servidor)."""
+        dialog = Gtk.Dialog(title=f'Detalle — {label}', transient_for=self.parent,
+                            modal=True, destroy_with_parent=True)
+        dialog.add_buttons('Cerrar', Gtk.ResponseType.CLOSE)
+        dialog.set_default_size(640, 420)
+        box = dialog.get_content_area()
+        box.set_spacing(10)
+        box.set_border_width(14)
+
+        orders = query("""
+            SELECT o.id, COALESCE(c.name, o.customer_id, '—'), oi.product_name, oi.quantity,
+                   oi.product_price*oi.quantity, o.delivered_at
+            FROM orders o
+            JOIN order_items oi ON oi.order_id = o.id
+            LEFT JOIN customers c ON c.id = o.customer_id
+            WHERE o.status IN ('entregado','delivered') AND date(o.delivered_at) = ?
+            ORDER BY o.delivered_at
+        """, (iso_date,))
+
+        store = Gtk.ListStore(str, str, str, int, str)
+        tree = Gtk.TreeView(model=store)
+        tree.get_style_context().add_class('mono')
+        for i, (colname, _) in enumerate([('#Pedido', 70), ('Cliente', 150), ('Producto', 200), ('Cant.', 60), ('Subtotal', 100)]):
+            renderer = Gtk.CellRendererText()
+            col = Gtk.TreeViewColumn(colname, renderer, text=i)
+            col.set_resizable(True)
+            tree.append_column(col)
+        for oid, customer, product, qty, subtotal, delivered_at in orders:
+            hora = (delivered_at or '')[11:16]
+            store.append([f'#{oid} {hora}', str(customer), product, qty, fmt_money(subtotal)])
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        scroll.add(tree)
+        box.pack_start(scroll, True, True, 0)
+
+        if not orders:
+            box.pack_start(Gtk.Label(label='Sin pedidos entregados este día.'), False, False, 0)
+
+        pdf_bar = Gtk.Box(spacing=8)
+        box.pack_start(pdf_bar, False, False, 0)
+        reports_dir = env_get('REPORTS_DIR') or os.path.join(PROJ, 'server', 'reports')
+        pdf_path = os.path.join(reports_dir, f'registro-{iso_date}.pdf')
+        if os.path.exists(pdf_path):
+            pdf_bar.pack_start(make_btn('📄 Abrir reporte PDF del día', 'btn-primary', small=True,
+                                        on_click=lambda *_: sh(f'xdg-open "{pdf_path}" 2>/dev/null &')), False, False, 0)
+        else:
+            hint = Gtk.Label(label='Reporte PDF de este día aún no generado (se crea automáticamente a las 23:59).')
+            hint.get_style_context().add_class('label-dim')
+            pdf_bar.pack_start(hint, False, False, 0)
+
+        box.show_all()
+        dialog.run()
+        dialog.destroy()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1554,17 +1652,29 @@ class OrdersModule:
 # MÓDULO: BOT WHATSAPP (NUEVO)
 # ══════════════════════════════════════════════════════════════════════════════
 
+STATUS_LABELS = {
+    'connected':    'CONECTADO',
+    'qr_pending':   'QR PENDIENTE',
+    'connecting':   'RECONECTANDO',
+    'paused':       'PAUSADO',
+    'disconnected': 'DESCONECTADO',
+}
+
+
 class BotModule:
-    """Estado del bot WhatsApp: conexión, QR de vinculación, cola de mensajes,
-    tasa de envío/hora, reconexiones, historial de último mensaje y reinicio."""
+    """Estado del bot WhatsApp: vincular/cambiar número (encriptado, persistente),
+    pausar/reanudar la conexión, QR de vinculación, cola de mensajes, tasa de
+    envío/hora, reconexiones y registro de eventos del bot línea por línea."""
 
     def __init__(self, parent):
         self.parent = parent
         self.box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
         self._qr_pixbuf = None
+        self._phone_configured = False
+        self._paused = False
 
         header = SectionHeader('Bot de WhatsApp',
-                               'Estado de la conexión, QR de vinculación y cola de mensajes',
+                               'Vincular número, pausar/reanudar y ver el estado de la conexión',
                                make_btn('↻ Actualizar', 'btn-flat', small=True, on_click=lambda *_: self.refresh()))
         self.box.pack_start(header, False, False, 0)
 
@@ -1572,8 +1682,8 @@ class BotModule:
         cards = Gtk.Box(spacing=12)
         self.box.pack_start(cards, False, False, 0)
 
-        self.card_status  = StatCard('Estado conexión',  sub='Cliente WhatsApp')
-        self.card_phone   = StatCard('Número vinculado', sub='BOT_PHONE')
+        self.card_status  = StatCard('Estado conexión',  sub='Bot WhatsApp')
+        self.card_phone   = StatCard('Número vinculado', sub='Encriptado en la base de datos')
         self.card_queue   = StatCard('Cola de envío',    sub='Mensajes pendientes')
         self.card_rate    = StatCard('Enviados/hora',    sub='Anti-baneo WhatsApp')
         for c in (self.card_status, self.card_phone, self.card_queue, self.card_rate):
@@ -1620,13 +1730,33 @@ class BotModule:
 
         actions = Gtk.Box(spacing=8)
         left_frame.pack_start(actions, False, False, 0)
-        actions.pack_start(make_btn('↻ Reiniciar bot', 'btn-primary', on_click=lambda *_: self._restart_bot()), False, False, 0)
-        actions.pack_start(make_btn('Re-vincular (borra sesión)', 'btn-warn', on_click=lambda *_: self._relink()), False, False, 0)
-        actions.pack_start(make_btn('Forzar refresco QR', 'btn-flat', on_click=lambda *_: self.refresh()), False, False, 0)
+        self.btn_phone  = make_btn('Vincular número', 'btn-primary', on_click=lambda *_: self._open_phone_dialog())
+        self.btn_pause  = make_btn('Pausar conexión', 'btn-warn', on_click=lambda *_: self._toggle_pause())
+        self.btn_retry  = make_btn('Reintentar conexión', 'btn-flat', on_click=lambda *_: self._retry())
+        self.btn_logout = make_btn('Desvincular', 'btn-danger', on_click=lambda *_: self._logout())
+        for b in (self.btn_phone, self.btn_pause, self.btn_retry, self.btn_logout):
+            actions.pack_start(b, False, False, 0)
 
         self.bot_status_label = Gtk.Label(label='')
         self.bot_status_label.get_style_context().add_class('label-dim')
         left_frame.pack_start(self.bot_status_label, False, False, 8)
+
+        # Registro del bot — línea por línea, más reciente al final
+        log_title = Gtk.Label(label='REGISTRO DEL BOT', xalign=0)
+        log_title.get_style_context().add_class('section-title')
+        left_frame.pack_start(log_title, False, False, 4)
+
+        self.bot_log_view = Gtk.TextView(editable=False, cursor_visible=False)
+        self.bot_log_view.set_wrap_mode(Gtk.WrapMode.WORD)
+        self.bot_log_view.set_monospace(True)
+        self.bot_log_view.set_left_margin(8)
+        self.bot_log_view.set_top_margin(6)
+        self.bot_log_view.set_bottom_margin(6)
+        log_scroll = Gtk.ScrolledWindow()
+        log_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.ALWAYS)
+        log_scroll.set_min_content_height(140)
+        log_scroll.add(self.bot_log_view)
+        left_frame.pack_start(log_scroll, True, True, 0)
 
         # Panel derecho: QR
         right_frame = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
@@ -1662,29 +1792,26 @@ class BotModule:
             self._set_qr_status('Sin conexión al servidor', is_error=True)
             return
 
-        ready = bot.get('ready', False)
+        ready  = bot.get('ready', False)
         has_qr = bot.get('hasQR', False)
+        status = bot.get('status', 'disconnected')
+        paused = bot.get('paused', False)
+        phone  = bot.get('phone')
 
-        # Status
-        if ready:
-            self.card_status.set_value('CONECTADO')
-        elif has_qr:
-            self.card_status.set_value('QR PENDIENTE')
-        else:
-            self.card_status.set_value('DESCONECTADO')
+        self._phone_configured = bool(phone)
+        self._paused = paused
 
-        # Phone
-        phone = bot.get('phone')
+        self.card_status.set_value(STATUS_LABELS.get(status, status.upper()))
         self.card_phone.set_value(phone or 'No configurado')
+        self.card_queue.set_value(str(bot.get('pendingQueue', 0)))
+        self.card_rate.set_value(f"{bot.get('sentLastHour', 0)} / {bot.get('maxMsgsPerHour', 200)}")
 
-        # Queue
-        queue = bot.get('pendingQueue', 0)
-        self.card_queue.set_value(str(queue))
-
-        # Rate
-        sent = bot.get('sentLastHour', 0)
-        max_msgs = bot.get('maxMsgsPerHour', 200)
-        self.card_rate.set_value(f'{sent} / {max_msgs}')
+        # Botones dinámicos — un solo botón que cambia de texto, no duplicados
+        self.btn_phone.set_label('Cambiar número' if self._phone_configured else 'Vincular número')
+        self.btn_pause.set_label('Reanudar conexión' if paused else 'Pausar conexión')
+        self.btn_pause.set_sensitive(self._phone_configured)
+        self.btn_retry.set_sensitive(self._phone_configured and not paused)
+        self.btn_logout.set_sensitive(self._phone_configured)
 
         # Detalle
         self.detail_labels['connected_since'].set_text(
@@ -1698,22 +1825,46 @@ class BotModule:
 
         exhausted = bot.get('reconnectExhausted', False)
         if exhausted:
-            self.detail_labels['reconnect_state'].set_text('AGOTADO — reinicio manual')
+            self.detail_labels['reconnect_state'].set_text('AGOTADO — usa "Reintentar conexión"')
             self.detail_labels['reconnect_state'].get_style_context().add_class('label-bold')
+        elif paused:
+            self.detail_labels['reconnect_state'].set_text('En pausa — sin reconectar')
         elif ready:
             self.detail_labels['reconnect_state'].set_text('OK — conectado')
         else:
             self.detail_labels['reconnect_state'].set_text('En progreso…')
 
-        bot_enabled = env_get('BOT_ENABLED') == 'true'
+        # BOT_ENABLED viene de la API, no del .env local -- el dashboard corre
+        # como usuario de escritorio y el .env es 600 solo para pedidos-bot.
+        bot_enabled = bot.get('botEnabled', False)
         self.detail_labels['bot_enabled'].set_text('Sí' if bot_enabled else 'No (BOT_ENABLED=false)')
 
         # QR
         if has_qr:
             self._load_qr()
         else:
-            self._set_qr_status('Bot conectado o sin QR pendiente' if ready
-                                else 'Iniciando… esperando QR')
+            if not self._phone_configured:
+                self._set_qr_status('Vincula un número para generar el QR')
+            elif paused:
+                self._set_qr_status('Bot en pausa')
+            else:
+                self._set_qr_status('Bot conectado o sin QR pendiente' if ready
+                                    else 'Iniciando… esperando QR')
+
+        self._refresh_bot_log()
+
+    def _refresh_bot_log(self):
+        data = http_get('/api/bot/logs?limit=60')
+        logs = (data or {}).get('logs', [])
+        lines = []
+        for entry in logs:
+            t = (entry.get('time') or '')[11:19]  # HH:MM:SS de un ISO timestamp
+            lines.append(f"{t}  {entry.get('msg', '')}")
+        buf = self.bot_log_view.get_buffer()
+        buf.set_text('\n'.join(lines) if lines else '(sin eventos del bot todavía)')
+        end = buf.get_end_iter()
+        mark = buf.create_mark(None, end, False)
+        self.bot_log_view.scroll_to_mark(mark, 0, False, 0, 0)
 
     def _load_qr(self):
         """Descarga el QR como PNG desde /api/bot/qr y lo muestra."""
@@ -1752,32 +1903,72 @@ class BotModule:
         else:
             ctx.add_class('label-muted')
 
-    def _restart_bot(self):
-        self.bot_status_label.set_text('Reiniciando bot…')
-        result = http_post('/api/bot/restart', {})
-        if result is None:
-            self.bot_status_label.set_text('Error: no se pudo reiniciar el bot')
-        else:
-            self.bot_status_label.set_text('Bot reiniciado. Esperando conexión…')
-        GLib.timeout_add(3000, lambda: (self.refresh(), False)[1])
+    def _open_phone_dialog(self):
+        """Diálogo para vincular o cambiar el número de la empresa. Cambiarlo
+        cuando ya había uno cierra la sesión anterior y pide un QR nuevo."""
+        is_change = self._phone_configured
+        dialog = Gtk.Dialog(title='Cambiar número' if is_change else 'Vincular número',
+                            transient_for=self.parent, modal=True, destroy_with_parent=True)
+        dialog.add_buttons('Cancelar', Gtk.ResponseType.CANCEL,
+                           'Guardar', Gtk.ResponseType.OK)
+        dialog.set_default_size(360, 140)
+        box = dialog.get_content_area()
+        box.set_spacing(8)
+        box.set_border_width(14)
+        box.pack_start(Gtk.Label(label='Número de WhatsApp de la empresa (con indicativo de país):'), False, False, 0)
+        entry = Gtk.Entry()
+        entry.set_placeholder_text('Ej: 573001234567')
+        box.pack_start(entry, False, False, 0)
+        if is_change:
+            warn = Gtk.Label(label='Cambiarlo cierra la sesión vinculada actual y pedirá un QR nuevo.')
+            warn.get_style_context().add_class('label-dim')
+            warn.set_line_wrap(True)
+            box.pack_start(warn, False, False, 0)
+        box.show_all()
+        if dialog.run() == Gtk.ResponseType.OK:
+            phone = entry.get_text().strip()
+            if phone:
+                self.bot_status_label.set_text('Guardando número…')
+                result = http_post('/api/bot/configure', {'phone': phone})
+                if result and result.get('ok'):
+                    self.bot_status_label.set_text('Número guardado. Generando QR…')
+                else:
+                    err = (result or {}).get('error', 'error desconocido')
+                    self.bot_status_label.set_text(f'Error: {err}')
+                GLib.timeout_add(2000, lambda: (self.refresh(), False)[1])
+        dialog.destroy()
 
-    def _relink(self):
-        """Borra la sesión de WhatsApp y reinicia el servicio."""
+    def _toggle_pause(self):
+        endpoint = '/api/bot/resume' if self._paused else '/api/bot/pause'
+        self.bot_status_label.set_text('Reanudando…' if self._paused else 'Pausando…')
+        result = http_post(endpoint, {})
+        if result is None or not result.get('ok'):
+            self.bot_status_label.set_text(f"Error: {(result or {}).get('error', 'no se pudo cambiar el estado')}")
+        GLib.timeout_add(1200, lambda: (self.refresh(), False)[1])
+
+    def _retry(self):
+        self.bot_status_label.set_text('Reintentando conexión…')
+        result = http_post('/api/bot/resume', {})
+        if result is None or not result.get('ok'):
+            self.bot_status_label.set_text(f"Error: {(result or {}).get('error', 'no se pudo reconectar')}")
+        GLib.timeout_add(1500, lambda: (self.refresh(), False)[1])
+
+    def _logout(self):
+        """Desvincula por completo: cierra sesión, borra credenciales y el
+        número guardado. Vuelve al estado de fábrica (sin número)."""
         dialog = Gtk.MessageDialog(
             transient_for=self.parent, flags=0,
             message_type=Gtk.MessageType.WARNING,
             buttons=Gtk.ButtonsType.YES_NO,
-            text='Esto borrará la sesión actual de WhatsApp y pedirá un nuevo código de vinculación. '
-                 'Los clientes no podrán escribir al bot hasta que re-vincules. ¿Continuar?')
+            text='Esto desvincula el WhatsApp de la empresa por completo (borra sesión y número guardado). '
+                 'Los clientes no podrán escribir al bot hasta que vincules uno nuevo. ¿Continuar?')
         resp = dialog.run()
         dialog.destroy()
         if resp == Gtk.ResponseType.YES:
-            appdata = self.parent._appdata_dir()
-            if appdata:
-                sh(f'rm -rf "{appdata}/pedidos-bot/auth" && mkdir -p "{appdata}/pedidos-bot/auth"')
-            sh(f'systemctl restart {SERVICE}')
-            self.bot_status_label.set_text('Sesión borrada. Revisa el QR en unos segundos.')
-            GLib.timeout_add(5000, lambda: (self.refresh(), False)[1])
+            result = http_post('/api/bot/logout', {})
+            self.bot_status_label.set_text('Desvinculado.' if result and result.get('ok')
+                                           else 'Error al desvincular')
+            GLib.timeout_add(1000, lambda: (self.refresh(), False)[1])
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -2480,7 +2671,8 @@ class LogsModule:
     def refresh(self):
         p = os.path.join(LOG_DIR, 'server.log')
         if os.path.exists(p):
-            content = sh(f'tail -n 200 "{p}" 2>/dev/null')
+            raw = sh(f'tail -n 200 "{p}" 2>/dev/null')
+            content = '\n'.join(self._format_line(l) for l in raw.splitlines()) if raw else ''
             size = sh(f'stat -c %s "{p}" 2>/dev/null')
             if size:
                 try:
@@ -2496,6 +2688,25 @@ class LogsModule:
         end = buf.get_end_iter()
         mark = buf.create_mark(None, end, False)
         self.view.scroll_to_mark(mark, 0, False, 0, 0)
+
+    _LEVEL_NAMES = {10: 'TRACE', 20: 'DEBUG', 30: 'INFO', 40: 'WARN', 50: 'ERROR', 60: 'FATAL'}
+
+    def _format_line(self, line):
+        """El server.log guarda JSON crudo de pino (una línea por evento) --
+        lo reformateamos a 'HH:MM:SS [NIVEL] mensaje' para que sea legible."""
+        try:
+            entry = json.loads(line)
+        except Exception:
+            return line
+        t = datetime.datetime.fromtimestamp(entry.get('time', 0) / 1000).strftime('%H:%M:%S')
+        level = self._LEVEL_NAMES.get(entry.get('level'), '')
+        msg = entry.get('msg', '')
+        if entry.get('req'):
+            msg = f"{entry['req'].get('method','')} {entry['req'].get('url','')} -> {entry.get('res',{}).get('statusCode','')}"
+        extra = {k: v for k, v in entry.items()
+                 if k not in ('time', 'level', 'msg', 'pid', 'hostname', 'req', 'res', 'responseTime')}
+        extra_txt = f" {extra}" if extra else ''
+        return f"{t}  [{level:<5}] {msg}{extra_txt}"
 
     def _copy(self):
         buf = self.view.get_buffer()

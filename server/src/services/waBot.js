@@ -527,6 +527,7 @@ function getStatus() {
     hasQR: currentQR !== null,
     status: cfg.status,
     paused: !!cfg.paused,
+    botEnabled: process.env.BOT_ENABLED === 'true',
     phone: phoneMasked,
     connectedSince,
     lastMessageAt,
