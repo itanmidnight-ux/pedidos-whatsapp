@@ -701,8 +701,12 @@ class ApiService {
     throw Exception('Error consultando estado del bot');
   }
 
+  // El backend ya no tiene /api/bot/restart (migración a baileys, ver
+  // waBot.js) -- /api/bot/resume es el equivalente: fuerza una reconexión
+  // usando el número ya vinculado (falla con un mensaje claro si no hay
+  // ninguno configurado todavía, gestionado desde el panel de escritorio).
   static Future<void> restartBot() async {
-    final res = await _client.post(Uri.parse('$_serverUrl/api/bot/restart'), headers: _headers)
+    final res = await _client.post(Uri.parse('$_serverUrl/api/bot/resume'), headers: _headers)
       .timeout(const Duration(seconds: 15));
     if (res.statusCode != 200) {
       final body = _tryDecodeBody(res.body);

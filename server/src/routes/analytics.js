@@ -33,11 +33,37 @@ router.get('/summary', adminAuth, (req, res) => {
 
   const cancelledPct = counts.total > 0 ? Math.round((counts.cancelled / counts.total) * 100) : 0;
 
+  // Distribución por estado -- para el donut de la app/panel
+  const statusRows = db.prepare(`
+    SELECT status, COUNT(*) AS count FROM orders
+    WHERE status IN ('pending','claimed','en_camino','entregado','delivered','cancelled')
+    GROUP BY status
+  `).all();
+  const statusBreakdown = statusRows.map(r => ({ status: r.status, count: r.count }));
+
+  // Ingresos por día -- últimos 7 días, para el gráfico de barras
+  const dayRows = db.prepare(`
+    SELECT date(o.delivered_at) AS d, SUM(oi.product_price * oi.quantity) AS total
+    FROM orders o JOIN order_items oi ON oi.order_id = o.id
+    WHERE o.status IN ('entregado','delivered') AND o.delivered_at >= date('now','-6 days')
+    GROUP BY d ORDER BY d
+  `).all();
+  const byDate = Object.fromEntries(dayRows.map(r => [r.d, r.total]));
+  const dailySales = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    const iso = d.toISOString().slice(0, 10);
+    dailySales.push({ date: iso, total: byDate[iso] || 0 });
+  }
+
   res.json({
     sales_today: salesToday,
     avg_ticket: Math.round(avgTicket),
     cancelled_pct: cancelledPct,
     delivered_total: counts.delivered,
+    status_breakdown: statusBreakdown,
+    daily_sales: dailySales,
   });
 });
 

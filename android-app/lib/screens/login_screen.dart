@@ -478,7 +478,7 @@ class _LoginScreenState extends State<LoginScreen>
       decoration: InputDecoration(
         labelText: label,
         hintText: hint,
-        hintStyle: TextStyle(color: Colors.grey.shade300, fontSize: 14),
+        hintStyle: TextStyle(color: Colors.grey.shade500, fontSize: 14),
         prefixIcon: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 14),
           child: Icon(icon, size: 20, color: primary),

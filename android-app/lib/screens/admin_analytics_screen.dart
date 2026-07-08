@@ -1,8 +1,23 @@
 import 'package:flutter/material.dart';
+import 'package:fl_chart/fl_chart.dart';
+import 'package:intl/intl.dart';
 import '../services/api_service.dart';
 import '../widgets/stat_tile.dart';
 import '../widgets/app_card.dart';
 import '../widgets/empty_state.dart';
+
+const Map<String, String> _statusLabels = {
+  'pending': 'Pendiente', 'claimed': 'Reclamado', 'en_camino': 'En camino',
+  'entregado': 'Entregado', 'delivered': 'Entregado', 'cancelled': 'Cancelado',
+};
+const Map<String, Color> _statusColors = {
+  'pending':   Color(0xFFB5651D),
+  'claimed':   Color(0xFF3B5A73),
+  'en_camino': Color(0xFF2D5016),
+  'entregado': Color(0xFF2E7D32),
+  'delivered': Color(0xFF2E7D32),
+  'cancelled': Color(0xFFB3261E),
+};
 
 class AdminAnalyticsScreen extends StatefulWidget {
   const AdminAnalyticsScreen({super.key});
@@ -58,9 +73,17 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> with Single
     return Scaffold(
       appBar: AppBar(
         title: const Text('Analíticas'),
-        bottom: TabBar(controller: _tabController, isScrollable: true, tabs: const [
-          Tab(text: 'Resumen'), Tab(text: 'Productos'), Tab(text: 'Empleados'), Tab(text: 'Clientes'),
-        ]),
+        // Material 3 sin esto usa colorScheme.primary para el tab seleccionado
+        // -- el mismo verde del fondo del AppBar, texto invisible sobre su
+        // propio fondo. Un TabBar dentro de un AppBar de color necesita sus
+        // colores explícitos en blanco, M3 no lo asume solo.
+        bottom: TabBar(controller: _tabController, isScrollable: true,
+          labelColor: Colors.white,
+          unselectedLabelColor: Colors.white70,
+          indicatorColor: Colors.white,
+          tabs: const [
+            Tab(text: 'Resumen'), Tab(text: 'Productos'), Tab(text: 'Empleados'), Tab(text: 'Clientes'),
+          ]),
       ),
       body: _loading
         ? const Center(child: CircularProgressIndicator())
@@ -79,6 +102,8 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> with Single
   Widget _buildSummaryTab() {
     final s = _summary;
     if (s == null) return const EmptyState(icon: Icons.bar_chart_rounded, title: 'Sin datos todavía');
+    final statusBreakdown = (s['status_breakdown'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+    final dailySales = (s['daily_sales'] as List?)?.cast<Map<String, dynamic>>() ?? [];
     return ListView(padding: const EdgeInsets.all(16), children: [
       GridView.count(
         crossAxisCount: 2,
@@ -93,6 +118,14 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> with Single
           StatTile(label: 'Entregados (total)', value: '${s['delivered_total']}', icon: Icons.local_shipping_outlined),
         ],
       ),
+      const SizedBox(height: 20),
+      Text('Ingresos por día — últimos 7 días', style: Theme.of(context).textTheme.titleLarge),
+      const SizedBox(height: 8),
+      AppCard(child: SizedBox(height: 200, child: _DailySalesChart(data: dailySales))),
+      const SizedBox(height: 20),
+      Text('Distribución de pedidos', style: Theme.of(context).textTheme.titleLarge),
+      const SizedBox(height: 8),
+      AppCard(child: SizedBox(height: 220, child: _StatusDonutChart(data: statusBreakdown))),
     ]);
   }
 
@@ -162,6 +195,106 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> with Single
         Expanded(child: Text(cust['name'] as String? ?? cust['phone'] as String)),
         Text('${cust['order_count']} pedidos'),
       ]))),
+    ]);
+  }
+}
+
+/// Barras de ingresos por día (últimos 7 días).
+class _DailySalesChart extends StatelessWidget {
+  final List<Map<String, dynamic>> data;
+  const _DailySalesChart({required this.data});
+
+  @override
+  Widget build(BuildContext context) {
+    if (data.isEmpty || data.every((d) => (d['total'] as num? ?? 0) == 0)) {
+      return const Center(child: Text('Sin ingresos esta semana', style: TextStyle(color: Colors.grey)));
+    }
+    final primary = Theme.of(context).colorScheme.primary;
+    final maxVal = data.map((d) => (d['total'] as num? ?? 0).toDouble()).reduce((a, b) => a > b ? a : b);
+    return BarChart(BarChartData(
+      maxY: maxVal * 1.2,
+      barTouchData: BarTouchData(enabled: true),
+      titlesData: FlTitlesData(
+        leftTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+        rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+        topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+        bottomTitles: AxisTitles(sideTitles: SideTitles(
+          showTitles: true, reservedSize: 28,
+          getTitlesWidget: (value, meta) {
+            final i = value.toInt();
+            if (i < 0 || i >= data.length) return const SizedBox.shrink();
+            final d = DateTime.tryParse(data[i]['date'] as String? ?? '');
+            return Padding(padding: const EdgeInsets.only(top: 6),
+              child: Text(d != null ? DateFormat('E', 'es').format(d) : '',
+                style: const TextStyle(fontSize: 11, color: Colors.black87)));
+          },
+        )),
+      ),
+      gridData: const FlGridData(show: false),
+      borderData: FlBorderData(show: false),
+      barGroups: List.generate(data.length, (i) {
+        final total = (data[i]['total'] as num? ?? 0).toDouble();
+        return BarChartGroupData(x: i, barRods: [
+          BarChartRodData(toY: total, color: primary, width: 20,
+            borderRadius: BorderRadius.circular(4)),
+        ]);
+      }),
+    ));
+  }
+}
+
+/// Dona de distribución de pedidos por estado.
+class _StatusDonutChart extends StatelessWidget {
+  final List<Map<String, dynamic>> data;
+  const _StatusDonutChart({required this.data});
+
+  @override
+  Widget build(BuildContext context) {
+    final entries = data.where((d) => (d['count'] as num? ?? 0) > 0).toList();
+    if (entries.isEmpty) {
+      return const Center(child: Text('Sin pedidos todavía', style: TextStyle(color: Colors.grey)));
+    }
+    final total = entries.fold<int>(0, (sum, e) => sum + (e['count'] as num).toInt());
+    return Row(children: [
+      Expanded(
+        flex: 3,
+        child: PieChart(PieChartData(
+          sectionsSpace: 2,
+          centerSpaceRadius: 40,
+          sections: entries.map((e) {
+            final status = e['status'] as String;
+            final count  = (e['count'] as num).toInt();
+            final pct    = (count / total * 100).round();
+            return PieChartSectionData(
+              value: count.toDouble(),
+              color: _statusColors[status] ?? Colors.grey,
+              title: '$pct%',
+              radius: 55,
+              titleStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white),
+            );
+          }).toList(),
+        )),
+      ),
+      Expanded(
+        flex: 2,
+        child: Column(mainAxisAlignment: MainAxisAlignment.center, crossAxisAlignment: CrossAxisAlignment.start,
+          children: entries.map((e) {
+            final status = e['status'] as String;
+            return Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Row(children: [
+                Container(width: 10, height: 10,
+                  decoration: BoxDecoration(color: _statusColors[status] ?? Colors.grey, shape: BoxShape.circle)),
+                const SizedBox(width: 6),
+                Expanded(child: Text(_statusLabels[status] ?? status,
+                  style: const TextStyle(fontSize: 12, color: Colors.black87),
+                  overflow: TextOverflow.ellipsis)),
+                Text('${e['count']}', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+              ]),
+            );
+          }).toList(),
+        ),
+      ),
     ]);
   }
 }

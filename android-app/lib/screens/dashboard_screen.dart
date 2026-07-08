@@ -117,20 +117,28 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
             ListTile(leading: const Icon(Icons.bar_chart_rounded), title: const Text('Analíticas'),
               onTap: () { Navigator.pop(context); Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminAnalyticsScreen())); }),
             ListTile(leading: const Icon(Icons.bar_chart_rounded), title: const Text('Inventario'),
-              onTap: () { Navigator.pop(context); Navigator.push(context, MaterialPageRoute(builder: (_) => const InventarioScreen())); }),
+              onTap: () { Navigator.pop(context); Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(
+                appBar: AppBar(title: const Text('Inventario')),
+                body: const InventarioScreen()))); }),
             ListTile(leading: const Icon(Icons.auto_stories_rounded), title: const Text('Estados'),
-              onTap: () { Navigator.pop(context); Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminEstadosScreen())); }),
+              onTap: () { Navigator.pop(context); Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(
+                appBar: AppBar(title: const Text('Estados')),
+                body: const AdminEstadosScreen()))); }),
             const Padding(padding: EdgeInsets.fromLTRB(16, 16, 16, 4),
               child: Text('SISTEMA', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, letterSpacing: 1))),
             ListTile(leading: const Icon(Icons.group_rounded), title: const Text('Usuarios'),
-              onTap: () { Navigator.pop(context); Navigator.push(context, MaterialPageRoute(builder: (_) => const UsersScreen())); }),
+              onTap: () { Navigator.pop(context); Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(
+                appBar: AppBar(title: const Text('Usuarios')),
+                body: const UsersScreen()))); }),
             ListTile(leading: const Icon(Icons.settings_rounded), title: const Text('Configuración'),
               onTap: () { Navigator.pop(context); Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(
                 appBar: AppBar(title: const Text('Configuración')),
                 body: const AdminSettingsScreen()))); }),
           ] else
             ListTile(leading: const Icon(Icons.auto_stories_rounded), title: const Text('Estados'),
-              onTap: () { Navigator.pop(context); Navigator.push(context, MaterialPageRoute(builder: (_) => const WorkerEstadosScreen())); }),
+              onTap: () { Navigator.pop(context); Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(
+                appBar: AppBar(title: const Text('Estados')),
+                body: const WorkerEstadosScreen()))); }),
           const Divider(),
           ListTile(leading: const Icon(Icons.logout_rounded), title: const Text('Cerrar sesión'),
             onTap: () async {
