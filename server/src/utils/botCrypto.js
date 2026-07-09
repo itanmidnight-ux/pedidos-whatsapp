@@ -30,4 +30,7 @@ function decryptPhone(blob) {
   return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf8');
 }
 
-module.exports = { encryptPhone, decryptPhone };
+// Alias genericos -- la logica de encryptPhone/decryptPhone no tiene nada
+// especifico de telefono, cifra cualquier string. Se reusa igual para
+// credenciales de Nequi en vez de duplicar la misma funcion.
+module.exports = { encryptPhone, decryptPhone, encryptText: encryptPhone, decryptText: decryptPhone };

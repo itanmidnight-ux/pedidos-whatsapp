@@ -2058,6 +2058,152 @@ class BotModule:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# MÓDULO: MÉTODOS DE PAGO (NEQUI)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class PaymentsModule:
+    """Conexion de la cuenta Nequi receptora del negocio -- conectar/cambiar,
+    pausar/reanudar, desconectar. Sin credenciales reales de la API de Nequi
+    Conecta todavia (pago push): esto guarda la cuenta receptora (cifrada,
+    igual que el numero del bot) para que la app la muestre en el checkout
+    del cliente. El cobro automatico por push queda listo para activarse
+    apenas haya convenio con Nequi/Bancolombia."""
+
+    def __init__(self, parent):
+        self.parent = parent
+        self.box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
+        self._connected = False
+
+        header = SectionHeader('Métodos de pago',
+                               'Cuenta Nequi receptora que ven los clientes al pagar',
+                               make_btn('↻ Actualizar', 'btn-flat', small=True, on_click=lambda *_: self.refresh()))
+        self.box.pack_start(header, False, False, 0)
+
+        cards = Gtk.Box(spacing=12)
+        self.box.pack_start(cards, False, False, 0)
+        self.card_status = StatCard('Estado', sub='Conexión Nequi')
+        self.card_phone  = StatCard('Número Nequi', sub='Cifrado en la base de datos')
+        self.card_name   = StatCard('Cuenta', sub='Nombre asociado')
+        self.card_since  = StatCard('Conectado desde', sub='Última conexión')
+        for c in (self.card_status, self.card_phone, self.card_name, self.card_since):
+            cards.pack_start(c, True, True, 0)
+
+        frame = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        frame.get_style_context().add_class('bot-frame')
+        self.box.pack_start(frame, True, True, 0)
+
+        notice = Gtk.Label(
+            label='Aún sin credenciales de la API de pago-push de Nequi Conecta -- esto guarda '
+                  'la cuenta receptora para mostrarla en el checkout de la app. El cobro '
+                  'automático se activa cuando haya convenio con Nequi/Bancolombia.',
+            xalign=0)
+        notice.set_line_wrap(True)
+        notice.get_style_context().add_class('label-dim')
+        frame.pack_start(notice, False, False, 0)
+
+        actions_title = Gtk.Label(label='ACCIONES', xalign=0)
+        actions_title.get_style_context().add_class('section-title')
+        frame.pack_start(actions_title, False, False, 8)
+
+        actions = Gtk.Box(spacing=8)
+        frame.pack_start(actions, False, False, 0)
+        self.btn_connect = make_btn('Conectar Nequi', 'btn-primary', on_click=lambda *_: self._open_connect_dialog())
+        self.btn_pause   = make_btn('Pausar', 'btn-warn', on_click=lambda *_: self._toggle_pause())
+        self.btn_disconnect = make_btn('Desconectar', 'btn-danger', on_click=lambda *_: self._disconnect())
+        for b in (self.btn_connect, self.btn_pause, self.btn_disconnect):
+            actions.pack_start(b, False, False, 0)
+
+        self.status_label = Gtk.Label(label='')
+        self.status_label.get_style_context().add_class('label-dim')
+        frame.pack_start(self.status_label, False, False, 8)
+
+    def refresh(self):
+        data = http_get('/api/payments/nequi')
+        if data is None:
+            self.card_status.set_value('API no disponible')
+            self.card_phone.set_value('—')
+            self.card_name.set_value('—')
+            self.card_since.set_value('—')
+            self.status_label.set_text('No se pudo conectar al servidor. ¿Está corriendo?')
+            return
+
+        status = data.get('status', 'disconnected')
+        phone  = data.get('phone')
+        self._connected = status != 'disconnected' and bool(phone)
+
+        labels = {'connected': 'CONECTADO', 'paused': 'PAUSADO', 'disconnected': 'SIN CONECTAR'}
+        self.card_status.set_value(labels.get(status, status.upper()))
+        self.card_phone.set_value(phone or 'No configurado')
+        self.card_name.set_value(data.get('account_name') or '—')
+        self.card_since.set_value(fmt_relative(data.get('connected_at')) if data.get('connected_at') else '—')
+
+        self.btn_connect.set_label('Cambiar cuenta' if self._connected else 'Conectar Nequi')
+        self.btn_pause.set_label('Reanudar' if status == 'paused' else 'Pausar')
+        self.btn_pause.set_sensitive(self._connected)
+        self.btn_disconnect.set_sensitive(self._connected)
+
+    def _open_connect_dialog(self):
+        is_change = self._connected
+        dialog = Gtk.Dialog(title='Cambiar cuenta Nequi' if is_change else 'Conectar Nequi',
+                            transient_for=self.parent, modal=True, destroy_with_parent=True)
+        dialog.add_buttons('Cancelar', Gtk.ResponseType.CANCEL, 'Guardar', Gtk.ResponseType.OK)
+        dialog.set_default_size(380, 200)
+        box = dialog.get_content_area()
+        box.set_spacing(8)
+        box.set_border_width(14)
+        box.pack_start(Gtk.Label(label='Número Nequi receptor (celular colombiano):'), False, False, 0)
+        phone_entry = Gtk.Entry()
+        phone_entry.set_placeholder_text('Ej: 3001234567')
+        box.pack_start(phone_entry, False, False, 0)
+        box.pack_start(Gtk.Label(label='Nombre en la cuenta Nequi:'), False, False, 0)
+        name_entry = Gtk.Entry()
+        name_entry.set_placeholder_text('Ej: Concentrados Monserrath')
+        box.pack_start(name_entry, False, False, 0)
+        if is_change:
+            warn = Gtk.Label(label='Esto reemplaza la cuenta Nequi conectada actualmente.')
+            warn.get_style_context().add_class('label-dim')
+            warn.set_line_wrap(True)
+            box.pack_start(warn, False, False, 0)
+        box.show_all()
+        if dialog.run() == Gtk.ResponseType.OK:
+            phone = phone_entry.get_text().strip()
+            name  = name_entry.get_text().strip()
+            if phone and name:
+                self.status_label.set_text('Guardando...')
+                result = http_post('/api/payments/nequi/connect', {'phone': phone, 'account_name': name})
+                if result and result.get('ok'):
+                    self.status_label.set_text('Cuenta Nequi conectada.')
+                else:
+                    err = (result or {}).get('error', 'error desconocido')
+                    self.status_label.set_text(f'Error: {err}')
+                GLib.timeout_add(800, lambda: (self.refresh(), False)[1])
+        dialog.destroy()
+
+    def _toggle_pause(self):
+        endpoint = '/api/payments/nequi/resume' if self.btn_pause.get_label() == 'Reanudar' else '/api/payments/nequi/pause'
+        self.status_label.set_text('Actualizando...')
+        result = http_post(endpoint, {})
+        if result is None or not result.get('ok'):
+            self.status_label.set_text(f"Error: {(result or {}).get('error', 'no se pudo cambiar el estado')}")
+        GLib.timeout_add(600, lambda: (self.refresh(), False)[1])
+
+    def _disconnect(self):
+        dialog = Gtk.MessageDialog(
+            transient_for=self.parent, flags=0,
+            message_type=Gtk.MessageType.WARNING,
+            buttons=Gtk.ButtonsType.YES_NO,
+            text='Esto desconecta la cuenta Nequi -- los clientes dejarán de ver la opción de '
+                 'pago Nequi en el checkout hasta que conectes una cuenta de nuevo. ¿Continuar?')
+        resp = dialog.run()
+        dialog.destroy()
+        if resp == Gtk.ResponseType.YES:
+            result = http_post('/api/payments/nequi/disconnect', {})
+            self.status_label.set_text('Desconectado.' if result and result.get('ok')
+                                       else 'Error al desconectar')
+            GLib.timeout_add(600, lambda: (self.refresh(), False)[1])
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # MÓDULO: EMPLEADOS (NUEVO)
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -2261,6 +2407,154 @@ class EmployeesModule:
 
         if not logins:
             box.pack_start(Gtk.Label(label='Sin registros de entrada todavía.'), False, False, 0)
+
+        box.show_all()
+        dialog.run()
+        dialog.destroy()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MÓDULO: UBICACIONES
+# ══════════════════════════════════════════════════════════════════════════════
+
+class LocationsModule:
+    """Ubicacion GPS de trabajadores/admin -- staff_locations se llena
+    desde la app (POST /api/staff-locations, solo worker/admin, nunca
+    clientes). Aca se ve la ultima posicion conocida de cada uno y, con
+    doble clic, su historial reciente + info de dispositivo/sesion."""
+
+    def __init__(self, parent):
+        self.parent = parent
+        self.box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
+
+        header = SectionHeader('Ubicaciones de staff',
+                               'Última posición conocida de trabajadores y administradores',
+                               make_btn('↻ Actualizar', 'btn-flat', small=True, on_click=lambda *_: self.refresh()))
+        self.box.pack_start(header, False, False, 0)
+
+        cards = Gtk.Box(spacing=12)
+        self.box.pack_start(cards, False, False, 0)
+        self.card_total     = StatCard('Staff activo', sub='Con cuenta habilitada')
+        self.card_reporting = StatCard('Compartiendo ubicación', sub='Con al menos un reporte')
+        self.card_recent    = StatCard('Actualizado', sub='Reporte más reciente')
+        for c in (self.card_total, self.card_reporting, self.card_recent):
+            cards.pack_start(c, True, True, 0)
+
+        table_title = Gtk.Label(label='STAFF', xalign=0)
+        table_title.get_style_context().add_class('section-title')
+        self.box.pack_start(table_title, False, False, 0)
+
+        self.store = Gtk.ListStore(str, str, str, str, str, int)  # ultima col: user_id (oculto)
+        tree = Gtk.TreeView(model=self.store)
+        for i, (colname, w) in enumerate([
+            ('Usuario', 120), ('Nombre', 180), ('Rol', 90),
+            ('Última posición', 220), ('Actualizado', 140),
+        ]):
+            renderer = Gtk.CellRendererText()
+            col = Gtk.TreeViewColumn(colname, renderer, text=i)
+            col.set_resizable(True)
+            col.set_min_width(w)
+            tree.append_column(col)
+        tree.connect('row-activated', self._on_row_activated)
+        hint = Gtk.Label(label='Doble clic en un trabajador para ver su historial de ubicaciones y dispositivo', xalign=0)
+        hint.get_style_context().add_class('label-dim')
+        self.box.pack_start(hint, False, False, 0)
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        scroll.add(tree)
+        scroll.set_min_content_height(320)
+        self.box.pack_start(scroll, True, True, 0)
+
+    def refresh(self):
+        rows = query("""
+            SELECT u.id, u.username, COALESCE(u.display_name, u.username), u.role,
+                   sl.lat, sl.lng, sl.recorded_at
+            FROM users u
+            LEFT JOIN (
+                SELECT sl1.user_id, sl1.lat, sl1.lng, sl1.recorded_at
+                FROM staff_locations sl1
+                WHERE sl1.id = (SELECT MAX(sl2.id) FROM staff_locations sl2 WHERE sl2.user_id = sl1.user_id)
+            ) sl ON sl.user_id = u.id
+            WHERE u.role IN ('admin','worker') AND u.active = 1
+            ORDER BY (sl.recorded_at IS NULL), sl.recorded_at DESC
+        """)
+
+        self.card_total.set_value(str(len(rows)))
+        reporting = [r for r in rows if r[4] is not None]
+        self.card_reporting.set_value(str(len(reporting)))
+        if reporting:
+            latest = max(r[6] for r in reporting)
+            dt = datetime.datetime.fromisoformat(latest.replace('Z', '+00:00')).astimezone()
+            self.card_recent.set_value(dt.strftime('%H:%M'))
+        else:
+            self.card_recent.set_value('—')
+
+        self.store.clear()
+        for uid, username, name, role, lat, lng, recorded_at in rows:
+            if lat is not None:
+                pos_str = f'{lat:.5f}, {lng:.5f}'
+                dt = datetime.datetime.fromisoformat(recorded_at.replace('Z', '+00:00')).astimezone()
+                when_str = dt.strftime('%d/%m %H:%M')
+            else:
+                pos_str = 'Sin reportar'
+                when_str = '—'
+            self.store.append([username, name, role, pos_str, when_str, uid])
+
+    def _on_row_activated(self, tree, path, column):
+        row = tree.get_model()[path]
+        self._show_detail(row[5], row[1])
+
+    def _show_detail(self, user_id, name):
+        dialog = Gtk.Dialog(title=f'Ubicación — {name}', transient_for=self.parent,
+                            modal=True, destroy_with_parent=True)
+        dialog.add_buttons('Cerrar', Gtk.ResponseType.CLOSE)
+        dialog.set_default_size(480, 520)
+        box = dialog.get_content_area()
+        box.set_spacing(10)
+        box.set_border_width(14)
+
+        last_login = query("""
+            SELECT logged_in_at, logged_out_at, device_info FROM login_events
+            WHERE user_id = ? ORDER BY id DESC LIMIT 1
+        """, (user_id,))
+        if last_login:
+            logged_in_at, logged_out_at, device_info = last_login[0]
+            dt_in = datetime.datetime.fromisoformat(logged_in_at.replace('Z', '+00:00')).astimezone()
+            estado = 'En sesión' if not logged_out_at else 'Sesión cerrada'
+            info_lbl = Gtk.Label(
+                label=f'{estado} · entró {dt_in.strftime("%d/%m/%Y %H:%M")} · {device_info or "dispositivo desconocido"}',
+                xalign=0)
+            info_lbl.set_line_wrap(True)
+            box.pack_start(info_lbl, False, False, 0)
+
+        hist_title = Gtk.Label(label='HISTORIAL DE UBICACIONES', xalign=0)
+        hist_title.get_style_context().add_class('section-title')
+        box.pack_start(hist_title, False, False, 0)
+
+        history = query("""
+            SELECT lat, lng, accuracy, recorded_at FROM staff_locations
+            WHERE user_id = ? ORDER BY id DESC LIMIT 200
+        """, (user_id,))
+
+        store = Gtk.ListStore(str, str, str)
+        tree = Gtk.TreeView(model=store)
+        tree.get_style_context().add_class('mono')
+        for i, colname in enumerate(['Fecha/hora', 'Coordenadas', 'Precisión']):
+            renderer = Gtk.CellRendererText()
+            col = Gtk.TreeViewColumn(colname, renderer, text=i)
+            col.set_resizable(True)
+            tree.append_column(col)
+        for lat, lng, accuracy, recorded_at in history:
+            dt = datetime.datetime.fromisoformat(recorded_at.replace('Z', '+00:00')).astimezone()
+            acc_str = f'±{accuracy:.0f}m' if accuracy is not None else '—'
+            store.append([dt.strftime('%d/%m/%Y %H:%M:%S'), f'{lat:.5f}, {lng:.5f}', acc_str])
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        scroll.add(tree)
+        box.pack_start(scroll, True, True, 0)
+
+        if not history:
+            box.pack_start(Gtk.Label(label='Sin ubicaciones registradas todavía.'), False, False, 0)
 
         box.show_all()
         dialog.run()
@@ -3184,6 +3478,7 @@ class DashboardWindow(Gtk.ApplicationWindow):
         self._add_module('bot',     'Bot WhatsApp', BotModule)
         self._add_module('sales',   'Ventas', SalesModule)
         self._add_module('employees','Empleados', EmployeesModule)
+        self._add_module('locations','Ubicaciones', LocationsModule)
         self._add_module('data',    'Datos', DataModule)
 
         # Sección: CONFIGURACIÓN
@@ -3193,6 +3488,7 @@ class DashboardWindow(Gtk.ApplicationWindow):
         self.sidebar.pack_start(cfg_label, False, False, 0)
 
         self._add_module('brand',  'Marca', BrandModule)
+        self._add_module('payments', 'Métodos de pago', PaymentsModule)
         self._add_module('config', 'Configuración', ConfigModule)
         self._add_module('security', 'Seguridad', SecurityModule)
         self._add_module('logs',   'Logs', LogsModule)

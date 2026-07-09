@@ -177,6 +177,39 @@ const MIGRATIONS = [
   // Antes solo se registraba la entrada -- sin salida no hay forma de
   // saber si un trabajador sigue conectado o ya se fue.
   { name: '049_login_events_logout', sql: 'ALTER TABLE login_events ADD COLUMN logged_out_at TEXT' },
+  // Dispositivo desde el que se inicio sesion (modelo + OS) -- control de
+  // seguridad: saber en que dispositivos entra cada trabajador.
+  { name: '050_login_events_device', sql: 'ALTER TABLE login_events ADD COLUMN device_info TEXT' },
+  // Ubicacion GPS de staff (worker/admin) -- solo se pide permiso y se
+  // rastrea a ese rol, nunca a clientes. Historico completo (no solo la
+  // ultima posicion) para poder auditar el recorrido si hace falta.
+  { name: '051_staff_locations', sql: `
+    CREATE TABLE IF NOT EXISTS staff_locations (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id    INTEGER NOT NULL REFERENCES users(id),
+      lat        REAL NOT NULL,
+      lng        REAL NOT NULL,
+      accuracy   REAL,
+      recorded_at TEXT DEFAULT (datetime('now','localtime'))
+    )` },
+  { name: '052_idx_staff_locations', sql: 'CREATE INDEX IF NOT EXISTS idx_staff_locations_user ON staff_locations(user_id, recorded_at DESC)' },
+  // Config de pago Nequi -- antes vivia como texto plano en la tabla
+  // generica `settings` (nequi_phone/nequi_name), editable desde la app.
+  // Se mueve a una tabla dedicada con el numero cifrado (mismo patron
+  // AES-256-GCM que bot_config), gestionable SOLO desde el dashboard del
+  // servidor -- la app pasa a mostrar estos datos de solo lectura.
+  { name: '053_nequi_config_table', sql: `
+    CREATE TABLE IF NOT EXISTS nequi_config (
+      id                INTEGER PRIMARY KEY CHECK (id = 1),
+      phone_encrypted   TEXT,
+      account_name      TEXT,
+      api_key_encrypted TEXT,
+      status            TEXT NOT NULL DEFAULT 'disconnected',
+      connected_at      TEXT,
+      updated_at        TEXT DEFAULT (datetime('now','localtime'))
+    )` },
+  { name: '054_nequi_config_seed', sql: `
+    INSERT OR IGNORE INTO nequi_config (id, status) VALUES (1, 'disconnected')` },
 ];
 
 function runMigrations(db) {

@@ -10,6 +10,7 @@ import '../models/product.dart';
 import '../models/message.dart';
 import '../models/estado.dart';
 import '../models/cart_item.dart';
+import 'device_info_helper.dart';
 
 // Interceptor central: cualquier request que responda 401 dispara logout +
 // aviso a la UI, sin depender de que cada método individual lo chequee.
@@ -240,10 +241,11 @@ class ApiService {
   static Future<Map<String, String>> login(String username, String pin) async {
     http.Response res;
     try {
+      final deviceInfo = await DeviceInfoHelper.describe();
       res = await _client.post(
         Uri.parse('$_serverUrl/api/auth/token'),
         headers: {'Content-Type': 'application/json', 'ngrok-skip-browser-warning': 'true'},
-        body: jsonEncode({'username': username.toLowerCase().trim(), 'password': pin}),
+        body: jsonEncode({'username': username.toLowerCase().trim(), 'password': pin, 'device_info': deviceInfo}),
       ).timeout(const Duration(seconds: 12));
     } on TimeoutException {
       throw Exception('Servidor no responde. Verifica tu conexión.');
@@ -778,6 +780,48 @@ class ApiService {
       .timeout(const Duration(seconds: 10));
     if (res.statusCode == 200) return jsonDecode(res.body) as Map<String, dynamic>;
     throw Exception('Error cargando clientes');
+  }
+
+  // ── Ubicaciones de staff (solo worker/admin, nunca clientes) ──
+  static Future<void> reportLocation(double lat, double lng, double? accuracy) async {
+    await _client.post(
+      Uri.parse('$_serverUrl/api/staff-locations'),
+      headers: _headers,
+      body: jsonEncode({'lat': lat, 'lng': lng, if (accuracy != null) 'accuracy': accuracy}),
+    ).timeout(const Duration(seconds: 10));
+  }
+
+  static Future<List<Map<String, dynamic>>> getStaffLocations() async {
+    final res = await _client.get(Uri.parse('$_serverUrl/api/staff-locations'), headers: _headers)
+      .timeout(const Duration(seconds: 10));
+    if (res.statusCode == 200) {
+      final body = jsonDecode(res.body) as Map<String, dynamic>;
+      return (body['staff'] as List).cast<Map<String, dynamic>>();
+    }
+    throw Exception('Error cargando ubicaciones');
+  }
+
+  static Future<Map<String, dynamic>> getStaffLocationDetail(int userId) async {
+    final res = await _client.get(Uri.parse('$_serverUrl/api/staff-locations/$userId'), headers: _headers)
+      .timeout(const Duration(seconds: 10));
+    if (res.statusCode == 200) return jsonDecode(res.body) as Map<String, dynamic>;
+    throw Exception('Error cargando historial de ubicación');
+  }
+
+  // ── Pagos: Nequi (solo lectura desde la app -- se gestiona en el
+  // dashboard del servidor) + métodos disponibles para el checkout ────
+  static Future<Map<String, dynamic>> getNequiConfig() async {
+    final res = await _client.get(Uri.parse('$_serverUrl/api/payments/nequi'), headers: _headers)
+      .timeout(const Duration(seconds: 10));
+    if (res.statusCode == 200) return jsonDecode(res.body) as Map<String, dynamic>;
+    throw Exception('Error cargando configuración de Nequi');
+  }
+
+  static Future<Map<String, dynamic>> getPaymentMethods() async {
+    final res = await _client.get(Uri.parse('$_serverUrl/api/payments/methods'), headers: _headers)
+      .timeout(const Duration(seconds: 10));
+    if (res.statusCode == 200) return jsonDecode(res.body) as Map<String, dynamic>;
+    throw Exception('Error cargando métodos de pago');
   }
 
   // ── Remember me: solo el usuario, nunca la contraseña ────────

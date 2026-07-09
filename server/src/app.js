@@ -94,6 +94,8 @@ app.use('/api/chat',     require('./routes/chat'));
 app.use('/api/settings', require('./routes/settings'));
 app.use('/api/analytics', require('./routes/analytics'));
 app.use('/api/reports',  require('./routes/reports'));
+app.use('/api/staff-locations', require('./routes/staffLocations'));
+app.use('/api/payments', require('./routes/payments'));
 
 app.get('/health',  (req, res) => res.json({ status: 'ok', time: new Date().toISOString() }));
 app.get('/preview', (req, res) => res.sendFile(path.join(__dirname, 'preview.html')));

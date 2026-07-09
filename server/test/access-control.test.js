@@ -137,6 +137,64 @@ describe('Control de acceso por rol (orders/messages son solo staff)', () => {
     const res = await request(app).get('/api/orders').set('Authorization', `Bearer ${adminToken}`);
     expect(res.status).toBe(200);
   });
+
+  test('cliente no puede reportar ni leer ubicaciones de staff', async () => {
+    const post = await request(app).post('/api/staff-locations')
+      .set('Authorization', `Bearer ${clientToken}`).send({ lat: 4.6, lng: -74.0 });
+    expect(post.status).toBe(403);
+    const get = await request(app).get('/api/staff-locations').set('Authorization', `Bearer ${clientToken}`);
+    expect(get.status).toBe(403);
+  });
+
+  test('admin sí puede ver el listado de ubicaciones de staff', async () => {
+    const res = await request(app).get('/api/staff-locations').set('Authorization', `Bearer ${adminToken}`);
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body.staff)).toBe(true);
+  });
+
+  test('worker puede reportar su ubicación pero no ver el listado completo', async () => {
+    await request(app).post('/api/users').set('Authorization', `Bearer ${adminToken}`)
+      .send({ username: 'worker_ubicacion', password: 'password123', role: 'worker' });
+    const login = await request(app).post('/api/auth/token')
+      .send({ username: 'worker_ubicacion', password: 'password123' });
+    const workerToken = login.body.token;
+
+    const post = await request(app).post('/api/staff-locations')
+      .set('Authorization', `Bearer ${workerToken}`).send({ lat: 4.6, lng: -74.0 });
+    expect(post.status).toBe(201);
+
+    const get = await request(app).get('/api/staff-locations').set('Authorization', `Bearer ${workerToken}`);
+    expect(get.status).toBe(403);
+  });
+
+  test('cliente no puede administrar Nequi pero sí ver los métodos de pago', async () => {
+    const connect = await request(app).post('/api/payments/nequi/connect')
+      .set('Authorization', `Bearer ${clientToken}`).send({ phone: '3001234567', account_name: 'Test' });
+    expect(connect.status).toBe(403);
+
+    const methods = await request(app).get('/api/payments/methods').set('Authorization', `Bearer ${clientToken}`);
+    expect(methods.status).toBe(200);
+    expect(methods.body.contra_entrega).toBe(true);
+    expect(methods.body.nequi.available).toBe(false);
+  });
+
+  test('admin puede conectar Nequi y el checkout del cliente ve la cuenta completa', async () => {
+    const connect = await request(app).post('/api/payments/nequi/connect')
+      .set('Authorization', `Bearer ${adminToken}`).send({ phone: '3001234567', account_name: 'Monserrath' });
+    expect(connect.status).toBe(200);
+
+    const methods = await request(app).get('/api/payments/methods').set('Authorization', `Bearer ${clientToken}`);
+    expect(methods.body.nequi.available).toBe(true);
+    expect(methods.body.nequi.phone).toBe('573001234567');
+
+    const pause = await request(app).post('/api/payments/nequi/pause').set('Authorization', `Bearer ${adminToken}`);
+    expect(pause.status).toBe(200);
+    const methodsAfterPause = await request(app).get('/api/payments/methods').set('Authorization', `Bearer ${clientToken}`);
+    expect(methodsAfterPause.body.nequi.available).toBe(false);
+
+    const disconnect = await request(app).post('/api/payments/nequi/disconnect').set('Authorization', `Bearer ${adminToken}`);
+    expect(disconnect.status).toBe(200);
+  });
 });
 
 describe('QR del bot requiere admin', () => {

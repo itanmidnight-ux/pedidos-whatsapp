@@ -46,22 +46,22 @@ class ClientCartScreenState extends State<ClientCartScreen> {
   Future<void> _checkout() async {
     if (_items.isEmpty) return;
 
-    final method = await _pickPaymentMethod();
+    Map<String, dynamic>? methods;
+    try { methods = await ApiService.getPaymentMethods(); } catch (_) {}
+    final nequi = methods?['nequi'] as Map<String, dynamic>?;
+    final nequiAvailable = nequi?['available'] == true;
+
+    final method = await _pickPaymentMethod(nequiAvailable);
     if (method == null) return;
 
     if (method == 'nequi') {
-      await _nequiFlow();
+      await _nequiFlow(nequi!);
     } else {
       await _contraEntregaFlow();
     }
   }
 
-  Future<String?> _pickPaymentMethod() async {
-    Map<String, String>? settings;
-    try { settings = await ApiService.getSettings(); } catch (_) {}
-    final nequiPhone = settings?['nequi_phone'] ?? '';
-    final nequiName  = settings?['nequi_name']  ?? 'Concentrados Monserrath';
-
+  Future<String?> _pickPaymentMethod(bool nequiAvailable) async {
     return showModalBottomSheet<String>(
       context: context,
       shape: const RoundedRectangleBorder(
@@ -71,14 +71,19 @@ class ClientCartScreenState extends State<ClientCartScreen> {
         child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
           const Text('Método de pago', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
           const SizedBox(height: 16),
-          _PayOption(
-            icon: Icons.account_balance_wallet_rounded,
-            title: 'Nequi',
-            subtitle: 'Transferencia Nequi — $nequiPhone\n$nequiName',
-            color: Colors.purple,
-            onTap: () => Navigator.pop(_, 'nequi'),
-          ),
-          const SizedBox(height: 10),
+          // Nequi solo aparece si el admin lo conectó desde el dashboard
+          // del servidor -- antes siempre se mostraba aunque no hubiera
+          // ninguna cuenta configurada, dejando un numero vacio/incorrecto.
+          if (nequiAvailable) ...[
+            _PayOption(
+              icon: Icons.account_balance_wallet_rounded,
+              title: 'Nequi',
+              subtitle: 'Transferencia Nequi',
+              color: Colors.purple,
+              onTap: () => Navigator.pop(_, 'nequi'),
+            ),
+            const SizedBox(height: 10),
+          ],
           _PayOption(
             icon: Icons.local_shipping_rounded,
             title: 'Contra entrega',
@@ -91,11 +96,9 @@ class ClientCartScreenState extends State<ClientCartScreen> {
     );
   }
 
-  Future<void> _nequiFlow() async {
-    Map<String, String>? settings;
-    try { settings = await ApiService.getSettings(); } catch (_) {}
-    final nequiPhone = settings?['nequi_phone'] ?? '';
-    final nequiName  = settings?['nequi_name']  ?? 'Concentrados Monserrath';
+  Future<void> _nequiFlow(Map<String, dynamic> nequi) async {
+    final nequiPhone = nequi['phone'] as String? ?? '';
+    final nequiName  = nequi['account_name'] as String? ?? 'Concentrados Monserrath';
     final totalStr   = '\$${_fmt(_total)}';
 
     final refCtrl = TextEditingController();

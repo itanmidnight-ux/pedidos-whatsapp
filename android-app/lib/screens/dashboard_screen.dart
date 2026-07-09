@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_provider.dart';
 import '../services/api_service.dart';
+import '../services/location_tracker_service.dart';
 import '../theme/breakpoints.dart';
 import '../widgets/order_card.dart';
 import '../widgets/company_header.dart';
@@ -14,6 +15,7 @@ import 'admin_estados_screen.dart';
 import 'admin_settings_screen.dart';
 import 'inventario_screen.dart';
 import 'worker_estados_screen.dart';
+import 'admin_ubicaciones_screen.dart';
 
 // Filter chips
 const _allStatuses = ['pending', 'claimed', 'en_camino'];
@@ -36,7 +38,46 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
       final p = context.read<AppProvider>();
       p.refreshAll();
       p.startAutoRefresh();
+      _setupLocationTracking();
     });
+  }
+
+  // Ubicacion: solo se pide/activa para worker/admin (ver
+  // LocationTrackerService._eligibleRole), nunca para clientes. Se
+  // muestra el consentimiento una sola vez antes de pedir el permiso
+  // real del sistema -- transparencia + requisito de Google Play para
+  // ubicacion en segundo plano.
+  Future<void> _setupLocationTracking() async {
+    if (!['worker', 'admin'].contains(ApiService.currentRole)) return;
+    if (await LocationTrackerService.hasGivenConsent()) {
+      await LocationTrackerService.start();
+      return;
+    }
+    if (!mounted) return;
+    final accepted = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => AlertDialog(
+        title: const Text('Ubicación por seguridad'),
+        content: const Text(
+          'Concentrados Monserrath registra tu ubicación mientras tienes '
+          'sesión iniciada como parte del control de seguridad del equipo -- '
+          'incluso si cierras la app, hasta que cierres sesión. Solo el '
+          'administrador puede ver esta información, nunca los clientes.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Ahora no')),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Entendido, activar')),
+        ],
+      ),
+    );
+    if (accepted == true) {
+      await LocationTrackerService.setConsentGiven();
+      await LocationTrackerService.start();
+    }
   }
 
   @override
@@ -130,6 +171,10 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
               onTap: () { Navigator.pop(context); Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(
                 appBar: AppBar(title: const Text('Usuarios')),
                 body: const UsersScreen()))); }),
+            ListTile(leading: const Icon(Icons.location_on_rounded), title: const Text('Ubicaciones'),
+              onTap: () { Navigator.pop(context); Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(
+                appBar: AppBar(title: const Text('Ubicaciones')),
+                body: const AdminUbicacionesScreen()))); }),
             ListTile(leading: const Icon(Icons.settings_rounded), title: const Text('Configuración'),
               onTap: () { Navigator.pop(context); Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(
                 appBar: AppBar(title: const Text('Configuración')),

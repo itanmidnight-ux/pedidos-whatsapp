@@ -28,8 +28,7 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
   bool _loading = true;
   bool _saving   = false;
 
-  final _nequiPhoneCtrl    = TextEditingController();
-  final _nequiNameCtrl     = TextEditingController();
+  Map<String, dynamic>? _nequiInfo;
   final _empresaNombreCtrl = TextEditingController();
   final _empresaDescCtrl   = TextEditingController();
   final _horarioCtrl       = TextEditingController();
@@ -43,13 +42,19 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
     super.initState();
     _load();
     _loadBotStatus();
+    _loadNequi();
     _botTimer = Timer.periodic(const Duration(seconds: 15), (_) => _loadBotStatus());
+  }
+
+  Future<void> _loadNequi() async {
+    try {
+      final n = await ApiService.getNequiConfig();
+      if (mounted) setState(() => _nequiInfo = n);
+    } catch (_) {}
   }
 
   @override
   void dispose() {
-    _nequiPhoneCtrl.dispose();
-    _nequiNameCtrl.dispose();
     _empresaNombreCtrl.dispose();
     _empresaDescCtrl.dispose();
     _horarioCtrl.dispose();
@@ -83,8 +88,6 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
     try {
       final s = await ApiService.getSettings();
       if (mounted) {
-        _nequiPhoneCtrl.text    = s['nequi_phone']        ?? '';
-        _nequiNameCtrl.text     = s['nequi_name']         ?? '';
         _empresaNombreCtrl.text = s['empresa_nombre']     ?? '';
         _empresaDescCtrl.text   = s['empresa_descripcion'] ?? '';
         _horarioCtrl.text       = s['horario_atencion']   ?? '';
@@ -97,8 +100,6 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
     setState(() => _saving = true);
     try {
       await Future.wait([
-        ApiService.updateSetting('nequi_phone',        _nequiPhoneCtrl.text.trim()),
-        ApiService.updateSetting('nequi_name',         _nequiNameCtrl.text.trim()),
         ApiService.updateSetting('empresa_nombre',     _empresaNombreCtrl.text.trim()),
         ApiService.updateSetting('empresa_descripcion', _empresaDescCtrl.text.trim()),
         ApiService.updateSetting('horario_atencion',   _horarioCtrl.text.trim()),
@@ -326,29 +327,52 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
 
         const SizedBox(height: 24),
 
-        // Nequi section
+        // Nequi section -- solo lectura. La conexión/cambio de cuenta se
+        // gestiona desde el dashboard del servidor (dato sensible,
+        // cifrado ahí, no editable desde la app).
         _sectionTitle('Pago Nequi'),
         AppCard(
-          child: Column(children: [
-            TextField(
-              controller: _nequiPhoneCtrl,
-              decoration: _deco('Número Nequi', Icons.phone_outlined),
-              keyboardType: TextInputType.phone,
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _nequiNameCtrl,
-              decoration: _deco('Nombre en Nequi', Icons.person_outline),
-            ),
-            const SizedBox(height: 4),
-            Padding(
-              padding: const EdgeInsets.only(top: 4),
-              child: Text(
-                'Los clientes verán este número para transferencias.',
-                style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
-              ),
-            ),
-          ]),
+          child: Builder(builder: (context) {
+            final n = _nequiInfo;
+            if (n == null) {
+              return const Padding(
+                padding: EdgeInsets.symmetric(vertical: 8),
+                child: Center(child: CircularProgressIndicator()));
+            }
+            final status = n['status'] as String? ?? 'disconnected';
+            if (status == 'disconnected' || n['phone'] == null) {
+              return Row(children: [
+                Icon(Icons.link_off_rounded, color: Colors.grey.shade500),
+                const SizedBox(width: 10),
+                const Expanded(child: Text('Sin cuenta Nequi conectada')),
+              ]);
+            }
+            final active = status == 'connected';
+            return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Row(children: [
+                Icon(Icons.phone_outlined, color: Colors.grey.shade600, size: 20),
+                const SizedBox(width: 10),
+                Text(n['phone'] as String, style: const TextStyle(fontWeight: FontWeight.w600)),
+              ]),
+              const SizedBox(height: 8),
+              Row(children: [
+                Icon(Icons.person_outline, color: Colors.grey.shade600, size: 20),
+                const SizedBox(width: 10),
+                Text(n['account_name'] as String? ?? '-'),
+              ]),
+              const SizedBox(height: 8),
+              Row(children: [
+                Icon(active ? Icons.check_circle_rounded : Icons.pause_circle_rounded,
+                  color: active ? Colors.green : Colors.orange, size: 20),
+                const SizedBox(width: 10),
+                Text(active ? 'Activo en el checkout' : 'Pausado',
+                  style: TextStyle(color: active ? Colors.green.shade700 : Colors.orange.shade700)),
+              ]),
+              const SizedBox(height: 8),
+              Text('Se gestiona desde el dashboard del servidor.',
+                style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
+            ]);
+          }),
         ),
 
         const SizedBox(height: 24),

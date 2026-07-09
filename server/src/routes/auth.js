@@ -64,7 +64,7 @@ function signToken(user) {
 // (clientes que se auto-registran -- ver /register). Un solo campo en la
 // app, el backend resuelve cual es sin necesitar que el usuario elija.
 router.post('/token', (req, res) => {
-  const { username, password, pin } = req.body;
+  const { username, password, pin, device_info } = req.body;
   if (!username || typeof username !== 'string' || !username.trim())
     return res.status(400).json({ error: 'Usuario o correo requerido' });
 
@@ -114,8 +114,8 @@ router.post('/token', (req, res) => {
     clearAttempts(lockKey);
     // Hora de entrada -- solo staff (admin/worker); clientes no marcan turno
     if (['admin', 'worker'].includes(user.role)) {
-      db.prepare(`INSERT INTO login_events (user_id, logged_in_at) VALUES (?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))`)
-        .run(user.id);
+      db.prepare(`INSERT INTO login_events (user_id, logged_in_at, device_info) VALUES (?, strftime('%Y-%m-%dT%H:%M:%fZ','now'), ?)`)
+        .run(user.id, device_info ? sanitizeText(device_info, 200) : null);
     }
     res.json(signToken(user));
   });

@@ -6,6 +6,7 @@ import '../models/product.dart';
 import '../services/api_service.dart';
 import '../services/local_db.dart';
 import '../services/notification_service.dart';
+import '../services/location_tracker_service.dart';
 
 class AppProvider extends ChangeNotifier {
   bool isLoggedIn    = ApiService.isConfigured;
@@ -73,6 +74,7 @@ class AppProvider extends ChangeNotifier {
 
   Future<void> logout() async {
     stopAutoRefresh();
+    await LocationTrackerService.stop();
     await ApiService.logout();
     isLoggedIn = false;
     orders = []; products = []; users = [];
