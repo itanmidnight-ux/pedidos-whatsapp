@@ -5,6 +5,7 @@ const fs     = require('fs');
 const multer = require('multer');
 const { jwtAuth, adminAuth, clientAuth } = require('../middleware/auth');
 const { getDB } = require('../db/database');
+const { sanitizeText } = require('../utils/sanitize');
 
 const PRODUCT_IMAGES_DIR = path.join(process.env.APPDATA || process.env.HOME || process.env.USERPROFILE, 'pedidos-bot', 'product-images');
 fs.mkdirSync(PRODUCT_IMAGES_DIR, { recursive: true });
@@ -65,7 +66,7 @@ router.post('/', adminAuth, (req, res) => {
   if (err) return res.status(400).json({ error: err });
   const db = getDB();
   const result = db.prepare('INSERT INTO products (name, price, aliases) VALUES (?, ?, ?)')
-    .run(name.trim(), price, JSON.stringify(aliases || []));
+    .run(sanitizeText(name, 150), price, JSON.stringify(aliases || []));
   const product = db.prepare('SELECT * FROM products WHERE id = ?').get(result.lastInsertRowid);
   res.json({ ...product, aliases: JSON.parse(product.aliases || '[]') });
 });
@@ -86,7 +87,7 @@ router.put('/:id', adminAuth, (req, res) => {
     no_fiado  = COALESCE(?, no_fiado)
     WHERE id = ?`)
     .run(
-      name   ? name.trim() : null,
+      name   ? sanitizeText(name, 150) : null,
       price  ?? null,
       aliases ? JSON.stringify(aliases) : null,
       available ?? null,

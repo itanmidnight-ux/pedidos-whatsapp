@@ -6,6 +6,7 @@ const fs      = require('fs');
 const multer  = require('multer');
 const { staffAuth, adminAuth, apiKeyAuth } = require('../middleware/auth');
 const { getDB } = require('../db/database');
+const { sanitizeText } = require('../utils/sanitize');
 
 // ── Media directory ───────────────────────────────────────────
 const MEDIA_DIR = path.join(process.env.APPDATA || process.env.HOME, 'pedidos-bot', 'media');
@@ -204,7 +205,7 @@ router.post('/send', staffAuth, (req, res) => {
   const result   = db.prepare(
     `INSERT INTO messages (phone, customer_name, content, direction, sent, type)
      VALUES (?, ?, ?, 'outbound', 0, 'direct')`
-  ).run(phone, customer?.name || null, content.trim());
+  ).run(phone, customer?.name || null, sanitizeText(content.trim(), 1000));
   res.json({ success: true, id: result.lastInsertRowid });
 });
 
@@ -228,7 +229,7 @@ router.post('/promotional', adminAuth, (req, res) => {
     return res.status(400).json({ error: 'phones debe ser "all" o array' });
   }
 
-  const msg  = message.trim();
+  const msg  = sanitizeText(message.trim(), 1000);
   const stmt = db.prepare(
     `INSERT INTO messages (phone, content, direction, sent, type) VALUES (?, ?, 'outbound', 0, 'promotional')`
   );

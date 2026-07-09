@@ -210,6 +210,34 @@ const MIGRATIONS = [
     )` },
   { name: '054_nequi_config_seed', sql: `
     INSERT OR IGNORE INTO nequi_config (id, status) VALUES (1, 'disconnected')` },
+  { name: '055_ip_activity', sql: `
+    CREATE TABLE IF NOT EXISTS ip_activity (
+      ip              TEXT NOT NULL,
+      minute          TEXT NOT NULL,
+      requests        INTEGER NOT NULL DEFAULT 0,
+      count_401       INTEGER NOT NULL DEFAULT 0,
+      count_403       INTEGER NOT NULL DEFAULT 0,
+      count_404       INTEGER NOT NULL DEFAULT 0,
+      last_path       TEXT,
+      last_user_agent TEXT,
+      PRIMARY KEY (ip, minute)
+    )` },
+  { name: '056_idx_ip_activity_minute', sql:
+    'CREATE INDEX IF NOT EXISTS idx_ip_activity_minute ON ip_activity(minute)' },
+  { name: '057_security_alerts', sql: `
+    CREATE TABLE IF NOT EXISTS security_alerts (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      kind       TEXT NOT NULL,
+      message    TEXT NOT NULL,
+      read_at    TEXT,
+      created_at TEXT DEFAULT (datetime('now','localtime'))
+    )` },
+  { name: '058_blocked_ips', sql: `
+    CREATE TABLE IF NOT EXISTS blocked_ips (
+      ip         TEXT PRIMARY KEY,
+      reason     TEXT,
+      blocked_at TEXT DEFAULT (datetime('now','localtime'))
+    )` },
 ];
 
 function runMigrations(db) {

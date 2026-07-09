@@ -3,9 +3,12 @@ const router  = express.Router();
 const jwt     = require('jsonwebtoken');
 const bcrypt  = require('bcrypt');
 const { getDB } = require('../db/database');
+const { getIP } = require('../utils/ip');
+const { raiseAlert } = require('../utils/securityAlert');
 
 // ── Brute-force protection ────────────────────────────────────
-// key = `${username}:${ip}` → { count, lockedUntil }
+// key = username (independiente de la IP -- un atacante que rota de IP no
+// debe poder seguir probando contraseñas contra la misma cuenta) → { count, lockedUntil }
 const attempts = new Map();
 const MAX_ATTEMPTS  = 5;
 const LOCKOUT_MS    = 15 * 60 * 1000; // 15 min
@@ -17,11 +20,6 @@ setInterval(() => {
     if (val.lockedUntil && val.lockedUntil < now) attempts.delete(key);
   }
 }, CLEANUP_EVERY).unref();
-
-function getIP(req) {
-  return (req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown')
-    .split(',')[0].trim();
-}
 
 function checkLock(key) {
   const a = attempts.get(key);
@@ -36,7 +34,10 @@ function checkLock(key) {
 function recordFail(key) {
   const a   = attempts.get(key) || { count: 0 };
   a.count  += 1;
-  if (a.count >= MAX_ATTEMPTS) a.lockedUntil = Date.now() + LOCKOUT_MS;
+  if (a.count >= MAX_ATTEMPTS && !a.lockedUntil) {
+    a.lockedUntil = Date.now() + LOCKOUT_MS;
+    raiseAlert('brute_force', `Cuenta "${key}" bloqueada 15 minutos por fuerza bruta`);
+  }
   attempts.set(key, a);
 }
 
@@ -76,7 +77,8 @@ router.post('/token', (req, res) => {
 
   const identifier = username.trim().toLowerCase();
   const ip      = getIP(req);
-  const lockKey = `${identifier}:${ip}`;
+  // Bloqueo por CUENTA, no por IP -- ver comentario en la declaracion de `attempts`.
+  const lockKey = identifier;
 
   const secs = checkLock(lockKey);
   if (secs !== null) {

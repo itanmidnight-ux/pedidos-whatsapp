@@ -14,6 +14,10 @@ const app = express();
 // Sin esto express-rate-limit lanza ERR_ERL_UNEXPECTED_X_FORWARDED_FOR
 app.set('trust proxy', 1);
 
+const { ipActivityMiddleware, startIpActivityFlusher } = require('./middleware/ipActivity');
+app.use(ipActivityMiddleware);
+if (process.env.NODE_ENV !== 'test') startIpActivityFlusher();
+
 // ── Flutter web ANTES de helmet ──────────────────────────────
 app.use('/app', (req, res, next) => {
   res.setHeader('Cache-Control', 'no-cache');

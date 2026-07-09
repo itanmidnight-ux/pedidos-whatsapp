@@ -12,11 +12,19 @@ const PORT = process.env.PORT || 3000;
 const HOST = process.env.HOST || '127.0.0.1';
 initDB().then(() => {
   schedulePDFJob();
-  app.listen(PORT, HOST, async () => {
+  if (process.env.NODE_ENV !== 'test') require('./services/securityMonitor').startSecurityMonitor();
+  const server = app.listen(PORT, HOST, async () => {
     logger.info(`Servidor corriendo en ${HOST}:${PORT}`);
     if (process.env.BOT_ENABLED === 'true') {
       const { initBot } = require('./services/waBot');
       await initBot().catch(e => logger.error({ err: e.message }, '[bot] init error'));
     }
   });
+
+  // Anti slow-loris / conexiones colgadas -- importante para aguantar miles
+  // de clientes concurrentes sin agotar sockets del proceso. headersTimeout
+  // SIEMPRE debe ser mayor que keepAliveTimeout (requisito de Node).
+  server.keepAliveTimeout = 65_000;
+  server.headersTimeout   = 66_000;
+  server.requestTimeout   = 30_000;
 }).catch(err => { logger.error({ err }, 'Error iniciando servidor'); process.exit(1); });

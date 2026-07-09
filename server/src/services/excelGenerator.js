@@ -15,6 +15,16 @@ function fmtDate(iso) {
   });
 }
 
+// Formula injection (CSV/Excel): si una celda de texto controlado por el
+// usuario empieza con =, +, - o @, Excel la interpreta como formula al
+// abrirla -- puede ejecutar comandos. Se antepone un apostrofe (fuerza texto
+// literal en Excel, no se ve en la celda) a cualquier valor de string que
+// empiece con esos caracteres. Numeros/fechas no se tocan.
+function sanitizeCell(value) {
+  if (typeof value !== 'string') return value;
+  return /^[=+\-@]/.test(value) ? `'${value}` : value;
+}
+
 function styleHeaderRow(row) {
   row.eachCell(cell => {
     cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
@@ -86,16 +96,16 @@ async function generateRangeReportXLSX(fromISO, toISO) {
       : o.product_name;
     wsOrders.addRow({
       id: o.id,
-      cliente: o.customer_name || o.phone || 'N/A',
+      cliente: sanitizeCell(o.customer_name || o.phone || 'N/A'),
       telefono: o.phone || '',
-      producto: productLabel,
+      producto: sanitizeCell(productLabel),
       precio: o.product_price ? Number(o.product_price) : null,
       estado: o.status,
       fiado: o.is_fiado ? 'Sí' : 'No',
-      direccion: o.delivery_address || '',
+      direccion: sanitizeCell(o.delivery_address || ''),
       solicitado: fmtDate(o.requested_at),
       entregado: fmtDate(o.delivered_at),
-      atendio: o.delivered_by_name || '',
+      atendio: sanitizeCell(o.delivered_by_name || ''),
     });
   }
   wsOrders.getColumn('precio').numFmt = '$#,##0';
@@ -116,7 +126,7 @@ async function generateRangeReportXLSX(fromISO, toISO) {
 
   for (const a of accounts) {
     wsAccounts.addRow({
-      cliente: a.name || a.phone || 'N/A',
+      cliente: sanitizeCell(a.name || a.phone || 'N/A'),
       telefono: a.phone || '',
       pedidos: a.total_pedidos,
       gastado: Number(a.total_gastado) || 0,

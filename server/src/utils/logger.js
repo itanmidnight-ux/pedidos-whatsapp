@@ -48,7 +48,15 @@ const ringStream = new Writable({
 function getRecentLogs() { return ringBuffer; }
 
 const logger = pino(
-  { level: process.env.LOG_LEVEL || (isTest ? 'silent' : isProd ? 'info' : 'debug') },
+  {
+    level: process.env.LOG_LEVEL || (isTest ? 'silent' : isProd ? 'info' : 'debug'),
+    // pino-http loguea req.headers completos -- sin esto, Authorization:
+    // Bearer <jwt> y X-Api-Key quedan en texto plano en stdout/journald.
+    redact: {
+      paths: ['req.headers.authorization', 'req.headers["x-api-key"]', 'req.headers.cookie'],
+      censor: '[REDACTED]',
+    },
+  },
   pino.multistream([
     { stream: (isProd || isTest) ? process.stdout : require('pino-pretty')({ colorize: true, translateTime: 'HH:MM:ss', ignore: 'pid,hostname' }) },
     { stream: ringStream },
