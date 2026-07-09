@@ -24,6 +24,10 @@ class AdminAnalyticsScreen extends StatefulWidget {
   @override State<AdminAnalyticsScreen> createState() => _AdminAnalyticsScreenState();
 }
 
+// Separador de miles (es-CO usa punto: 306.000) -- antes los numeros
+// grandes se mostraban pegados ("306000"), dificiles de leer de un vistazo.
+String _fmtN(dynamic n) => NumberFormat.decimalPattern('es_CO').format(n is num ? n : num.tryParse('$n') ?? 0);
+
 class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> with SingleTickerProviderStateMixin {
   late final TabController _tabController;
   Map<String, dynamic>? _summary;
@@ -112,10 +116,10 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> with Single
         mainAxisSpacing: 12, crossAxisSpacing: 12,
         childAspectRatio: 1.5,
         children: [
-          StatTile(label: 'Ventas hoy', value: '\$${s['sales_today']}', icon: Icons.attach_money_rounded),
-          StatTile(label: 'Ticket promedio', value: '\$${s['avg_ticket']}', icon: Icons.receipt_long_rounded),
+          StatTile(label: 'Ventas hoy', value: '\$${_fmtN(s['sales_today'])}', icon: Icons.attach_money_rounded),
+          StatTile(label: 'Ticket promedio', value: '\$${_fmtN(s['avg_ticket'])}', icon: Icons.receipt_long_rounded),
           StatTile(label: 'Cancelados', value: '${s['cancelled_pct']}%', icon: Icons.cancel_outlined),
-          StatTile(label: 'Entregados (total)', value: '${s['delivered_total']}', icon: Icons.local_shipping_outlined),
+          StatTile(label: 'Entregados (total)', value: _fmtN(s['delivered_total']), icon: Icons.local_shipping_outlined),
         ],
       ),
       const SizedBox(height: 20),
@@ -149,28 +153,131 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> with Single
       if (top.isEmpty) const EmptyState(icon: Icons.inventory_2_rounded, title: 'Sin ventas registradas'),
       ...top.map((prod) => AppCard(child: Row(children: [
         Expanded(child: Text(prod['name'] as String)),
-        Text('${prod['total_qty']} vendidos'),
+        Text('${_fmtN(prod['total_qty'])} vendidos'),
       ]))),
     ]);
+  }
+
+  String _timeAgo(String? iso) {
+    if (iso == null) return 'nunca';
+    final dt = DateTime.tryParse(iso);
+    if (dt == null) return '-';
+    final diff = DateTime.now().toUtc().difference(dt.toUtc());
+    if (diff.inMinutes < 1)   return 'ahora mismo';
+    if (diff.inMinutes < 60)  return 'hace ${diff.inMinutes} min';
+    if (diff.inHours < 24)    return 'hace ${diff.inHours} h';
+    return 'hace ${diff.inDays} d';
   }
 
   Widget _buildEmployeesTab() {
     final e = _employees;
     if (e == null) return const EmptyState(icon: Icons.engineering_rounded, title: 'Sin datos todavía');
     final list = (e['employees'] as List? ?? []).cast<Map<String, dynamic>>();
-    if (list.isEmpty) return const EmptyState(icon: Icons.engineering_rounded, title: 'Sin entregas registradas');
-    return ListView.builder(
-      padding: const EdgeInsets.all(16),
-      itemCount: list.length,
-      itemBuilder: (_, i) {
-        final emp = list[i];
-        return AppCard(child: Row(children: [
-          Expanded(child: Text(emp['display_name'] as String? ?? emp['username'] as String)),
-          Text('${emp['delivered_count']} entregas'),
-          const SizedBox(width: 12),
-          Text('${emp['avg_minutes'] ?? '-'} min prom.'),
-        ]));
-      },
+    if (list.isEmpty) return const EmptyState(icon: Icons.engineering_rounded, title: 'Sin trabajadores registrados');
+    final notLoggedInToday = list.where((emp) => emp['logged_in_today'] != 1).length;
+    return ListView(padding: const EdgeInsets.all(16), children: [
+      if (notLoggedInToday > 0)
+        Container(
+          margin: const EdgeInsets.only(bottom: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(
+            color: Colors.orange.shade50,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: Colors.orange.shade200),
+          ),
+          child: Row(children: [
+            Icon(Icons.warning_amber_rounded, color: Colors.orange.shade800, size: 20),
+            const SizedBox(width: 8),
+            Expanded(child: Text(
+              '$notLoggedInToday ${notLoggedInToday == 1 ? "persona no ha" : "personas no han"} iniciado sesión hoy',
+              style: TextStyle(color: Colors.orange.shade900, fontSize: 13, fontWeight: FontWeight.w600))),
+          ]),
+        ),
+      ...list.map((emp) {
+        final isActive = emp['is_active_now'] == 1;
+        final loggedToday = emp['logged_in_today'] == 1;
+        return GestureDetector(
+          onTap: () => _showEmployeeDetail(emp),
+          child: AppCard(child: Row(children: [
+            Container(
+              width: 10, height: 10,
+              margin: const EdgeInsets.only(right: 12),
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: isActive ? Colors.green : (loggedToday ? Colors.orange : Colors.grey.shade400),
+              ),
+            ),
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(emp['display_name'] as String? ?? emp['username'] as String,
+                style: const TextStyle(fontWeight: FontWeight.w700)),
+              Text(
+                isActive ? 'En sesión · entró ${_timeAgo(emp['last_login_at'] as String?)}'
+                  : !loggedToday ? 'No ha iniciado sesión hoy'
+                  : 'Salió ${_timeAgo(emp['last_logout_at'] as String?)}',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: isActive ? Colors.green.shade700 : Colors.grey.shade600),
+              ),
+            ])),
+            Text('${_fmtN(emp['delivered_count'])} entregas'),
+            const SizedBox(width: 12),
+            Text('${emp['avg_minutes'] ?? '-'} min prom.'),
+            const SizedBox(width: 4),
+            Icon(Icons.chevron_right_rounded, color: Colors.grey.shade400),
+          ])),
+        );
+      }),
+    ]);
+  }
+
+  Future<void> _showEmployeeDetail(Map<String, dynamic> emp) async {
+    Map<String, dynamic>? detail;
+    try { detail = await ApiService.getEmployeeDetail(emp['id'] as int); } catch (_) {}
+    if (!mounted) return;
+    final sessions = (detail?['sessions'] as List? ?? []).cast<Map<String, dynamic>>();
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (_) => DraggableScrollableSheet(
+        initialChildSize: 0.6, maxChildSize: 0.9, minChildSize: 0.4, expand: false,
+        builder: (_, scrollCtrl) => Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(emp['display_name'] as String? ?? emp['username'] as String,
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+            Text('@${emp['username']} · ${emp['role']}', style: const TextStyle(color: Colors.grey)),
+            const SizedBox(height: 16),
+            Row(children: [
+              Expanded(child: StatTile(label: 'Entregas', value: _fmtN(emp['delivered_count']), icon: Icons.local_shipping_outlined)),
+              const SizedBox(width: 10),
+              Expanded(child: StatTile(label: 'Tiempo prom.', value: '${emp['avg_minutes'] ?? '-'} min', icon: Icons.timer_outlined)),
+            ]),
+            const SizedBox(height: 16),
+            const Text('Historial de sesiones', style: TextStyle(fontWeight: FontWeight.w700)),
+            const SizedBox(height: 8),
+            Expanded(
+              child: sessions.isEmpty
+                ? const Center(child: Text('Sin sesiones registradas', style: TextStyle(color: Colors.grey)))
+                : ListView.builder(
+                    controller: scrollCtrl,
+                    itemCount: sessions.length,
+                    itemBuilder: (_, i) {
+                      final s = sessions[i];
+                      final open = s['logged_out_at'] == null;
+                      return ListTile(
+                        dense: true,
+                        leading: Icon(open ? Icons.login_rounded : Icons.logout_rounded,
+                          color: open ? Colors.green : Colors.grey),
+                        title: Text('Entrada: ${s['logged_in_at']}'),
+                        subtitle: Text(open ? 'Sigue en sesión' : 'Salida: ${s['logged_out_at']}'),
+                      );
+                    },
+                  ),
+            ),
+          ]),
+        ),
+      ),
     );
   }
 
@@ -183,8 +290,8 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> with Single
         crossAxisCount: 2, shrinkWrap: true, physics: const NeverScrollableScrollPhysics(),
         mainAxisSpacing: 12, crossAxisSpacing: 12, childAspectRatio: 1.8,
         children: [
-          StatTile(label: 'Clientes nuevos (30d)', value: '${c['new_customers']}', icon: Icons.person_add_outlined),
-          StatTile(label: 'Recurrentes', value: '${c['returning_customers']}', icon: Icons.repeat_rounded),
+          StatTile(label: 'Clientes nuevos (30d)', value: _fmtN(c['new_customers']), icon: Icons.person_add_outlined),
+          StatTile(label: 'Recurrentes', value: _fmtN(c['returning_customers']), icon: Icons.repeat_rounded),
         ],
       ),
       const SizedBox(height: 20),
@@ -193,7 +300,7 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> with Single
       if (top.isEmpty) const EmptyState(icon: Icons.people_outline_rounded, title: 'Sin pedidos entregados aún'),
       ...top.map((cust) => AppCard(child: Row(children: [
         Expanded(child: Text(cust['name'] as String? ?? cust['phone'] as String)),
-        Text('${cust['order_count']} pedidos'),
+        Text('${_fmtN(cust['order_count'])} pedidos'),
       ]))),
     ]);
   }

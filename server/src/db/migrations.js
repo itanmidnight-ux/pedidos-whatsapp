@@ -174,6 +174,9 @@ const MIGRATIONS = [
   // "app:<username>" que usaba cart.js para crear el registro en
   // customers, y que impedia llamar/enviar mensaje real por WhatsApp.
   { name: '048_users_phone_unique', sql: 'CREATE UNIQUE INDEX idx_users_phone_unique ON users(phone) WHERE phone IS NOT NULL' },
+  // Antes solo se registraba la entrada -- sin salida no hay forma de
+  // saber si un trabajador sigue conectado o ya se fue.
+  { name: '049_login_events_logout', sql: 'ALTER TABLE login_events ADD COLUMN logged_out_at TEXT' },
 ];
 
 function runMigrations(db) {

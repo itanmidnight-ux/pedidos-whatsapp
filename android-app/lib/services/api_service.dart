@@ -135,6 +135,14 @@ class ApiService {
   }
 
   static Future<void> logout() async {
+    // Marca la hora de salida para el control de asistencia de staff --
+    // best-effort, si el servidor no responde igual se cierra sesión local.
+    if (_token.isNotEmpty) {
+      try {
+        await _client.post(Uri.parse('$_serverUrl/api/auth/logout'), headers: _headers)
+          .timeout(const Duration(seconds: 5));
+      } catch (_) {}
+    }
     await _secureStorage.deleteAll();
     _token = ''; _username = ''; _role = ''; _displayName = '';
   }
@@ -756,6 +764,13 @@ class ApiService {
       .timeout(const Duration(seconds: 10));
     if (res.statusCode == 200) return jsonDecode(res.body) as Map<String, dynamic>;
     throw Exception('Error cargando empleados');
+  }
+
+  static Future<Map<String, dynamic>> getEmployeeDetail(int id) async {
+    final res = await _client.get(Uri.parse('$_serverUrl/api/analytics/employees/$id'), headers: _headers)
+      .timeout(const Duration(seconds: 10));
+    if (res.statusCode == 200) return jsonDecode(res.body) as Map<String, dynamic>;
+    throw Exception('Error cargando detalle del empleado');
   }
 
   static Future<Map<String, dynamic>> getAnalyticsCustomers() async {

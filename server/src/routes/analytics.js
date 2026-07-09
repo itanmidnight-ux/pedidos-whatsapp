@@ -91,19 +91,60 @@ router.get('/products', adminAuth, (req, res) => {
 });
 
 // GET /api/analytics/employees
+// Antes solo listaba a quien tuviera entregas -- un trabajador que no
+// entrego nada (ej. no inicio turno) directamente no aparecia. Ahora
+// lista TODO el staff activo, con su estado de sesion (activo ahora,
+// inicio sesion hoy) para poder detectar quien falta.
 router.get('/employees', adminAuth, (req, res) => {
   const db = getDB();
   const employees = db.prepare(`
-    SELECT u.id, u.username, u.display_name,
-      COUNT(*) AS delivered_count,
-      ROUND(AVG((julianday(o.delivered_at) - julianday(o.requested_at)) * 24 * 60)) AS avg_minutes
-    FROM orders o
-    JOIN users u ON u.id = o.claimed_by
-    WHERE o.status IN ('entregado','delivered')
-    GROUP BY u.id
-    ORDER BY delivered_count DESC
+    SELECT u.id, u.username, u.display_name, u.role,
+      COALESCE(d.delivered_count, 0) AS delivered_count,
+      d.avg_minutes,
+      le.logged_in_at  AS last_login_at,
+      le.logged_out_at AS last_logout_at,
+      CASE WHEN le.logged_in_at IS NOT NULL
+        AND date(le.logged_in_at, 'localtime') = date('now','localtime')
+        THEN 1 ELSE 0 END AS logged_in_today,
+      CASE WHEN le.logged_in_at IS NOT NULL AND le.logged_out_at IS NULL
+        THEN 1 ELSE 0 END AS is_active_now
+    FROM users u
+    LEFT JOIN (
+      SELECT claimed_by AS user_id, COUNT(*) AS delivered_count,
+        ROUND(AVG((julianday(delivered_at) - julianday(requested_at)) * 24 * 60)) AS avg_minutes
+      FROM orders WHERE status IN ('entregado','delivered') GROUP BY claimed_by
+    ) d ON d.user_id = u.id
+    LEFT JOIN (
+      SELECT le1.user_id, le1.logged_in_at, le1.logged_out_at
+      FROM login_events le1
+      WHERE le1.id = (SELECT MAX(le2.id) FROM login_events le2 WHERE le2.user_id = le1.user_id)
+    ) le ON le.user_id = u.id
+    WHERE u.role IN ('admin','worker') AND u.active = 1
+    ORDER BY is_active_now DESC, logged_in_today ASC, u.display_name ASC
   `).all();
   res.json({ employees });
+});
+
+// GET /api/analytics/employees/:id — detalle: historial de sesiones
+router.get('/employees/:id', adminAuth, (req, res) => {
+  const db = getDB();
+  const id = parseInt(req.params.id, 10);
+  const user = db.prepare(
+    `SELECT id, username, display_name, role, active FROM users WHERE id=? AND role IN ('admin','worker')`
+  ).get(id);
+  if (!user) return res.status(404).json({ error: 'Empleado no encontrado' });
+
+  const sessions = db.prepare(
+    `SELECT logged_in_at, logged_out_at FROM login_events WHERE user_id=? ORDER BY id DESC LIMIT 20`
+  ).all(id);
+
+  const stats = db.prepare(`
+    SELECT COUNT(*) AS delivered_count,
+      ROUND(AVG((julianday(delivered_at) - julianday(requested_at)) * 24 * 60)) AS avg_minutes
+    FROM orders WHERE status IN ('entregado','delivered') AND claimed_by = ?
+  `).get(id);
+
+  res.json({ user, sessions, stats });
 });
 
 // GET /api/analytics/customers

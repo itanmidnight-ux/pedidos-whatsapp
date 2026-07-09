@@ -121,6 +121,24 @@ router.post('/token', (req, res) => {
   });
 });
 
+// ── POST /api/auth/logout — Marca la hora de salida ───────────
+// JWT es sin estado -- "logout" real solo existe si el cliente lo marca.
+// Se actualiza la fila de login_events mas reciente sin salida registrada
+// para saber cuando un trabajador se desconecto (control de asistencia).
+router.post('/logout', require('../middleware/auth').clientAuth, (req, res) => {
+  // SQLite estandar no soporta ORDER BY/LIMIT en UPDATE -- se resuelve con
+  // subquery para agarrar solo la fila abierta mas reciente de ese usuario.
+  getDB().prepare(`
+    UPDATE login_events SET logged_out_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+    WHERE id = (
+      SELECT id FROM login_events
+      WHERE user_id = ? AND logged_out_at IS NULL
+      ORDER BY id DESC LIMIT 1
+    )
+  `).run(req.user.id);
+  res.json({ ok: true });
+});
+
 // ── POST /api/auth/refresh — Renovar token ────────────────────
 router.post('/refresh', (req, res) => {
   const auth = req.headers.authorization || '';
