@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../providers/app_provider.dart';
 import '../services/api_service.dart';
 import '../widgets/app_button.dart';
 
@@ -34,11 +36,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
   Future<void> _register() async {
     if (!_formKey.currentState!.validate()) return;
     setState(() { _loading = true; _error = null; });
+    final username = _usernameCtrl.text.trim();
+    final password = _pwCtrl.text;
     try {
-      // Cuenta queda pendiente de aprobación del admin — no hay auto-login
-      final message = await ApiService.register(
-        username:    _usernameCtrl.text.trim(),
-        password:    _pwCtrl.text,
+      // La cuenta queda activa de inmediato (sin aprobación de un admin) --
+      // se entra directo en vez de mandar de vuelta a escribir credenciales
+      // que la persona acaba de escribir en este mismo formulario.
+      await ApiService.register(
+        username:    username,
+        password:    password,
         displayName: _nameCtrl.text.trim(),
         email:       _emailCtrl.text.trim(),
         address:     _addressCtrl.text.trim(),
@@ -46,21 +52,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
         bio:         _bioCtrl.text.trim().isEmpty ? null : _bioCtrl.text.trim(),
       );
       if (!mounted) return;
-      await showDialog<void>(
-        context: context,
-        barrierDismissible: false,
-        builder: (ctx) => AlertDialog(
-          title: const Text('Cuenta creada'),
-          content: Text(message),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('Entendido'),
-            ),
-          ],
-        ),
-      );
-      if (mounted) Navigator.pop(context);
+      await context.read<AppProvider>().login(username, password);
+      if (mounted) Navigator.of(context).popUntil((route) => route.isFirst);
     } catch (e) {
       if (mounted) setState(() => _error = e.toString().replaceAll('Exception: ', ''));
     } finally {

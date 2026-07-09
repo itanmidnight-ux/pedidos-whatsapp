@@ -42,39 +42,48 @@ async function registerClient(username) {
   });
 }
 
-describe('Registro de clientes queda pendiente de aprobación', () => {
-  test('registro exitoso no devuelve token de sesión', async () => {
-    const res = await registerClient('cliente_pendiente');
+describe('Registro de clientes queda activo de inmediato (sin aprobación manual)', () => {
+  test('registro exitoso no devuelve token de sesión, pero la cuenta ya queda activa', async () => {
+    const res = await registerClient('cliente_activo');
     expect(res.status).toBe(201);
     expect(res.body.token).toBeUndefined();
-    expect(res.body.pending).toBe(true);
+    expect(res.body.pending).toBe(false);
   });
 
-  test('login falla mientras la cuenta no esté aprobada', async () => {
-    await registerClient('cliente_pendiente2');
+  test('login funciona de inmediato tras registrarse, sin intervención de un admin', async () => {
+    await registerClient('cliente_activo2');
     const res = await request(app)
       .post('/api/auth/token')
-      .send({ username: 'cliente_pendiente2', password: 'password123' });
-    expect(res.status).toBe(401);
+      .send({ username: 'cliente_activo2', password: 'password123' });
+    expect(res.status).toBe(200);
+    expect(res.body.token).toBeDefined();
   });
 
-  test('tras aprobación del admin, el login funciona', async () => {
-    await registerClient('cliente_aprobado');
+  test('el cliente puede iniciar sesión con su correo en vez de su usuario', async () => {
+    await registerClient('cliente_correo');
+    const res = await request(app)
+      .post('/api/auth/token')
+      .send({ username: 'cliente_correo@example.com', password: 'password123' });
+    expect(res.status).toBe(200);
+    expect(res.body.token).toBeDefined();
+  });
+
+  test('un admin sigue pudiendo desactivar la cuenta de un cliente manualmente', async () => {
+    await registerClient('cliente_a_desactivar');
     const adminToken = await loginAdmin();
     const list = await request(app).get('/api/users').set('Authorization', `Bearer ${adminToken}`);
-    const user = list.body.users.find(u => u.username === 'cliente_aprobado');
+    const user = list.body.users.find(u => u.username === 'cliente_a_desactivar');
     expect(user).toBeDefined();
 
     await request(app)
       .put(`/api/users/${user.id}`)
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ active: 1 });
+      .send({ active: 0 });
 
     const login = await request(app)
       .post('/api/auth/token')
-      .send({ username: 'cliente_aprobado', password: 'password123' });
-    expect(login.status).toBe(200);
-    expect(login.body.token).toBeDefined();
+      .send({ username: 'cliente_a_desactivar', password: 'password123' });
+    expect(login.status).toBe(401);
   });
 });
 

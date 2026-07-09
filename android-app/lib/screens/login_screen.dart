@@ -297,11 +297,13 @@ class _LoginScreenState extends State<LoginScreen>
                             ]),
                             const SizedBox(height: 16),
 
-                            // Username
+                            // Usuario (staff) o correo (clientes) -- el
+                            // backend resuelve cual es sin que el usuario
+                            // tenga que elegir un modo distinto.
                             _buildField(
                               controller: _userCtrl,
-                              label: 'Tu usuario',
-                              hint: 'Ej: maria123',
+                              label: 'Usuario o correo',
+                              hint: 'Tu usuario, o tu correo si eres cliente',
                               icon: Icons.person_outline_rounded,
                               action: TextInputAction.next,
                               autocorrect: false,
@@ -336,7 +338,7 @@ class _LoginScreenState extends State<LoginScreen>
                                 ),
                               ),
                               const SizedBox(width: 8),
-                              const Text('Recordar mi usuario',
+                              const Text('Recordar mis datos',
                                 style: TextStyle(fontSize: 13, color: Colors.black54)),
                             ]),
 

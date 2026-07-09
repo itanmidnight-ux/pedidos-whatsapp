@@ -60,10 +60,13 @@ function signToken(user) {
 }
 
 // ── POST /api/auth/token — Login ───────────────────────────────
+// El identificador acepta username (admin/worker, sin cambios) O correo
+// (clientes que se auto-registran -- ver /register). Un solo campo en la
+// app, el backend resuelve cual es sin necesitar que el usuario elija.
 router.post('/token', (req, res) => {
   const { username, password, pin } = req.body;
   if (!username || typeof username !== 'string' || !username.trim())
-    return res.status(400).json({ error: 'Usuario requerido' });
+    return res.status(400).json({ error: 'Usuario o correo requerido' });
 
   const credential = password !== undefined
     ? String(password)
@@ -71,8 +74,9 @@ router.post('/token', (req, res) => {
   if (!credential.length)
     return res.status(400).json({ error: 'Contraseña requerida' });
 
+  const identifier = username.trim().toLowerCase();
   const ip      = getIP(req);
-  const lockKey = `${username.trim().toLowerCase()}:${ip}`;
+  const lockKey = `${identifier}:${ip}`;
 
   const secs = checkLock(lockKey);
   if (secs !== null) {
@@ -84,8 +88,8 @@ router.post('/token', (req, res) => {
 
   const db   = getDB();
   const user = db.prepare(
-    'SELECT * FROM users WHERE username = ? AND active = 1'
-  ).get(username.trim().toLowerCase());
+    'SELECT * FROM users WHERE (username = ? OR email = ?) AND active = 1'
+  ).get(identifier, identifier);
 
   if (!user) {
     recordFail(lockKey);
@@ -173,10 +177,13 @@ router.post('/register', async (req, res) => {
 
   try {
     const hash = await bcrypt.hash(String(password), 10);
-    // active=0: cuenta queda pendiente de aprobación del admin (users_screen ya tiene el toggle)
+    // active=1: la cuenta queda activa de inmediato -- pedir aprobacion
+    // manual de un admin por cada registro no era practico. El correo
+    // unico (indice UNIQUE en la base) es la validacion real: evita que
+    // se repitan cuentas para la misma persona.
     db.prepare(
       `INSERT INTO users (username, password_hash, pin, display_name, role, active, email, address, nickname, bio)
-       VALUES (?,?,?,?,?,0,?,?,?,?)`
+       VALUES (?,?,?,?,?,1,?,?,?,?)`
     ).run(
       name, hash, hash,
       String(display_name).trim().slice(0, 100),
@@ -188,11 +195,16 @@ router.post('/register', async (req, res) => {
     );
     clearAttempts(lockKey);
     res.status(201).json({
-      pending: true,
-      message: 'Cuenta creada. Un administrador debe aprobarla antes de que puedas iniciar sesión.',
+      pending: false,
+      message: 'Cuenta creada. Ya puedes iniciar sesión con tu correo y contraseña.',
     });
   } catch (e) {
     recordFail(lockKey);
+    // UNIQUE (username o email) -- puede pasar por carrera entre el chequeo
+    // de arriba y el insert real, aunque sea poco probable.
+    if (String(e.message || '').includes('UNIQUE constraint failed')) {
+      return res.status(409).json({ error: 'Ese usuario o correo ya está registrado' });
+    }
     res.status(500).json({ error: 'Error al crear cuenta' });
   }
 });

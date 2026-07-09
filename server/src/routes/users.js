@@ -125,7 +125,14 @@ router.put('/me', require('../middleware/auth').clientAuth, async (req, res) => 
   }
   if (!updates.length) return res.status(400).json({ error: 'Nada que actualizar' });
   vals.push(req.user.id);
-  db.prepare(`UPDATE users SET ${updates.join(',')} WHERE id=?`).run(...vals);
+  try {
+    db.prepare(`UPDATE users SET ${updates.join(',')} WHERE id=?`).run(...vals);
+  } catch (e) {
+    if (String(e.message || '').includes('UNIQUE constraint failed')) {
+      return res.status(409).json({ error: 'Ese correo ya está en uso por otra cuenta' });
+    }
+    throw e;
+  }
   const user = db.prepare('SELECT id,username,display_name,role,email,address,nickname,bio,profile_pic FROM users WHERE id=?').get(req.user.id);
   res.json({ user });
 });

@@ -223,8 +223,7 @@ class ApiService {
     }
     if (res.statusCode == 201) {
       final body = jsonDecode(res.body) as Map<String, dynamic>;
-      return body['message'] as String? ??
-          'Cuenta creada. Un administrador debe aprobarla antes de que puedas iniciar sesión.';
+      return body['message'] as String? ?? 'Cuenta creada.';
     }
     final body = _tryDecodeBody(res.body);
     throw Exception(body['error'] as String? ?? 'Error al registrarse');

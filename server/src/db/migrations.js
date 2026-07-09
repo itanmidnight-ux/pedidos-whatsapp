@@ -164,6 +164,11 @@ const MIGRATIONS = [
   // para siempre. Ahora se marca deleted_at (soft-delete): desaparece de
   // la vista normal pero queda intacto en la base para exportar a PDF.
   { name: '045_messages_deleted_at', sql: 'ALTER TABLE messages ADD COLUMN deleted_at TEXT' },
+  // Antes email solo se validaba en la app antes del insert -- condicion de
+  // carrera real (dos registros simultaneos con el mismo correo podian
+  // pasar los dos el chequeo). Indice parcial: NULL (admin/worker sin
+  // correo) no choca entre si, solo se exige unico cuando SI hay valor.
+  { name: '046_users_email_unique', sql: 'CREATE UNIQUE INDEX idx_users_email_unique ON users(email) WHERE email IS NOT NULL' },
 ];
 
 function runMigrations(db) {
