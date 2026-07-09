@@ -18,7 +18,8 @@ set -euo pipefail
 IFS=$'\n\t'
 
 # ── Auto-elevacion a root ─────────────────────────────────────────
-if [ "$(id -u)" -ne 0 ]; then
+# -h/--help solo imprime texto -- no tiene sentido pedir sudo para eso.
+if [ "$(id -u)" -ne 0 ] && [ "${1:-}" != "-h" ] && [ "${1:-}" != "--help" ]; then
     exec sudo -E bash "$0" "$@"
 fi
 
@@ -441,8 +442,10 @@ cmd_start() {
     require_installed
     as_root systemctl start "$NODE_SVC"
     wait_server_healthy "$(env_get PORT)" 20 || true
-    # El tunel acompaña al servidor: si esta instalacion usa Cloudflare Tunnel
-    # como metodo de acceso publico, arranca junto al servidor automaticamente.
+    # Tailscale/tailscaled es un servicio del sistema independiente (siempre
+    # corriendo, no ligado al ciclo de vida de esta app) -- no se toca aca.
+    # El viejo tunel Cloudflare (metodo "tunnel", en desuso) si acompañaba
+    # al servidor porque era un proceso dedicado por-app.
     if [ "$(load_conf ACCESS_METHOD)" = "tunnel" ] && systemctl cat "${CF_SVC}.service" &>/dev/null 2>&1; then
         as_root systemctl start "$CF_SVC" 2>/dev/null || true
         ok "Tunel Cloudflare iniciado junto al servidor."
@@ -453,12 +456,10 @@ cmd_start() {
 cmd_stop() {
     require_installed
     as_root systemctl stop "$NODE_SVC"
-    # Sin servidor no tiene sentido mantener el tunel expuesto -- se detiene
-    # junto con el, y --start/--continue lo vuelve a levantar.
-    if systemctl cat "${CF_SVC}.service" &>/dev/null 2>&1; then
+    if [ "$(load_conf ACCESS_METHOD)" = "tunnel" ] && systemctl cat "${CF_SVC}.service" &>/dev/null 2>&1; then
         as_root systemctl stop "$CF_SVC" 2>/dev/null || true
     fi
-    ok "Servidor (y tunel, si estaba activo) detenido. Para reanudar: ./deploy-linux.sh --start"
+    ok "Servidor detenido. Para reanudar: ./deploy-linux.sh --start"
 }
 
 # Bloquea/permite trafico entrante que no sea loopback hacia el puerto de la
@@ -505,10 +506,24 @@ firewall_set_public() {
 cmd_localhost() {
     require_installed
     info "Cerrando acceso publico -- el servidor quedara solo en localhost..."
-    if systemctl cat "${CF_SVC}.service" &>/dev/null 2>&1; then
-        as_root systemctl stop "$CF_SVC" 2>/dev/null || true
-        ok "Tunel Cloudflare detenido."
-    fi
+    local method; method=$(load_conf ACCESS_METHOD)
+    case "$method" in
+        tailscale-funnel)
+            # Funnel no pasa por la interfaz de red normal (va por el tunel
+            # WireGuard de Tailscale) -- el firewall de mas abajo NO lo
+            # bloquea, hay que apagarlo con su propio comando.
+            if has_cmd tailscale; then
+                as_root tailscale funnel --https=443 off &>/dev/null || true
+                ok "Tailscale Funnel desactivado."
+            fi
+            ;;
+        tunnel)
+            if systemctl cat "${CF_SVC}.service" &>/dev/null 2>&1; then
+                as_root systemctl stop "$CF_SVC" 2>/dev/null || true
+                ok "Tunel Cloudflare detenido."
+            fi
+            ;;
+    esac
     firewall_set_public false
     save_conf ACCESS_SUSPENDED true
     ok "Servidor aislado. Solo accesible en http://127.0.0.1:$(env_get PORT)/app/ desde esta maquina."
@@ -523,6 +538,16 @@ cmd_continue() {
     firewall_set_public true
     local method; method=$(load_conf ACCESS_METHOD)
     case "$method" in
+        tailscale-funnel)
+            if has_cmd tailscale; then
+                local port; port=$(env_get PORT); port="${port:-$DEFAULT_PORT}"
+                as_root tailscale funnel --bg "$port" &>/dev/null || true
+                ok "Tailscale Funnel reanudado."
+            else
+                warn "Tailscale no esta instalado en esta maquina -- no se puede reabrir el acceso publico asi."
+            fi
+            firewall_set_public false  # Funnel no necesita 80/443 abiertos, solo el bloqueo de --localhost
+            ;;
         tunnel)
             if systemctl cat "${CF_SVC}.service" &>/dev/null 2>&1; then
                 as_root systemctl start "$CF_SVC"
@@ -530,13 +555,13 @@ cmd_continue() {
             else
                 warn "No hay tunel Cloudflare configurado -- vuelve a correr ./deploy-linux.sh para crearlo."
             fi
-            firewall_set_public false  # el tunel no necesita 80/443 abiertos, solo el bloqueo de esos dos
+            firewall_set_public false
             ;;
         nginx)
             ok "Puertos 80/443 reabiertos para nginx."
             ;;
         *)
-            warn "No se encontro un metodo de acceso publico guardado -- se reabrio el firewall por seguridad, pero revisa manualmente si corresponde tunel/nginx."
+            warn "No se encontro un metodo de acceso publico guardado -- se reabrio el firewall por seguridad, pero revisa manualmente si corresponde Tailscale/tunel/nginx."
             ;;
     esac
     save_conf ACCESS_SUSPENDED false
@@ -988,18 +1013,49 @@ main_install() {
     echo ""
 }
 
+show_help() {
+    echo -e "${GREEN}${BOLD}"
+    echo "  +==========================================================+"
+    echo "  |        Concentrados Monserrath — deploy-linux.sh         |"
+    echo "  +==========================================================+"
+    echo -e "${NC}"
+    echo -e "  ${BOLD}Uso:${NC} ./deploy-linux.sh [comando]"
+    echo ""
+    echo -e "  ${CYAN}${BOLD}INSTALACIÓN${NC}"
+    printf "    ${GREEN}%-14s${NC} %s\n" "(sin flags)" "Instala o actualiza y despliega todo el servidor"
+    printf "    ${GREEN}%-14s${NC} %s\n" "--menu" "Abre el panel de gestión interactivo (TUI)"
+    printf "    ${GREEN}%-14s${NC} %s\n" "--uninstall" "Detiene y elimina todos los servicios instalados"
+    echo ""
+    echo -e "  ${CYAN}${BOLD}CONTROL RÁPIDO${NC}"
+    printf "    ${GREEN}%-14s${NC} %s\n" "--start" "Inicia el servidor"
+    printf "    ${GREEN}%-14s${NC} %s\n" "--stop" "Detiene el servidor"
+    printf "    ${GREEN}%-14s${NC} %s\n" "--localhost" "Cierra el acceso público (solo 127.0.0.1)"
+    printf "    ${GREEN}%-14s${NC} %s\n" "--continue" "Reabre el acceso público (revierte --localhost)"
+    echo ""
+    echo -e "  ${CYAN}${BOLD}AYUDA${NC}"
+    printf "    ${GREEN}%-14s${NC} %s\n" "-h, --help" "Muestra esta ayuda"
+    echo ""
+    echo -e "  ${BOLD}Acceso público actual:${NC} $(load_conf ACCESS_METHOD || echo 'no configurado')"
+    [ -n "$(load_conf TUNNEL_URL)" ] && echo -e "  ${BOLD}URL pública:${NC} $(load_conf TUNNEL_URL)/app/"
+    echo ""
+    echo -e "  ${BOLD}Panel de análisis (ventas, empleados, chats):${NC} ${CYAN}python3 $PROJ/dashboard.py${NC}"
+    echo -e "  ${BOLD}Logs:${NC} $LOG_DIR/  (o: journalctl -u $NODE_SVC -f)"
+    echo ""
+}
+
 # NOTA: este script SOLO despliega y gestiona el servidor (systemd, firewall,
 # fail2ban, tunel). El panel de analisis (graficas, marca, ventas) vive en
 # dashboard.py y es una herramienta aparte -- el usuario la abre directo con
 # "python3 dashboard.py" cuando quiera, no se lanza automaticamente desde aqui.
 
 case "${1:-}" in
-    --menu)      management_menu ;;
-    --start)     cmd_start ;;
-    --stop)      cmd_stop ;;
-    --localhost) cmd_localhost ;;
-    --continue)  cmd_continue ;;
-    --uninstall) uninstall_services ;;
-    "")          main_install ;;
-    *)           die "Uso: $0 [--menu|--start|--stop|--localhost|--continue|--uninstall]" ;;
+    --menu)       management_menu ;;
+    --start)      cmd_start ;;
+    --stop)       cmd_stop ;;
+    --localhost)  cmd_localhost ;;
+    --continue)   cmd_continue ;;
+    --uninstall)  uninstall_services ;;
+    -h|--help)    show_help ;;
+    "")           main_install ;;
+    *)            echo -e "${RED}Comando desconocido: ${1}${NC}"; echo ""; show_help; exit 1 ;;
 esac
