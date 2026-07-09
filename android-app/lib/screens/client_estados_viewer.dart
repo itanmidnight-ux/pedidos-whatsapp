@@ -8,7 +8,15 @@ import 'client_product_detail.dart';
 class ClientEstadosViewer extends StatefulWidget {
   final List<Estado> estados;
   final int initialIndex;
-  const ClientEstadosViewer({super.key, required this.estados, this.initialIndex = 0});
+  // Solo para el rol admin viendo sus propios estados: permite deslizar
+  // hacia arriba para ver quien dio like, igual que WhatsApp.
+  final bool showLikesOnSwipeUp;
+  const ClientEstadosViewer({
+    super.key,
+    required this.estados,
+    this.initialIndex = 0,
+    this.showLikesOnSwipeUp = false,
+  });
   @override State<ClientEstadosViewer> createState() => _ClientEstadosViewerState();
 }
 
@@ -16,16 +24,16 @@ class _ClientEstadosViewerState extends State<ClientEstadosViewer>
     with SingleTickerProviderStateMixin {
   late final PageController _page;
   late final AnimationController _progressCtrl;
+  late final AnimationController _heartBounceCtrl;
 
   int  _current   = 0;
   bool _paused    = false;
   bool _reacting  = false;
-  bool _replying  = false;
   List<Estado> _estados = [];
-  final _replyCtrl   = TextEditingController();
-  final _replyFocus  = FocusNode();
 
-  static const _autoDuration = Duration(seconds: 30);
+  // Estados pensados para verse con calma, no como un carrusel apurado
+  // -- mucho mas lento que el default tipo Instagram/WhatsApp (5-7s).
+  static const _autoDuration = Duration(seconds: 45);
 
   @override
   void initState() {
@@ -35,27 +43,19 @@ class _ClientEstadosViewerState extends State<ClientEstadosViewer>
     _page = PageController(initialPage: _current);
     _progressCtrl = AnimationController(vsync: this, duration: _autoDuration)
       ..addStatusListener((s) {
-        if (s == AnimationStatus.completed && !_replying) _nextPage();
+        if (s == AnimationStatus.completed) _nextPage();
       });
+    _heartBounceCtrl = AnimationController(
+      vsync: this, duration: const Duration(milliseconds: 300), lowerBound: 0.85, upperBound: 1.0)
+      ..value = 1.0;
     _startProgress();
-
-    _replyFocus.addListener(() {
-      if (_replyFocus.hasFocus) {
-        _pauseProgress();
-        if (mounted) setState(() => _replying = true);
-      } else {
-        if (mounted) setState(() => _replying = false);
-        _resumeProgress();
-      }
-    });
   }
 
   @override
   void dispose() {
     _page.dispose();
     _progressCtrl.dispose();
-    _replyCtrl.dispose();
-    _replyFocus.dispose();
+    _heartBounceCtrl.dispose();
     super.dispose();
   }
 
@@ -90,6 +90,7 @@ class _ClientEstadosViewerState extends State<ClientEstadosViewer>
   Future<void> _toggleHeart() async {
     if (_reacting) return;
     HapticFeedback.lightImpact();
+    _heartBounceCtrl.forward(from: 0.85).then((_) => _heartBounceCtrl.value = 1.0);
     setState(() => _reacting = true);
     try {
       final result = await ApiService.reactToEstado(_estados[_current].id);
@@ -117,56 +118,74 @@ class _ClientEstadosViewerState extends State<ClientEstadosViewer>
     if (mounted) _resumeProgress();
   }
 
-  Future<void> _sendReply() async {
-    final text = _replyCtrl.text.trim();
-    if (text.isEmpty) return;
-    _replyCtrl.clear();
-    _replyFocus.unfocus();
-
-    HapticFeedback.lightImpact();
-    String reply;
-    try {
-      reply = await ApiService.sendAppMessage(text);
-    } catch (_) {
-      reply = 'Mensaje enviado. Te responderemos pronto.';
-    }
-
-    if (!mounted) return;
+  // Deslizar hacia arriba (solo dueño del estado, ej. admin) muestra quien
+  // dio like -- igual que en WhatsApp.
+  Future<void> _showLikes() async {
+    final e = _estados[_current];
+    _pauseProgress();
+    List<Map<String, dynamic>> reactions = [];
+    try { reactions = await ApiService.getEstadoReactions(e.id); } catch (_) {}
+    if (!mounted) { _resumeProgress(); return; }
     final scheme = Theme.of(context).colorScheme;
-    showDialog(
+    await showModalBottomSheet(
       context: context,
-      barrierColor: Colors.black54,
-      builder: (_) => Dialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      backgroundColor: const Color(0xFF1C1C1C),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (_) => SafeArea(
         child: Padding(
-          padding: const EdgeInsets.all(24),
+          padding: const EdgeInsets.all(20),
           child: Column(mainAxisSize: MainAxisSize.min, children: [
             Container(
-              width: 56, height: 56,
+              width: 40, height: 4,
+              margin: const EdgeInsets.only(bottom: 16),
               decoration: BoxDecoration(
-                color: scheme.primary.withValues(alpha: 0.1), shape: BoxShape.circle),
-              child: Icon(Icons.check_circle_outline_rounded, color: scheme.primary, size: 32),
+                color: Colors.white24, borderRadius: BorderRadius.circular(2)),
             ),
+            Row(children: [
+              const Icon(Icons.favorite, color: Colors.red, size: 20),
+              const SizedBox(width: 8),
+              Text('${e.heartCount} me gusta',
+                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 16)),
+            ]),
             const SizedBox(height: 16),
-            const Text('Mensaje enviado',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
-            const SizedBox(height: 8),
-            Text(reply,
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 13, color: Colors.black54, height: 1.4)),
-            const SizedBox(height: 20),
-            SizedBox(width: double.infinity,
-              child: FilledButton(
-                onPressed: () => Navigator.pop(context),
-                style: FilledButton.styleFrom(
-                  backgroundColor: scheme.primary,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-                child: const Text('Entendido'),
-              )),
+            if (reactions.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 16),
+                child: Text('Nadie ha reaccionado todavía.',
+                  style: TextStyle(color: Colors.white54)),
+              )
+            else
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 320),
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: reactions.length,
+                  itemBuilder: (_, i) {
+                    final r = reactions[i];
+                    final name = r['display_name'] as String? ?? r['username'] as String? ?? '?';
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 6),
+                      child: Row(children: [
+                        CircleAvatar(
+                          radius: 16,
+                          backgroundColor: scheme.primary.withValues(alpha: 0.25),
+                          child: Text(name.isNotEmpty ? name[0].toUpperCase() : '?',
+                            style: TextStyle(color: scheme.primary, fontWeight: FontWeight.bold)),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(child: Text(name, style: const TextStyle(color: Colors.white, fontSize: 14))),
+                        const Icon(Icons.favorite, color: Colors.red, size: 14),
+                      ]),
+                    );
+                  },
+                ),
+              ),
           ]),
         ),
       ),
     );
+    if (mounted) _resumeProgress();
   }
 
   @override
@@ -189,6 +208,9 @@ class _ClientEstadosViewerState extends State<ClientEstadosViewer>
           _resumeProgress();
           if (mounted) setState(() {});
         },
+        onVerticalDragEnd: !widget.showLikesOnSwipeUp ? null : (details) {
+          if ((details.primaryVelocity ?? 0) < -250) _showLikes();
+        },
         child: Stack(children: [
           // ── Page view ─────────────────────────────────────────
           PageView.builder(
@@ -202,7 +224,6 @@ class _ClientEstadosViewerState extends State<ClientEstadosViewer>
               final estado = _estados[i];
               return GestureDetector(
                 onTapUp: (det) {
-                  if (_replying) return;
                   final w = MediaQuery.of(context).size.width;
                   if (det.globalPosition.dx < w * 0.35) _prevPage();
                   else if (det.globalPosition.dx > w * 0.65) _nextPage();
@@ -301,107 +322,81 @@ class _ClientEstadosViewerState extends State<ClientEstadosViewer>
             ]),
           ),
 
-          // ── Bottom: caption + actions + reply ─────────────────
+          // ── Bottom: caption + acciones ─────────────────────────
           Positioned(
             bottom: 0, left: 0, right: 0,
-            child: AnimatedPadding(
-              duration: const Duration(milliseconds: 200),
-              padding: EdgeInsets.only(
-                bottom: MediaQuery.of(context).viewInsets.bottom),
-              child: Column(mainAxisSize: MainAxisSize.min, children: [
-                // Caption + action buttons
-                if (!_replying)
-                  Container(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.bottomCenter,
-                        end: Alignment.topCenter,
-                        colors: [
-                          Colors.black.withValues(alpha: 0.85),
-                          Colors.transparent],
-                        stops: const [0.0, 1.0],
-                      ),
-                    ),
-                    padding: const EdgeInsets.fromLTRB(16, 36, 16, 12),
-                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      if (e.caption != null)
-                        Text(e.caption!,
-                          style: const TextStyle(
-                            color: Colors.white, fontSize: 14, height: 1.4,
-                            shadows: [Shadow(blurRadius: 4, color: Colors.black54)])),
-                      const SizedBox(height: 12),
-                      Row(children: [
-                        // Heart
-                        _ActionBtn(
-                          onTap: _toggleHeart,
-                          icon: e.hasHearted
-                            ? Icons.favorite_rounded
-                            : Icons.favorite_border_rounded,
-                          iconColor: e.hasHearted
-                            ? Colors.red.shade300 : Colors.white,
-                          label: '${e.heartCount}',
-                          active: e.hasHearted,
-                          activeColor: Colors.red.withValues(alpha: 0.25),
-                        ),
-                        const SizedBox(width: 10),
-                        // Ir al producto (only if estado has linked product)
-                        if (e.productId != null)
-                          _ActionBtn(
-                            onTap: _goToProduct,
-                            icon: Icons.shopping_bag_outlined,
-                            iconColor: scheme.secondary,
-                            label: 'Ver producto',
-                            active: false,
-                          ),
-                        const Spacer(),
-                        Text('${_current + 1} / ${_estados.length}',
-                          style: const TextStyle(color: Colors.white54, fontSize: 12)),
-                      ]),
-                    ]),
-                  ),
-
-                // ── Reply bar (WhatsApp style) ───────────────────
-                Container(
-                  color: Colors.black.withValues(alpha: _replying ? 0.95 : 0.6),
-                  padding: EdgeInsets.fromLTRB(
-                    12, 8, 12, padBot + 8),
-                  child: Row(children: [
-                    Expanded(child: TextField(
-                      controller: _replyCtrl,
-                      focusNode:  _replyFocus,
-                      style: const TextStyle(color: Colors.white, fontSize: 14),
-                      maxLines: null,
-                      textCapitalization: TextCapitalization.sentences,
-                      decoration: InputDecoration(
-                        hintText: 'Escribe un mensaje o pide un producto...',
-                        hintStyle: TextStyle(
-                          color: Colors.white.withValues(alpha: 0.45), fontSize: 13),
-                        filled: true,
-                        fillColor: Colors.white.withValues(alpha: 0.12),
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 16, vertical: 10),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(24),
-                          borderSide: BorderSide.none),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(24),
-                          borderSide: BorderSide(
-                            color: Colors.white.withValues(alpha: 0.35))),
-                      ),
-                    )),
-                    const SizedBox(width: 8),
-                    GestureDetector(
-                      onTap: _sendReply,
-                      child: Container(
-                        width: 44, height: 44,
-                        decoration: BoxDecoration(
-                          color: scheme.primary, shape: BoxShape.circle),
-                        child: const Icon(
-                          Icons.send_rounded, color: Colors.white, size: 20),
-                      ),
-                    ),
-                  ]),
+            child: Container(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.bottomCenter,
+                  end: Alignment.topCenter,
+                  colors: [
+                    Colors.black.withValues(alpha: 0.85),
+                    Colors.transparent],
+                  stops: const [0.0, 1.0],
                 ),
+              ),
+              padding: EdgeInsets.fromLTRB(16, 36, 16, padBot + 16),
+              child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+                if (e.caption != null)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: Text(e.caption!,
+                      style: const TextStyle(
+                        color: Colors.white, fontSize: 14, height: 1.4,
+                        shadows: [Shadow(blurRadius: 4, color: Colors.black54)])),
+                  ),
+                Row(children: [
+                  // Corazón -- boton circular con rebote al tocar, mas
+                  // grande y llamativo que el pill anterior.
+                  GestureDetector(
+                    onTap: _toggleHeart,
+                    child: ScaleTransition(
+                      scale: _heartBounceCtrl,
+                      child: Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: e.hasHearted
+                            ? Colors.red.withValues(alpha: 0.22)
+                            : Colors.white.withValues(alpha: 0.15),
+                          border: Border.all(
+                            color: e.hasHearted
+                              ? Colors.red.shade300.withValues(alpha: 0.7)
+                              : Colors.white.withValues(alpha: 0.3)),
+                        ),
+                        child: Icon(
+                          e.hasHearted ? Icons.favorite_rounded : Icons.favorite_border_rounded,
+                          color: e.hasHearted ? Colors.red.shade400 : Colors.white,
+                          size: 24),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text('${e.heartCount}',
+                    style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w700)),
+                  const SizedBox(width: 16),
+                  // Ir al producto (only if estado has linked product)
+                  if (e.productId != null)
+                    _ActionBtn(
+                      onTap: _goToProduct,
+                      icon: Icons.shopping_bag_outlined,
+                      iconColor: scheme.secondary,
+                      label: 'Ver producto',
+                    ),
+                  const Spacer(),
+                  Text('${_current + 1} / ${_estados.length}',
+                    style: const TextStyle(color: Colors.white54, fontSize: 12)),
+                ]),
+                if (widget.showLikesOnSwipeUp)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 10),
+                    child: Center(child: Column(children: [
+                      Icon(Icons.keyboard_arrow_up_rounded, color: Colors.white.withValues(alpha: 0.6), size: 20),
+                      Text('Desliza para ver quién dio like',
+                        style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 11)),
+                    ])),
+                  ),
               ]),
             ),
           ),
@@ -417,35 +412,27 @@ class _ActionBtn extends StatelessWidget {
   final IconData icon;
   final Color    iconColor;
   final String   label;
-  final bool     active;
-  final Color?   activeColor;
   const _ActionBtn({
     required this.onTap, required this.icon,
     required this.iconColor, required this.label,
-    this.active = false, this.activeColor,
   });
 
   @override
   Widget build(BuildContext context) => GestureDetector(
     onTap: onTap,
-    child: AnimatedContainer(
-      duration: const Duration(milliseconds: 200),
+    child: Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
       decoration: BoxDecoration(
-        color: active ? activeColor : Colors.white.withValues(alpha: 0.15),
+        color: Colors.white.withValues(alpha: 0.15),
         borderRadius: BorderRadius.circular(24),
-        border: Border.all(
-          color: active
-            ? Colors.red.shade300.withValues(alpha: 0.6)
-            : Colors.white.withValues(alpha: 0.25)),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.25)),
       ),
       child: Row(mainAxisSize: MainAxisSize.min, children: [
         Icon(icon, color: iconColor, size: 20),
         const SizedBox(width: 6),
         Text(label,
-          style: TextStyle(
-            color: active ? Colors.red.shade200 : Colors.white,
-            fontWeight: FontWeight.w700, fontSize: 14)),
+          style: const TextStyle(
+            color: Colors.white, fontWeight: FontWeight.w700, fontSize: 14)),
       ]),
     ),
   );

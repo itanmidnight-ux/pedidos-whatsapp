@@ -5,6 +5,7 @@ import '../models/estado.dart';
 import '../models/product.dart';
 import '../services/api_service.dart';
 import '../widgets/empty_state.dart';
+import 'client_estados_viewer.dart';
 
 class AdminEstadosScreen extends StatefulWidget {
   const AdminEstadosScreen({super.key});
@@ -206,6 +207,13 @@ class _AdminEstadosScreenState extends State<AdminEstadosScreen> {
                     itemBuilder: (_, i) {
                       final e = _estados[i];
                       return GestureDetector(
+                        onTap: () => Navigator.push(context, MaterialPageRoute(
+                          builder: (_) => ClientEstadosViewer(
+                            estados: _estados,
+                            initialIndex: i,
+                            showLikesOnSwipeUp: true,
+                          ),
+                        )),
                         onLongPress: () => _showLikes(e),
                         child: Card(
                           clipBehavior: Clip.antiAlias,
