@@ -105,6 +105,19 @@ headerbar button:hover {{ background: {SURFACE_3}; border-color: {FG_DIM}; }}
 headerbar button:active {{ background: {SURFACE_3}; }}
 
 /* ─── Sidebar ────────────────────────────────────── */
+.win-controls button {{
+    background: {SURFACE_2};
+    border: none;
+    border-radius: 6px;
+    min-width: 30px;
+    min-height: 26px;
+    padding: 0;
+    color: {FG_MUTED};
+    transition: background 120ms ease, color 120ms ease;
+}}
+.win-controls button:hover {{ background: {SURFACE_3}; color: {FG}; }}
+.win-controls .win-close:hover {{ background: {DANGER}; color: white; }}
+
 .sidebar {{
     background-color: {SURFACE};
     border-right: 1px solid {BORDER};
@@ -744,12 +757,22 @@ class Chart(Gtk.DrawingArea):
             cr.line_to(pad_left + chart_w, gy)
             cr.stroke()
 
-        # Valor máximo arriba a la derecha
-        cr.set_source_rgb(*dim_rgb)
-        cr.select_font_face('Sans', 0, 0)
-        cr.set_font_size(9)
-        cr.move_to(w - 14 - len(str(maxval)) * 5, pad_top - 6)
-        cr.show_text(str(maxval))
+        # Valor máximo arriba a la derecha -- se omite si una barra llega
+        # casi al tope justo cerca del borde derecho (común cuando el día
+        # con más actividad es el último del rango): su propia etiqueta
+        # de valor terminaría superpuesta con esta, ilegible.
+        skip_corner_label = any(
+            val > 0
+            and (val / maxval) * chart_h > chart_h - 16
+            and pad_left + i * bw + bw * 0.18 + bw * 0.64 > w - 60
+            for i, (_, val) in enumerate(self.data)
+        )
+        if not skip_corner_label:
+            cr.set_source_rgb(*dim_rgb)
+            cr.select_font_face('Sans', 0, 0)
+            cr.set_font_size(9)
+            cr.move_to(w - 14 - len(str(maxval)) * 5, pad_top - 6)
+            cr.show_text(str(maxval))
 
         # Barras con gradiente sutil
         for i, (label, val) in enumerate(self.data):
@@ -3041,17 +3064,59 @@ class DashboardWindow(Gtk.ApplicationWindow):
             Gdk.Screen.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 
         # ─── Header bar ─────────────────────────────────────────────
+        # Los botones nativos de minimizar/maximizar/cerrar de la CSD de GTK
+        # (set_show_close_button) dependen de que el gestor de ventanas
+        # traduzca el clic en la accion real -- en algunas combinaciones
+        # WM/tema ese enganche no responde (el boton se ve pero no hace
+        # nada). Se implementan a mano, llamando directo a iconify()/
+        # maximize()/close(): funcionan siempre, sin depender de eso.
         header = Gtk.HeaderBar()
         header.set_title('Concentrados Monserrath')
         header.set_subtitle('Panel de administración del servidor')
-        header.set_show_close_button(True)
+        header.set_show_close_button(False)
         header.props.spacing = 8
+        # Doble clic en el espacio vacio del header tambien maximiza/restaura
+        # -- comportamiento nativo esperado en cualquier escritorio.
+        header.add_events(Gdk.EventMask.BUTTON_PRESS_MASK)
+        header.connect('button-press-event', self._on_header_click)
 
         # Botón colapsar sidebar
         self.toggle_btn = Gtk.Button(label='☰')
         self.toggle_btn.set_tooltip_text('Mostrar/ocultar menú lateral')
         self.toggle_btn.connect('clicked', lambda *_: self._toggle_sidebar())
         header.pack_start(self.toggle_btn)
+
+        # Botones de ventana propios (min / maximizar-restaurar / cerrar).
+        # pack_end() apila cada llamada mas cerca del centro que la
+        # anterior -- se agrega PRIMERO para que quede en el borde real
+        # (a la derecha del todo), como cualquier ventana nativa.
+        win_controls = Gtk.Box(spacing=4)
+        win_controls.get_style_context().add_class('win-controls')
+
+        self.minimize_btn = Gtk.Button()
+        self.minimize_btn.set_image(Gtk.Image.new_from_icon_name('window-minimize-symbolic', Gtk.IconSize.MENU))
+        self.minimize_btn.set_tooltip_text('Minimizar')
+        self.minimize_btn.connect('clicked', lambda *_: self.iconify())
+        win_controls.pack_start(self.minimize_btn, False, False, 0)
+
+        self.maximize_btn = Gtk.Button()
+        self.maximize_btn.set_image(Gtk.Image.new_from_icon_name('window-maximize-symbolic', Gtk.IconSize.MENU))
+        self.maximize_btn.set_tooltip_text('Maximizar/restaurar')
+        self.maximize_btn.connect('clicked', lambda *_: self._toggle_maximize())
+        win_controls.pack_start(self.maximize_btn, False, False, 0)
+
+        self.close_btn = Gtk.Button()
+        self.close_btn.set_image(Gtk.Image.new_from_icon_name('window-close-symbolic', Gtk.IconSize.MENU))
+        self.close_btn.set_tooltip_text('Cerrar')
+        self.close_btn.get_style_context().add_class('win-close')
+        self.close_btn.connect('clicked', lambda *_: self.close())
+        win_controls.pack_start(self.close_btn, False, False, 0)
+
+        header.pack_end(win_controls)
+        # Refleja el icono correcto (maximizar vs restaurar) cuando el
+        # estado cambia por cualquier via -- boton propio, doble clic, o
+        # atajos de teclado del sistema.
+        self.connect('window-state-event', self._on_window_state_event)
 
         # Botón actualizar global
         self.refresh_btn = Gtk.Button(label='↻ Actualizar')
@@ -3191,7 +3256,15 @@ class DashboardWindow(Gtk.ApplicationWindow):
 
     def _add_module(self, key, label, ModuleClass, badge_key=None):
         """Agrega un botón al sidebar y registra el módulo instanciado."""
-        btn = Gtk.Button(label=label)
+        # Gtk.Button(label=...) centra su Label interno -- con textos de
+        # largo distinto ("Monitoreo" vs "Configuración") cada boton
+        # arranca en una x distinta y el menu se ve descuadrado. Se arma
+        # el Label a mano, alineado a la izquierda, como cualquier menu
+        # de navegacion nativo.
+        btn = Gtk.Button()
+        lbl = Gtk.Label(label=label)
+        lbl.set_xalign(0)
+        btn.add(lbl)
         btn.get_style_context().add_class('sidebar-btn')
         btn.set_relief(Gtk.ReliefStyle.NONE)
         btn.connect('clicked', lambda *_: self.switch_module(key))
@@ -3223,6 +3296,30 @@ class DashboardWindow(Gtk.ApplicationWindow):
             mod.refresh()
         except Exception as e:
             print(f'[dashboard] refresh {name}: {e}', file=sys.stderr)
+
+    def _toggle_maximize(self):
+        if self.is_maximized():
+            self.unmaximize()
+        else:
+            self.maximize()
+
+    def _on_header_click(self, widget, event):
+        """Doble clic en el espacio vacio del header = maximizar/restaurar
+        (comportamiento nativo esperado). Ignora clics sobre los botones
+        propios -- esos ya tienen su propio 'clicked'."""
+        if event.type == Gdk.EventType._2BUTTON_PRESS and event.button == 1:
+            self._toggle_maximize()
+            return True
+        return False
+
+    def _on_window_state_event(self, widget, event):
+        """Actualiza el icono del boton maximizar/restaurar segun el
+        estado real de la ventana (por si cambia por atajos de teclado
+        del sistema o el doble clic, no solo por el boton propio)."""
+        maximized = bool(event.new_window_state & Gdk.WindowState.MAXIMIZED)
+        icon = 'window-restore-symbolic' if maximized else 'window-maximize-symbolic'
+        self.maximize_btn.set_image(Gtk.Image.new_from_icon_name(icon, Gtk.IconSize.MENU))
+        self.maximize_btn.set_tooltip_text('Restaurar' if maximized else 'Maximizar')
 
     def _toggle_sidebar(self):
         """Colapsa/expande el sidebar lateral."""
