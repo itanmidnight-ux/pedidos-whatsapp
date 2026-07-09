@@ -2288,6 +2288,8 @@ class DataModule:
 
         export_card.pack_start(make_btn('📄 Exportar a PDF', 'btn-primary', small=True,
                                          on_click=lambda *_: self._export_pdf()), False, False, 0)
+        export_card.pack_start(make_btn('📊 Exportar a Excel', 'btn-primary', small=True,
+                                         on_click=lambda *_: self._export_excel()), False, False, 0)
         export_card.pack_start(Gtk.Label(label=''), True, True, 0)
 
         hint = Gtk.Label(
@@ -2385,12 +2387,18 @@ class DataModule:
         else:
             self.parent.show_toast('Error eliminando pedidos')
 
-    def _export_pdf(self):
+    def _get_valid_range(self):
         from_date = self.from_entry.get_text().strip()
         to_date   = self.to_entry.get_text().strip()
         if not re.match(r'^\d{4}-\d{2}-\d{2}$', from_date) or not re.match(r'^\d{4}-\d{2}-\d{2}$', to_date):
             self.parent.show_toast('Fechas inválidas — formato AAAA-MM-DD')
-            return
+            return None
+        return from_date, to_date
+
+    def _export_pdf(self):
+        rng = self._get_valid_range()
+        if not rng: return
+        from_date, to_date = rng
         self.parent.show_toast('Generando reporte, esto puede tardar unos segundos...')
         result = http_post('/api/reports/export-range', {'from': from_date, 'to': to_date}, timeout=30)
         if result and result.get('success'):
@@ -2400,6 +2408,20 @@ class DataModule:
                 sh(f'xdg-open "{filepath}" 2>/dev/null &')
         else:
             self.parent.show_toast('Error generando el reporte')
+
+    def _export_excel(self):
+        rng = self._get_valid_range()
+        if not rng: return
+        from_date, to_date = rng
+        self.parent.show_toast('Generando Excel, esto puede tardar unos segundos...')
+        result = http_post('/api/reports/export-range-excel', {'from': from_date, 'to': to_date}, timeout=30)
+        if result and result.get('success'):
+            filepath = result.get('filepath')
+            self.parent.show_toast(f'Excel generado: {result.get("filename")}')
+            if filepath and os.path.exists(filepath):
+                sh(f'xdg-open "{filepath}" 2>/dev/null &')
+        else:
+            self.parent.show_toast('Error generando el Excel')
 
 
 # ══════════════════════════════════════════════════════════════════════════════

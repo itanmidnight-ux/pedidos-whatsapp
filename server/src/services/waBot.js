@@ -2,6 +2,9 @@
 require('dotenv').config();
 const path  = require('path');
 const fs    = require('fs');
+const os    = require('os');
+const crypto = require('crypto');
+const { execFile } = require('child_process');
 const axios = require('axios');
 const {
   default: makeWASocket,
@@ -119,6 +122,33 @@ function toJid(phone) {
   return `${normalizePhone(phone)}@s.whatsapp.net`;
 }
 
+// WhatsApp solo renderiza la burbuja de "nota de voz" (ptt) para audio real
+// en ogg/opus -- cualquier otro contenedor sube bien pero el destinatario
+// no puede reproducirlo ("este audio no esta disponible"). Se convierte
+// siempre a ogg/opus mono 16kHz (mismos parametros que usa el propio
+// WhatsApp) para que toda nota de voz -- venga grabada en Android, en Web,
+// o subida como archivo -- se vea y suene igual que una nativa.
+async function convertToOggOpus(buffer, srcExt) {
+  const tmpIn  = path.join(os.tmpdir(), `wa-audio-in-${crypto.randomUUID()}.${srcExt || 'bin'}`);
+  const tmpOut = path.join(os.tmpdir(), `wa-audio-out-${crypto.randomUUID()}.ogg`);
+  try {
+    fs.writeFileSync(tmpIn, buffer);
+    await new Promise((resolve, reject) => {
+      execFile('ffmpeg', [
+        '-y', '-i', tmpIn,
+        '-c:a', 'libopus', '-ar', '16000', '-ac', '1', '-b:a', '32k', '-application', 'voip',
+        tmpOut,
+      ], { timeout: 15_000 }, (err) => err ? reject(err) : resolve());
+    });
+    return fs.readFileSync(tmpOut);
+  } catch (e) {
+    logger.warn({ err: e.message }, '[bot] no se pudo convertir audio a ogg/opus -- se envia sin ptt');
+    return null;
+  } finally {
+    for (const f of [tmpIn, tmpOut]) { try { fs.unlinkSync(f); } catch (_) {} }
+  }
+}
+
 // ── bot_config (SQLite) ─────────────────────────────────────────
 function getBotConfigRow() {
   return getDB().prepare('SELECT * FROM bot_config WHERE id = 1').get();
@@ -215,12 +245,25 @@ async function pollOutbound() {
                 break;
               case 'audio':
               case 'voice': {
-                const mimetype = ext === 'ogg'  ? 'audio/ogg; codecs=opus'
-                               : ext === 'mp3'  ? 'audio/mpeg'
-                               : ext === 'aac'  ? 'audio/aac'
-                               : ext === 'weba' ? 'audio/webm; codecs=opus'
-                               : 'audio/mp4';
-                await sock.sendMessage(jid, { audio: buffer, mimetype, ptt: true });
+                // ptt:true (nota de voz) solo es valido con ogg/opus real --
+                // cualquier otro contenedor sube "bien" pero el destinatario
+                // no puede reproducirlo ("este audio no esta disponible").
+                // Se convierte siempre a ogg/opus con ffmpeg para que se
+                // vea y suene como una nota de voz nativa sin importar el
+                // origen (Android, Web, o archivo subido). Si la conversion
+                // falla por algun motivo, se manda como audio normal en vez
+                // de dejarlo sin enviar -- degradacion segura, nunca rompe.
+                const converted = ext === 'ogg' ? null : await convertToOggOpus(buffer, ext);
+                if (converted) {
+                  await sock.sendMessage(jid, { audio: converted, mimetype: 'audio/ogg; codecs=opus', ptt: true });
+                } else {
+                  const mimetype = ext === 'ogg'  ? 'audio/ogg; codecs=opus'
+                                 : ext === 'mp3'  ? 'audio/mpeg'
+                                 : ext === 'aac'  ? 'audio/aac'
+                                 : ext === 'weba' ? 'audio/webm; codecs=opus'
+                                 : 'audio/mp4';
+                  await sock.sendMessage(jid, { audio: buffer, mimetype, ptt: ext === 'ogg' });
+                }
                 break;
               }
               default: {

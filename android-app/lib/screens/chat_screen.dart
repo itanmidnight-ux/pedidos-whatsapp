@@ -384,8 +384,18 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   // ── Phone call ───────────────────────────────────────────
+  // widget.phone ya viene normalizado con el 57 puesto (asi se guarda en la
+  // base) -- anteponer otro "+57" a mano duplicaba el indicativo.
+  String get _displayPhone {
+    final p = widget.phone.replaceAll(RegExp(r'\D'), '');
+    if (p.length == 12 && p.startsWith('57')) {
+      return '+57 ${p.substring(2, 5)} ${p.substring(5, 8)} ${p.substring(8)}';
+    }
+    return p.isEmpty ? widget.phone : '+$p';
+  }
+
   Future<void> _call() async {
-    final uri = Uri(scheme: 'tel', path: '+57${widget.phone}');
+    final uri = Uri(scheme: 'tel', path: '+${widget.phone.replaceAll(RegExp(r'\D'), '')}');
     if (await canLaunchUrl(uri)) await launchUrl(uri);
   }
 
@@ -695,7 +705,7 @@ class _ChatScreenState extends State<ChatScreen> {
             Text(widget.name,
               style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 16),
               overflow: TextOverflow.ellipsis),
-            Text('+57${widget.phone}',
+            Text(_displayPhone,
               style: const TextStyle(color: Colors.white70, fontSize: 12)),
           ],
         )),
