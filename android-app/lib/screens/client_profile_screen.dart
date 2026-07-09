@@ -97,7 +97,7 @@ class _ClientProfileScreenState extends State<ClientProfileScreen> {
 
   Future<void> _pickPhoto() async {
     final picker = ImagePicker();
-    final file   = await picker.pickImage(source: ImageSource.gallery, imageQuality: 80);
+    final file   = await picker.pickImage(source: ImageSource.gallery, imageQuality: 80, maxWidth: 1280);
     if (file == null) return;
     setState(() => _saving = true);
     try {

@@ -103,7 +103,7 @@ class AppProvider extends ChangeNotifier {
   Future<void> refreshFlagged() async {
     try {
       if (isOnline) { flaggedCount = (await ApiService.getFlaggedMessages()).length; notifyListeners(); }
-    } catch (_) {}
+    } catch (e) { debugPrint('[refreshFlagged] error: $e'); }
   }
 
   Future<void> refreshOrders() async {
@@ -114,23 +114,24 @@ class AppProvider extends ChangeNotifier {
         await LocalDB.saveOrders(fresh);
         orders = fresh;
       } else { orders = await LocalDB.getOrders(); }
-    } catch (_) {
+    } catch (e) {
+      debugPrint('[refreshOrders] error: $e');
       // Si el fallback offline también falla (ej. LocalDB en Flutter Web,
       // que no soporta sqflite), no debe dejar `loading` trabado en true
       // para siempre -- por eso el finally de abajo, sin importar qué pase.
-      try { orders = await LocalDB.getOrders(); } catch (_) {}
+      try { orders = await LocalDB.getOrders(); } catch (e2) { debugPrint('[refreshOrders] fallback offline error: $e2'); }
     }
     loading = false; notifyListeners();
   }
 
   Future<void> refreshProducts() async {
     try { if (isOnline) { products = await ApiService.getProducts(); notifyListeners(); } }
-    catch (_) {}
+    catch (e) { debugPrint('[refreshProducts] error: $e'); }
   }
 
   Future<void> refreshUsers() async {
     try { users = await ApiService.getUsers(); notifyListeners(); }
-    catch (_) {}
+    catch (e) { debugPrint('[refreshUsers] error: $e'); }
   }
 
   // ── Order lifecycle ───────────────────────────────────────
@@ -235,7 +236,7 @@ class AppProvider extends ChangeNotifier {
           case 'en_camino': await ApiService.markEnCamino(id); break;
           case 'cancel':   await ApiService.cancelOrder(id, a['reason'] ?? ''); break;
         }
-      } catch (_) {}
+      } catch (e) { debugPrint('[syncPendingActions] error en accion ${a['action']}: $e'); }
     }
     await LocalDB.clearPendingSync();
     await refreshAll();

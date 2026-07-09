@@ -57,7 +57,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
               const SizedBox(height: 8),
               GestureDetector(
                 onTap: () async {
-                  final img = await picker.pickImage(source: ImageSource.gallery, imageQuality: 80);
+                  final img = await picker.pickImage(source: ImageSource.gallery, imageQuality: 80, maxWidth: 1280);
                   if (img != null) setModal(() => pickedImage = img);
                 },
                 child: Container(
@@ -306,7 +306,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
                   icon: const Icon(Icons.add_photo_alternate_rounded),
                   label: const Text('Agregar foto'),
                   onPressed: () async {
-                    final picked = await picker.pickImage(source: ImageSource.gallery, imageQuality: 80);
+                    final picked = await picker.pickImage(source: ImageSource.gallery, imageQuality: 80, maxWidth: 1280);
                     if (picked == null) return;
                     try {
                       final bytes = await picked.readAsBytes();
