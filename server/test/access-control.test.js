@@ -32,35 +32,49 @@ async function loginAdmin() {
   return res.body.token;
 }
 
-async function registerClient(username) {
+// El username ya no lo elige el cliente -- el registro lo deriva del
+// celular (57 + 10 digitos). Cada test usa un celular de prueba distinto
+// para no chocar con el indice UNIQUE de phone/username.
+function normPhone(phone) { return '57' + phone; }
+
+async function registerClient(phone, label) {
   return request(app).post('/api/auth/register').send({
-    username,
+    phone,
     password: 'password123',
     display_name: 'Cliente Test',
-    email: `${username}@example.com`,
+    email: `${label}@example.com`,
     address: 'Calle de prueba 123',
   });
 }
 
 describe('Registro de clientes queda activo de inmediato (sin aprobación manual)', () => {
   test('registro exitoso no devuelve token de sesión, pero la cuenta ya queda activa', async () => {
-    const res = await registerClient('cliente_activo');
+    const res = await registerClient('3001110001', 'cliente_activo');
     expect(res.status).toBe(201);
     expect(res.body.token).toBeUndefined();
     expect(res.body.pending).toBe(false);
   });
 
   test('login funciona de inmediato tras registrarse, sin intervención de un admin', async () => {
-    await registerClient('cliente_activo2');
+    await registerClient('3001110002', 'cliente_activo2');
     const res = await request(app)
       .post('/api/auth/token')
-      .send({ username: 'cliente_activo2', password: 'password123' });
+      .send({ username: normPhone('3001110002'), password: 'password123' });
+    expect(res.status).toBe(200);
+    expect(res.body.token).toBeDefined();
+  });
+
+  test('el cliente puede iniciar sesión escribiendo su celular tal cual lo registró (sin el 57)', async () => {
+    await registerClient('3001110099', 'cliente_celular');
+    const res = await request(app)
+      .post('/api/auth/token')
+      .send({ username: '3001110099', password: 'password123' });
     expect(res.status).toBe(200);
     expect(res.body.token).toBeDefined();
   });
 
   test('el cliente puede iniciar sesión con su correo en vez de su usuario', async () => {
-    await registerClient('cliente_correo');
+    await registerClient('3001110003', 'cliente_correo');
     const res = await request(app)
       .post('/api/auth/token')
       .send({ username: 'cliente_correo@example.com', password: 'password123' });
@@ -69,10 +83,10 @@ describe('Registro de clientes queda activo de inmediato (sin aprobación manual
   });
 
   test('un admin sigue pudiendo desactivar la cuenta de un cliente manualmente', async () => {
-    await registerClient('cliente_a_desactivar');
+    await registerClient('3001110004', 'cliente_a_desactivar');
     const adminToken = await loginAdmin();
     const list = await request(app).get('/api/users').set('Authorization', `Bearer ${adminToken}`);
-    const user = list.body.users.find(u => u.username === 'cliente_a_desactivar');
+    const user = list.body.users.find(u => u.username === normPhone('3001110004'));
     expect(user).toBeDefined();
 
     await request(app)
@@ -82,7 +96,7 @@ describe('Registro de clientes queda activo de inmediato (sin aprobación manual
 
     const login = await request(app)
       .post('/api/auth/token')
-      .send({ username: 'cliente_a_desactivar', password: 'password123' });
+      .send({ username: normPhone('3001110004'), password: 'password123' });
     expect(login.status).toBe(401);
   });
 });
@@ -93,11 +107,11 @@ describe('Control de acceso por rol (orders/messages son solo staff)', () => {
 
   beforeAll(async () => {
     adminToken = await loginAdmin();
-    await registerClient('cliente_rol');
+    await registerClient('3001110005', 'cliente_rol');
     const list = await request(app).get('/api/users').set('Authorization', `Bearer ${adminToken}`);
-    const user = list.body.users.find(u => u.username === 'cliente_rol');
+    const user = list.body.users.find(u => u.username === normPhone('3001110005'));
     await request(app).put(`/api/users/${user.id}`).set('Authorization', `Bearer ${adminToken}`).send({ active: 1 });
-    const login = await request(app).post('/api/auth/token').send({ username: 'cliente_rol', password: 'password123' });
+    const login = await request(app).post('/api/auth/token').send({ username: normPhone('3001110005'), password: 'password123' });
     clientToken = login.body.token;
   });
 
@@ -157,11 +171,11 @@ describe('GET /api/bot/status requiere admin y expone la cola pendiente', () => 
 describe('jwtAuth revalida active=1 contra la DB', () => {
   test('token de usuario desactivado deja de funcionar de inmediato', async () => {
     const adminToken = await loginAdmin();
-    await registerClient('cliente_desactivar');
+    await registerClient('3001110006', 'cliente_desactivar');
     const list = await request(app).get('/api/users').set('Authorization', `Bearer ${adminToken}`);
-    const user = list.body.users.find(u => u.username === 'cliente_desactivar');
+    const user = list.body.users.find(u => u.username === normPhone('3001110006'));
     await request(app).put(`/api/users/${user.id}`).set('Authorization', `Bearer ${adminToken}`).send({ active: 1 });
-    const login = await request(app).post('/api/auth/token').send({ username: 'cliente_desactivar', password: 'password123' });
+    const login = await request(app).post('/api/auth/token').send({ username: normPhone('3001110006'), password: 'password123' });
     const clientToken = login.body.token;
 
     await request(app).put(`/api/users/${user.id}`).set('Authorization', `Bearer ${adminToken}`).send({ active: 0 });

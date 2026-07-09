@@ -75,19 +75,23 @@ router.post('/checkout', clientAuth, (req, res) => {
   const payLabel     = payment_method === 'nequi' ? 'Nequi' : 'Contra entrega';
   const safeRef      = nequi_reference ? nequi_reference.trim() : null;
 
-  const clientUser = db.prepare('SELECT display_name, address FROM users WHERE username=?').get(req.user.username);
+  const clientUser = db.prepare('SELECT display_name, address, phone FROM users WHERE username=?').get(req.user.username);
   const clientName = clientUser?.display_name || req.user.username;
   const clientAddr = clientUser?.address || '';
-  const appPhone   = `app:${req.user.username}`;
+  // Telefono real del cliente (columna users.phone, pedida en el registro)
+  // -- antes se usaba un placeholder falso "app:<username>" que dejaba al
+  // trabajador sin forma de llamar o escribirle de verdad por WhatsApp.
+  // Fallback solo para cuentas viejas creadas antes de pedir el celular.
+  const realPhone  = clientUser?.phone || `app:${req.user.username}`;
 
   const doCheckout = db.transaction(() => {
-    const existingCust = db.prepare('SELECT id FROM customers WHERE phone=?').get(appPhone);
+    const existingCust = db.prepare('SELECT id FROM customers WHERE phone=?').get(realPhone);
     let customerId;
     if (existingCust) {
       db.prepare('UPDATE customers SET name=? WHERE id=?').run(clientName, existingCust.id);
       customerId = existingCust.id;
     } else {
-      customerId = db.prepare('INSERT INTO customers (phone, name) VALUES (?,?)').run(appPhone, clientName).lastInsertRowid;
+      customerId = db.prepare('INSERT INTO customers (phone, name) VALUES (?,?)').run(realPhone, clientName).lastInsertRowid;
     }
 
     const orderResult = db.prepare(`

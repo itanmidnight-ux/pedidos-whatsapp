@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:intl/date_symbol_data_local.dart';
 import 'package:onesignal_flutter/onesignal_flutter.dart';
 import 'providers/app_provider.dart';
 import 'providers/theme_provider.dart';
@@ -16,6 +17,11 @@ void main() async {
     statusBarColor: Color(0xFF1A3009),
     statusBarIconBrightness: Brightness.light,
   ));
+  // DateFormat(pattern, 'es') en varias pantallas (fecha de entrega,
+  // mensajes, analiticas) lanzaba LocaleDataException en runtime porque
+  // los datos del locale nunca se inicializaban -- en release eso se veia
+  // como una pantalla completamente gris (el ErrorWidget por defecto).
+  await initializeDateFormatting('es', null);
   await ApiService.init();
   await NotificationService.init();
   await NotificationService.requestPermission();

@@ -347,11 +347,15 @@ class _ClientProductDetailState extends State<ClientProductDetail>
                     icon: Icons.verified_rounded,
                     label: 'Calidad\ngarantizada',
                     color: scheme.primary),
-                  if (!p.noFiado)
-                    _BenefitTile(
-                      icon: Icons.handshake_rounded,
-                      label: 'Disponible\na fiado',
-                      color: Colors.purple.shade600),
+                  p.noFiado
+                    ? _BenefitTile(
+                        icon: Icons.block_rounded,
+                        label: 'No se fía\neste producto',
+                        color: Colors.red.shade400)
+                    : _BenefitTile(
+                        icon: Icons.handshake_rounded,
+                        label: 'Disponible\na fiado',
+                        color: Colors.purple.shade600),
                 ]),
               ),
 

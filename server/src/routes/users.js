@@ -6,6 +6,7 @@ const multer  = require('multer');
 const fs      = require('fs');
 const { getDB }     = require('../db/database');
 const { adminAuth } = require('../middleware/auth');
+const { sanitizeText } = require('../utils/sanitize');
 
 const PICS_DIR = require('path').join(process.env.APPDATA || process.env.HOME, 'pedidos-bot', 'profile-pics');
 fs.mkdirSync(PICS_DIR, { recursive: true });
@@ -46,7 +47,7 @@ router.post('/', adminAuth, async (req, res) => {
 
   const result = db.prepare(
     'INSERT INTO users (username, password_hash, pin, display_name, role, address) VALUES (?,?,?,?,?,?)'
-  ).run(name, credHash, credHash, display_name?.trim() || name, role, address?.trim() || null);
+  ).run(name, credHash, credHash, display_name ? sanitizeText(display_name, 100) : name, role, address ? sanitizeText(address, 300) : null);
 
   const user = db.prepare(`SELECT ${SAFE_FIELDS} FROM users WHERE id = ?`).get(result.lastInsertRowid);
   res.status(201).json({ user });
@@ -65,7 +66,7 @@ router.put('/:id', adminAuth, async (req, res) => {
   const updates = [];
   const vals    = [];
 
-  if (req.body.display_name !== undefined) { updates.push('display_name=?'); vals.push(String(req.body.display_name).trim().slice(0, 100)); }
+  if (req.body.display_name !== undefined) { updates.push('display_name=?'); vals.push(sanitizeText(req.body.display_name, 100)); }
   if (req.body.role !== undefined) {
     if (!['admin', 'worker', 'client'].includes(req.body.role))
       return res.status(400).json({ error: 'role debe ser admin, worker o client' });
@@ -114,10 +115,10 @@ router.put('/me', require('../middleware/auth').clientAuth, async (req, res) => 
   const { display_name, address, nickname, bio, email } = req.body;
   const updates = [];
   const vals    = [];
-  if (display_name !== undefined) { updates.push('display_name=?'); vals.push(String(display_name).trim().slice(0,100)); }
-  if (address !== undefined)      { updates.push('address=?');      vals.push(String(address).trim().slice(0,300)); }
-  if (nickname !== undefined)     { updates.push('nickname=?');     vals.push(String(nickname).trim().slice(0,50)); }
-  if (bio !== undefined)          { updates.push('bio=?');          vals.push(String(bio).trim().slice(0,500)); }
+  if (display_name !== undefined) { updates.push('display_name=?'); vals.push(sanitizeText(display_name, 100)); }
+  if (address !== undefined)      { updates.push('address=?');      vals.push(sanitizeText(address, 300)); }
+  if (nickname !== undefined)     { updates.push('nickname=?');     vals.push(sanitizeText(nickname, 50)); }
+  if (bio !== undefined)          { updates.push('bio=?');          vals.push(sanitizeText(bio, 500)); }
   if (email !== undefined) {
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email).trim()))
       return res.status(400).json({ error: 'Email inválido' });

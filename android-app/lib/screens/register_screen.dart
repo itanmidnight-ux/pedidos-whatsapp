@@ -12,7 +12,7 @@ class RegisterScreen extends StatefulWidget {
 class _RegisterScreenState extends State<RegisterScreen> {
   final _formKey       = GlobalKey<FormState>();
   final _nameCtrl      = TextEditingController();
-  final _usernameCtrl  = TextEditingController();
+  final _phoneCtrl     = TextEditingController();
   final _emailCtrl     = TextEditingController();
   final _pwCtrl        = TextEditingController();
   final _pw2Ctrl       = TextEditingController();
@@ -27,7 +27,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   @override
   void dispose() {
-    _nameCtrl.dispose(); _usernameCtrl.dispose(); _emailCtrl.dispose();
+    _nameCtrl.dispose(); _phoneCtrl.dispose(); _emailCtrl.dispose();
     _pwCtrl.dispose(); _pw2Ctrl.dispose(); _addressCtrl.dispose();
     _nicknameCtrl.dispose(); _bioCtrl.dispose();
     super.dispose();
@@ -36,14 +36,16 @@ class _RegisterScreenState extends State<RegisterScreen> {
   Future<void> _register() async {
     if (!_formKey.currentState!.validate()) return;
     setState(() { _loading = true; _error = null; });
-    final username = _usernameCtrl.text.trim();
+    final phone    = _phoneCtrl.text.replaceAll(RegExp(r'\D'), '');
     final password = _pwCtrl.text;
     try {
       // La cuenta queda activa de inmediato (sin aprobación de un admin) --
       // se entra directo en vez de mandar de vuelta a escribir credenciales
-      // que la persona acaba de escribir en este mismo formulario.
+      // que la persona acaba de escribir en este mismo formulario. El
+      // usuario para el login no lo elige el cliente -- el backend lo
+      // deriva del celular (queda "57$phone").
       await ApiService.register(
-        username:    username,
+        phone:       phone,
         password:    password,
         displayName: _nameCtrl.text.trim(),
         email:       _emailCtrl.text.trim(),
@@ -52,7 +54,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         bio:         _bioCtrl.text.trim().isEmpty ? null : _bioCtrl.text.trim(),
       );
       if (!mounted) return;
-      await context.read<AppProvider>().login(username, password);
+      await context.read<AppProvider>().login('57$phone', password);
       if (mounted) Navigator.of(context).popUntil((route) => route.isFirst);
     } catch (e) {
       if (mounted) setState(() => _error = e.toString().replaceAll('Exception: ', ''));
@@ -180,16 +182,16 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   const SizedBox(height: 12),
 
                   _field(
-                    controller: _usernameCtrl,
-                    label: 'Usuario *',
-                    hint: 'Ej: maria123',
-                    icon: Icons.person_outline_rounded,
+                    controller: _phoneCtrl,
+                    label: 'Celular *',
+                    hint: 'Ej: 3138207044',
+                    icon: Icons.phone_android_rounded,
                     capitalize: TextCapitalization.none,
-                    keyboard: TextInputType.visiblePassword,
+                    keyboard: TextInputType.phone,
                     validator: (v) {
-                      if (v == null || v.trim().length < 2) return 'Mínimo 2 caracteres';
-                      if (!RegExp(r'^[a-zA-Z0-9._-]+$').hasMatch(v.trim())) {
-                        return 'Solo letras, números, . _ -';
+                      final d = (v ?? '').replaceAll(RegExp(r'\D'), '');
+                      if (d.length != 10 || !d.startsWith('3')) {
+                        return 'Celular colombiano de 10 dígitos (ej: 3138207044)';
                       }
                       return null;
                     },

@@ -169,6 +169,11 @@ const MIGRATIONS = [
   // pasar los dos el chequeo). Indice parcial: NULL (admin/worker sin
   // correo) no choca entre si, solo se exige unico cuando SI hay valor.
   { name: '046_users_email_unique', sql: 'CREATE UNIQUE INDEX idx_users_email_unique ON users(email) WHERE email IS NOT NULL' },
+  { name: '047_users_phone',        sql: 'ALTER TABLE users ADD COLUMN phone TEXT' },
+  // Telefono real del cliente -- reemplaza el placeholder falso
+  // "app:<username>" que usaba cart.js para crear el registro en
+  // customers, y que impedia llamar/enviar mensaje real por WhatsApp.
+  { name: '048_users_phone_unique', sql: 'CREATE UNIQUE INDEX idx_users_phone_unique ON users(phone) WHERE phone IS NOT NULL' },
 ];
 
 function runMigrations(db) {

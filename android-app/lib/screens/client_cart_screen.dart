@@ -7,7 +7,8 @@ import '../widgets/app_card.dart';
 import '../widgets/empty_state.dart';
 
 class ClientCartScreen extends StatefulWidget {
-  const ClientCartScreen({super.key});
+  final VoidCallback? onViewProducts;
+  const ClientCartScreen({super.key, this.onViewProducts});
   @override State<ClientCartScreen> createState() => ClientCartScreenState();
 }
 
@@ -223,7 +224,12 @@ class ClientCartScreenState extends State<ClientCartScreen> {
                   icon: Icons.shopping_cart_outlined,
                   title: 'Tu carrito está vacío',
                   action: TextButton(
-                    onPressed: () => Navigator.pop(context),
+                    // El carrito es una pestaña de un IndexedStack, no una
+                    // ruta empujada -- Navigator.pop(context) aqui no tenia
+                    // nada que hacer pop y dejaba una pantalla en negro.
+                    // El padre (ClientHomeScreen) decide como volver a la
+                    // pestaña de productos.
+                    onPressed: widget.onViewProducts,
                     child: const Text('Ver productos'),
                   ),
                 )

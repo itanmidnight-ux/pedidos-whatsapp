@@ -81,17 +81,13 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> with WidgetsBinding
     super.dispose();
   }
 
-  void _goToEstados() {
-    setState(() { _tab = 2; _newEstados = 0; });
-  }
-
   @override
   Widget build(BuildContext context) {
     final size = MediaQuery.of(context).size;
     final isWide = size.width >= kDesktopBreakpoint;
     final content = IndexedStack(index: _tab, children: [
           const ClientProductsScreen(),
-          ClientCartScreen(key: _cartKey),
+          ClientCartScreen(key: _cartKey, onViewProducts: () => setState(() => _tab = 0)),
           ClientEstadosScreen(
             estados: _estados,
             onRefresh: _loadEstados,
@@ -198,56 +194,8 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> with WidgetsBinding
             ),
           ]),
         ),
-        // Story circles (estados preview) — only show if not on estados tab
-        if (_estados.isNotEmpty && _tab != 2)
-          _buildEstadosPreview(),
         const SizedBox(height: 4),
       ])),
-    );
-  }
-
-  Widget _buildEstadosPreview() {
-    final scheme = Theme.of(context).colorScheme;
-    return GestureDetector(
-      onTap: _goToEstados,
-      child: Container(
-        height: 88,
-        margin: const EdgeInsets.only(bottom: 4),
-        child: ListView.builder(
-          scrollDirection: Axis.horizontal,
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          itemCount: _estados.length + 1,
-          itemBuilder: (_, i) {
-            if (i == 0) {
-              return _StoryCircle(
-                label: 'Ver todo',
-                isNew: _newEstados > 0,
-                child: Container(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(colors: [scheme.secondary, Color.lerp(scheme.secondary, Colors.white, 0.3)!]),
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(Icons.auto_stories_rounded, color: Colors.white, size: 28),
-                ),
-                onTap: _goToEstados,
-              );
-            }
-            final e = _estados[i - 1];
-            return _StoryCircle(
-              label: e.adminUsername,
-              isNew: true,
-              child: Container(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(colors: [scheme.primary, Color.lerp(scheme.primary, Colors.white, 0.3)!]),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(Icons.camera_alt_rounded, color: Colors.white, size: 24),
-              ),
-              onTap: _goToEstados,
-            );
-          },
-        ),
-      ),
     );
   }
 
@@ -370,46 +318,3 @@ class _ClientHomeScreenState extends State<ClientHomeScreen> with WidgetsBinding
   }
 }
 
-class _StoryCircle extends StatelessWidget {
-  final Widget child;
-  final String label;
-  final bool isNew;
-  final VoidCallback onTap;
-  const _StoryCircle({required this.child, required this.label, required this.isNew, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return GestureDetector(
-    onTap: onTap,
-    child: Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 6),
-      child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-        Container(
-          width: 56, height: 56,
-          padding: const EdgeInsets.all(2.5),
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            gradient: isNew
-              ? LinearGradient(colors: [scheme.secondary, Color.lerp(scheme.secondary, Colors.white, 0.3)!])
-              : null,
-            color: isNew ? null : Colors.white24,
-          ),
-          child: Container(
-            decoration: BoxDecoration(
-              color: Color.lerp(scheme.primary, Colors.black, 0.5),
-              shape: BoxShape.circle,
-            ),
-            child: child,
-          ),
-        ),
-        const SizedBox(height: 4),
-        Text(label,
-          style: const TextStyle(color: Colors.white70, fontSize: 10),
-          overflow: TextOverflow.ellipsis,
-          maxLines: 1),
-      ]),
-    ),
-  );
-  }
-}

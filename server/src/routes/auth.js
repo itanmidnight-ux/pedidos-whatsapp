@@ -86,10 +86,15 @@ router.post('/token', (req, res) => {
     });
   }
 
+  // El username de un cliente es su celular normalizado (57 + 10 digitos,
+  // ver /register) -- si escribe el celular tal cual lo registro (sin el
+  // 57 antepuesto) hay que igual encontrar la cuenta.
+  const phoneVariant = normalizeAndValidatePhone(identifier) || identifier;
+
   const db   = getDB();
   const user = db.prepare(
-    'SELECT * FROM users WHERE (username = ? OR email = ?) AND active = 1'
-  ).get(identifier, identifier);
+    'SELECT * FROM users WHERE (username = ? OR username = ? OR email = ?) AND active = 1'
+  ).get(identifier, phoneVariant, identifier);
 
   if (!user) {
     recordFail(lockKey);
@@ -144,12 +149,23 @@ router.post('/refresh', (req, res) => {
   res.json(signToken(user));
 });
 
+const { sanitizeText } = require('../utils/sanitize');
+
+// Mismo criterio de normalizacion de celular usado en todo el proyecto
+// (waBot.js, order_card.dart, message.dart): 10 digitos que empiezan en
+// 3 -> se antepone 57. Cualquier otra cosa se rechaza -- no es celular
+// colombiano valido.
+function normalizeAndValidatePhone(raw) {
+  const digits = String(raw || '').replace(/\D/g, '');
+  if (digits.length === 10 && digits.startsWith('3')) return '57' + digits;
+  if (digits.length === 12 && digits.startsWith('573')) return digits;
+  return null;
+}
+
 // ── POST /api/auth/register — Self-registration for clients ───
 router.post('/register', async (req, res) => {
-  const { username, password, email, display_name, address, nickname, bio } = req.body;
+  const { password, email, display_name, address, nickname, bio, phone } = req.body;
 
-  if (!username || typeof username !== 'string' || username.trim().length < 2)
-    return res.status(400).json({ error: 'Nombre de usuario requerido (mín 2 caracteres)' });
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email).trim()))
     return res.status(400).json({ error: 'Correo electrónico inválido' });
   if (!password || String(password).length < 8)
@@ -159,13 +175,18 @@ router.post('/register', async (req, res) => {
   if (!address || String(address).trim().length < 5)
     return res.status(400).json({ error: 'Dirección de entrega requerida' });
 
-  const db   = getDB();
-  const name = username.trim().toLowerCase().replace(/[^a-z0-9._-]/g, '');
-  if (name.length < 2)
-    return res.status(400).json({ error: 'Nombre de usuario inválido (solo letras, números, puntos, guiones)' });
+  const normalizedPhone = normalizeAndValidatePhone(phone);
+  if (!normalizedPhone)
+    return res.status(400).json({ error: 'Número de celular inválido (debe ser un celular colombiano de 10 dígitos, ej: 3138207044)' });
+
+  const db = getDB();
+  // El username ya no lo elige el cliente -- se deriva del celular
+  // (unico, sin caracteres raros, y sirve de paso para que cart.js
+  // pueda usar el mismo valor como telefono real al armar el pedido).
+  const name = normalizedPhone;
 
   if (db.prepare('SELECT id FROM users WHERE username = ?').get(name))
-    return res.status(409).json({ error: 'El nombre de usuario ya existe' });
+    return res.status(409).json({ error: 'Ese número de celular ya está registrado' });
   if (db.prepare('SELECT id FROM users WHERE email = ?').get(String(email).trim().toLowerCase()))
     return res.status(409).json({ error: 'El correo electrónico ya está registrado' });
 
@@ -182,16 +203,17 @@ router.post('/register', async (req, res) => {
     // unico (indice UNIQUE en la base) es la validacion real: evita que
     // se repitan cuentas para la misma persona.
     db.prepare(
-      `INSERT INTO users (username, password_hash, pin, display_name, role, active, email, address, nickname, bio)
-       VALUES (?,?,?,?,?,1,?,?,?,?)`
+      `INSERT INTO users (username, password_hash, pin, display_name, role, active, email, address, nickname, bio, phone)
+       VALUES (?,?,?,?,?,1,?,?,?,?,?)`
     ).run(
       name, hash, hash,
-      String(display_name).trim().slice(0, 100),
+      sanitizeText(display_name, 100),
       'client',
       String(email).trim().toLowerCase().slice(0, 200),
-      String(address).trim().slice(0, 300),
-      nickname ? String(nickname).trim().slice(0, 50) : null,
-      bio      ? String(bio).trim().slice(0, 500)      : null,
+      sanitizeText(address, 300),
+      nickname ? sanitizeText(nickname, 50) : null,
+      bio      ? sanitizeText(bio, 500)      : null,
+      normalizedPhone,
     );
     clearAttempts(lockKey);
     res.status(201).json({
@@ -200,10 +222,10 @@ router.post('/register', async (req, res) => {
     });
   } catch (e) {
     recordFail(lockKey);
-    // UNIQUE (username o email) -- puede pasar por carrera entre el chequeo
-    // de arriba y el insert real, aunque sea poco probable.
+    // UNIQUE (username, email o phone) -- puede pasar por carrera entre
+    // el chequeo de arriba y el insert real, aunque sea poco probable.
     if (String(e.message || '').includes('UNIQUE constraint failed')) {
-      return res.status(409).json({ error: 'Ese usuario o correo ya está registrado' });
+      return res.status(409).json({ error: 'Ese celular o correo ya está registrado' });
     }
     res.status(500).json({ error: 'Error al crear cuenta' });
   }

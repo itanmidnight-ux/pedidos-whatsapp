@@ -190,10 +190,10 @@ class ApiService {
   }
 
   // ── Auth ────────────────────────────────────────────────
-  // Cuenta queda pendiente de aprobación del admin — el servidor ya no
-  // devuelve token de sesión en el registro (active=0 hasta ser aprobada).
+  // Cuenta queda activa de inmediato -- el usuario para el login no lo
+  // elige el cliente, el backend lo deriva del celular.
   static Future<String> register({
-    required String username,
+    required String phone,
     required String password,
     required String displayName,
     required String email,
@@ -207,7 +207,7 @@ class ApiService {
         Uri.parse('$_serverUrl/api/auth/register'),
         headers: {'Content-Type': 'application/json', 'ngrok-skip-browser-warning': 'true'},
         body: jsonEncode({
-          'username':     username.toLowerCase().trim(),
+          'phone':        phone.trim(),
           'password':     password,
           'display_name': displayName.trim(),
           'email':        email.trim(),
