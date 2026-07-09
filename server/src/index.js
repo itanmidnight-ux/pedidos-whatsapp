@@ -1,6 +1,6 @@
 'use strict';
 const app = require('./app');
-const { initDB } = require('./db/database');
+const { initDB, closeDB } = require('./db/database');
 const { schedulePDFJob } = require('./services/pdfScheduler');
 const logger = require('./utils/logger');
 
@@ -27,4 +27,24 @@ initDB().then(() => {
   server.keepAliveTimeout = 65_000;
   server.headersTimeout   = 66_000;
   server.requestTimeout   = 30_000;
+
+  // Apagado ordenado: cada redeploy manda SIGTERM -- sin esto se arriesgaba
+  // cortar una escritura a la DB a mitad o dejar la sesion de WhatsApp en
+  // estado inconsistente. server.close() deja de aceptar conexiones nuevas
+  // y espera a que terminen las que ya estaban en curso antes de cerrar la DB.
+  let shuttingDown = false;
+  function shutdown(signal) {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    logger.info(`[shutdown] ${signal} recibido, cerrando ordenadamente...`);
+    server.close(() => {
+      closeDB();
+      logger.info('[shutdown] servidor y DB cerrados.');
+      process.exit(0);
+    });
+    // Si algo queda colgado (conexion keep-alive que no cierra), forzar salida.
+    setTimeout(() => process.exit(1), 10_000).unref();
+  }
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT',  () => shutdown('SIGINT'));
 }).catch(err => { logger.error({ err }, 'Error iniciando servidor'); process.exit(1); });

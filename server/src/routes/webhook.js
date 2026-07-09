@@ -329,31 +329,36 @@ function createOrder(db, customer, data, message, timestamp, res) {
   const prod = data.product_id
     ? db.prepare('SELECT price FROM products WHERE id=?').get(data.product_id) : null;
 
-  const ins = db.prepare(`INSERT INTO orders
-    (customer_id,product_id,product_name,product_price,delivery_address,is_fiado,wa_message,requested_at)
-    VALUES (?,?,?,?,?,?,?,?)`)
-    .run(
-      customer.id, data.product_id,
-      sanitize(data.product_name, 200),
-      prod?.price ?? null,
-      sanitize(data.delivery_address, 300),
-      data.is_fiado ? 1 : 0,
-      sanitize(data.wa_message || message, 1000),
-      timestamp
-    );
+  // orders + order_items en una sola transaccion -- si el proceso muriera
+  // entre los dos inserts (antes eran dos statements sueltos) quedaria un
+  // pedido huerfano sin items.
+  const orderId = db.transaction(() => {
+    const ins = db.prepare(`INSERT INTO orders
+      (customer_id,product_id,product_name,product_price,delivery_address,is_fiado,wa_message,requested_at)
+      VALUES (?,?,?,?,?,?,?,?)`)
+      .run(
+        customer.id, data.product_id,
+        sanitize(data.product_name, 200),
+        prod?.price ?? null,
+        sanitize(data.delivery_address, 300),
+        data.is_fiado ? 1 : 0,
+        sanitize(data.wa_message || message, 1000),
+        timestamp
+      );
+    const id = ins.lastInsertRowid;
 
-  const orderId = ins.lastInsertRowid;
-
-  // Insertar items -- del multi-parser si vienen, o el item unico del pedido
-  // simple (antes NO se guardaba nunca aca, asi que /analytics/products y
-  // /analytics/summary -- que solo leen order_items -- ignoraban totalmente
-  // los pedidos de un solo producto, que son la mayoria).
-  const itemIns = db.prepare('INSERT INTO order_items (order_id,product_id,product_name,product_price,quantity) VALUES (?,?,?,?,?)');
-  if (Array.isArray(data.items) && data.items.length) {
-    for (const it of data.items) itemIns.run(orderId, it.product_id, it.product_name, it.product_price, it.quantity || 1);
-  } else if (data.product_id) {
-    itemIns.run(orderId, data.product_id, sanitize(data.product_name, 200), prod?.price ?? null, data.quantity || 1);
-  }
+    // Insertar items -- del multi-parser si vienen, o el item unico del pedido
+    // simple (antes NO se guardaba nunca aca, asi que /analytics/products y
+    // /analytics/summary -- que solo leen order_items -- ignoraban totalmente
+    // los pedidos de un solo producto, que son la mayoria).
+    const itemIns = db.prepare('INSERT INTO order_items (order_id,product_id,product_name,product_price,quantity) VALUES (?,?,?,?,?)');
+    if (Array.isArray(data.items) && data.items.length) {
+      for (const it of data.items) itemIns.run(id, it.product_id, it.product_name, it.product_price, it.quantity || 1);
+    } else if (data.product_id) {
+      itemIns.run(id, data.product_id, sanitize(data.product_name, 200), prod?.price ?? null, data.quantity || 1);
+    }
+    return id;
+  })();
 
   const order = db.prepare('SELECT * FROM orders WHERE id=?').get(orderId);
   if (order.is_fiado) {

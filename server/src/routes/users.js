@@ -95,9 +95,20 @@ router.delete('/:id', adminAuth, (req, res) => {
   const id = parseInt(req.params.id);
   if (req.user.id === id) return res.status(400).json({ error: 'No puedes eliminarte a ti mismo' });
   const db = getDB();
-  const r  = db.prepare('DELETE FROM users WHERE id=?').run(id);
-  if (!r.changes) return res.status(404).json({ error: 'Usuario no encontrado' });
-  res.json({ ok: true });
+  try {
+    const r = db.prepare('DELETE FROM users WHERE id=?').run(id);
+    if (!r.changes) return res.status(404).json({ error: 'Usuario no encontrado' });
+    res.json({ ok: true });
+  } catch (e) {
+    // FK (orders.claimed_by, login_events.user_id, etc) impide borrar un
+    // usuario con historial -- es el comportamiento correcto (preservar
+    // trazabilidad de pedidos/sesiones), no un error real del servidor.
+    // Antes esto caia al handler generico y devolvia 500.
+    if (/FOREIGN KEY constraint failed/i.test(e.message)) {
+      return res.status(409).json({ error: 'No se puede eliminar: el usuario tiene pedidos o sesiones registradas. Desactívalo en su lugar.' });
+    }
+    throw e;
+  }
 });
 
 // GET /api/users/clients — list client users (admin only)

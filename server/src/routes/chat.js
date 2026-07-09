@@ -188,15 +188,26 @@ function _createOrder(db, customer, data, message, res) {
   const prod = data.product_id
     ? db.prepare('SELECT price FROM products WHERE id=?').get(data.product_id) : null;
 
-  const ins = db.prepare(`INSERT INTO orders
-    (customer_id,product_id,product_name,product_price,delivery_address,is_fiado,wa_message,requested_at)
-    VALUES (?,?,?,?,?,?,?,datetime('now','localtime'))`)
-    .run(customer.id, data.product_id,
-      sanitize(data.product_name, 200), prod?.price ?? null,
-      sanitize(data.delivery_address, 300), data.is_fiado ? 1 : 0,
-      sanitize(data.wa_message || message, 1000));
+  // orders + order_items en una sola transaccion -- antes el order_items
+  // nunca se insertaba aca (solo en _createMultiOrder), asi que estos
+  // pedidos de un solo producto quedaban invisibles para /analytics/products
+  // (que solo lee order_items). Mismo fix ya aplicado en webhook.js.
+  const orderId = db.transaction(() => {
+    const ins = db.prepare(`INSERT INTO orders
+      (customer_id,product_id,product_name,product_price,delivery_address,is_fiado,wa_message,requested_at)
+      VALUES (?,?,?,?,?,?,?,datetime('now','localtime'))`)
+      .run(customer.id, data.product_id,
+        sanitize(data.product_name, 200), prod?.price ?? null,
+        sanitize(data.delivery_address, 300), data.is_fiado ? 1 : 0,
+        sanitize(data.wa_message || message, 1000));
+    if (data.product_id) {
+      db.prepare('INSERT INTO order_items (order_id,product_id,product_name,product_price,quantity) VALUES (?,?,?,?,?)')
+        .run(ins.lastInsertRowid, data.product_id, sanitize(data.product_name, 200), prod?.price ?? null, data.quantity || 1);
+    }
+    return ins.lastInsertRowid;
+  })();
 
-  const order = db.prepare('SELECT * FROM orders WHERE id=?').get(ins.lastInsertRowid);
+  const order = db.prepare('SELECT * FROM orders WHERE id=?').get(orderId);
   const precio = order.product_price
     ? `$${Number(order.product_price).toLocaleString('es-CO')}` : 'A confirmar';
 
@@ -209,14 +220,15 @@ function _createOrder(db, customer, data, message, res) {
 function _createMultiOrder(db, customer, items, address, message, res) {
   const summary = items.map(i => `${i.quantity}x ${i.product_name}`).join(', ');
   const primary = items[0];
-  const ins = db.prepare(`INSERT INTO orders
-    (customer_id,product_id,product_name,product_price,delivery_address,wa_message,requested_at)
-    VALUES (?,?,?,?,?,?,datetime('now','localtime'))`)
-    .run(customer.id, primary.product_id, summary, primary.product_price, address, message);
-
-  const orderId = ins.lastInsertRowid;
-  const itemIns = db.prepare('INSERT INTO order_items (order_id,product_id,product_name,product_price,quantity) VALUES (?,?,?,?,?)');
-  for (const it of items) itemIns.run(orderId, it.product_id, it.product_name, it.product_price, it.quantity);
+  const orderId = db.transaction(() => {
+    const ins = db.prepare(`INSERT INTO orders
+      (customer_id,product_id,product_name,product_price,delivery_address,wa_message,requested_at)
+      VALUES (?,?,?,?,?,?,datetime('now','localtime'))`)
+      .run(customer.id, primary.product_id, summary, primary.product_price, address, message);
+    const itemIns = db.prepare('INSERT INTO order_items (order_id,product_id,product_name,product_price,quantity) VALUES (?,?,?,?,?)');
+    for (const it of items) itemIns.run(ins.lastInsertRowid, it.product_id, it.product_name, it.product_price, it.quantity);
+    return ins.lastInsertRowid;
+  })();
 
   return res.json({
     reply: `✅ *Pedido recibido:*\n${items.map(i => `📦 ${i.quantity}x ${i.product_name}`).join('\n')}\n📍 ${address}\n\nPronto confirmamos el envío. 🚚`,
