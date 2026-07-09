@@ -7,11 +7,20 @@ const { getDB } = require('../db/database');
 const ACTIVE_STATUSES = "'pending','claimed','en_camino'";
 
 // helpers
+// Antes: 1 query extra POR pedido (N+1) -- /history con 200 filas hacia 201
+// queries por request. Ahora: 1 sola query trayendo los items de todos los
+// pedidos de la pagina, agrupados en memoria.
 function ordersWithMeta(rows, db) {
-  return rows.map(o => {
-    const items = db.prepare('SELECT * FROM order_items WHERE order_id=?').all(o.id);
-    return { ...o, items };
-  });
+  if (!rows.length) return [];
+  const ids = rows.map(o => o.id);
+  const placeholders = ids.map(() => '?').join(',');
+  const items = db.prepare(`SELECT * FROM order_items WHERE order_id IN (${placeholders})`).all(...ids);
+  const byOrder = new Map();
+  for (const it of items) {
+    if (!byOrder.has(it.order_id)) byOrder.set(it.order_id, []);
+    byOrder.get(it.order_id).push(it);
+  }
+  return rows.map(o => ({ ...o, items: byOrder.get(o.id) || [] }));
 }
 
 function findOrder(db, id) {

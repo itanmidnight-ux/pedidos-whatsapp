@@ -75,6 +75,22 @@ function isDuplicateMessage(msgId) {
   return false;
 }
 
+// ── Cache de foto de perfil ────────────────────────────────────
+// Antes se pedia a WhatsApp en CADA mensaje entrante (una llamada de red
+// por mensaje) -- la foto de perfil no cambia a cada rato, cachear unas
+// horas evita esa latencia extra y el riesgo de rate-limit por volumen.
+const PROFILE_PIC_TTL_MS = 6 * 60 * 60_000;
+const profilePicCache = new Map(); // jid -> { url, fetchedAt }
+
+async function getProfilePicCached(jid) {
+  const cached = profilePicCache.get(jid);
+  if (cached && Date.now() - cached.fetchedAt < PROFILE_PIC_TTL_MS) return cached.url;
+  let url = null;
+  try { url = await sock.profilePictureUrl(jid, 'image'); } catch (_) {}
+  profilePicCache.set(jid, { url, fetchedAt: Date.now() });
+  return url;
+}
+
 // ── Límite de mensajes salientes por hora (anti-baneo) ─────────
 const MAX_MSGS_PER_HOUR = parseInt(process.env.BOT_MAX_MSGS_PER_HOUR, 10) || 200;
 let sentTimestamps = [];
@@ -211,8 +227,17 @@ function unwrapMessage(message) {
 async function pollOutbound() {
   if (!isReady || !sock) return;
   try {
-    const { data } = await http.get('/api/messages/outbound/pending');
-    for (const msg of (data.messages || [])) {
+    // Bot y server viven en el mismo proceso -- antes esto era un
+    // GET HTTP a si mismo cada POLL_MS (3s), agregando latencia de
+    // red+JSON innecesaria a CADA ciclo, tenga o no mensajes pendientes.
+    const messages = getDB().prepare(`
+      SELECT m.*, c.wa_jid AS wa_jid
+      FROM messages m
+      LEFT JOIN customers c ON c.phone = m.phone
+      WHERE m.direction='outbound' AND m.sent=0
+      ORDER BY m.created_at ASC
+    `).all();
+    for (const msg of messages) {
       if (!canSendMore()) {
         const now = Date.now();
         if (now - lastCapWarnAt > 5 * 60_000) {
@@ -277,7 +302,7 @@ async function pollOutbound() {
           await sock.sendMessage(jid, { text: msg.content });
         }
 
-        await http.put(`/api/messages/${msg.id}/sent`);
+        getDB().prepare('UPDATE messages SET sent=1 WHERE id=?').run(msg.id);
         sentTimestamps.push(Date.now());
         lastMessageAt = new Date().toISOString();
         await delay(1500 + Math.random() * 2000);
@@ -343,8 +368,7 @@ async function handleInbound(msg) {
   }
   const name    = msg.pushName || phone;
 
-  let profilePicUrl = null;
-  try { profilePicUrl = await sock.profilePictureUrl(jid, 'image'); } catch (_) {}
+  const profilePicUrl = await getProfilePicCached(jid);
 
   const content = unwrapMessage(msg.message);
   if (!content) return;
