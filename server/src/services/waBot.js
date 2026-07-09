@@ -51,6 +51,27 @@ let reconnectExhausted = false;
 let connectedSince = null;
 let lastMessageAt  = null;
 
+// ── Dedup de mensajes entrantes ──────────────────────────────────
+// WhatsApp multi-device a veces reenvia el MISMO mensaje del cliente por
+// mas de una ruta casi al mismo tiempo (ej. cuando el cliente tiene otro
+// dispositivo vinculado) -- sin esto el bot procesaba cada copia por
+// separado: contestaba dos veces y, si una copia llegaba resuelta por
+// numero real y la otra por @lid crudo, hasta creaba un chat duplicado.
+// El id de mensaje de WhatsApp se mantiene igual entre esas copias.
+const recentMsgIds = new Map(); // msg.key.id -> timestamp
+const MSG_DEDUP_WINDOW_MS = 2 * 60_000;
+setInterval(() => {
+  const cutoff = Date.now() - MSG_DEDUP_WINDOW_MS;
+  for (const [id, t] of recentMsgIds) if (t < cutoff) recentMsgIds.delete(id);
+}, 60_000).unref();
+
+function isDuplicateMessage(msgId) {
+  if (!msgId) return false;
+  if (recentMsgIds.has(msgId)) return true;
+  recentMsgIds.set(msgId, Date.now());
+  return false;
+}
+
 // ── Límite de mensajes salientes por hora (anti-baneo) ─────────
 const MAX_MSGS_PER_HOUR = parseInt(process.env.BOT_MAX_MSGS_PER_HOUR, 10) || 200;
 let sentTimestamps = [];
@@ -263,6 +284,7 @@ function mergeStaleLidCustomer(rawJid, realPhone) {
 // ── Manejar mensajes entrantes ────────────────────────────────
 async function handleInbound(msg) {
   if (msg.key.fromMe) return;
+  if (isDuplicateMessage(msg.key.id)) return;
   const rawJid = msg.key.remoteJid || '';
   if (!rawJid || rawJid.endsWith('@g.us') || rawJid === 'status@broadcast') return;
 
