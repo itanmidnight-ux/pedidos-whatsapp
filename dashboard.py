@@ -2562,6 +2562,176 @@ class LocationsModule:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# MÓDULO: CONEXIONES
+# ══════════════════════════════════════════════════════════════════════════════
+class ConnectionsModule:
+    """Actividad por IP agregada en vivo (tabla ip_activity, backend) -- fila
+    roja si supera umbrales de comportamiento sospechoso. Doble clic para ver
+    detalle + bloquear/desbloquear a nivel firewall (scripts/block-ip.sh +
+    sudoers acotado). Incluye panel de alertas de seguridad recientes
+    (tabla security_alerts, alimentada por el backend via raiseAlert())."""
+
+    REQUESTS_THRESHOLD = 300
+    AUTH_FAIL_THRESHOLD = 5
+    SCAN_THRESHOLD = 10
+
+    def __init__(self, parent):
+        self.parent = parent
+        self.box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
+
+        header = SectionHeader('Conexiones en vivo',
+                                'Actividad por IP en los últimos 5 minutos',
+                                make_btn('↻ Actualizar', 'btn-flat', small=True, on_click=lambda *_: self.refresh()))
+        self.box.pack_start(header, False, False, 0)
+
+        cards = Gtk.Box(spacing=12)
+        self.box.pack_start(cards, False, False, 0)
+        self.card_total   = StatCard('IPs activas', sub='Últimos 5 min')
+        self.card_suspect = StatCard('Sospechosas', sub='Comportamiento anómalo')
+        self.card_blocked = StatCard('Bloqueadas', sub='A nivel firewall')
+        for c in (self.card_total, self.card_suspect, self.card_blocked):
+            cards.pack_start(c, True, True, 0)
+
+        alerts_title = Gtk.Label(label='ALERTAS RECIENTES', xalign=0)
+        alerts_title.get_style_context().add_class('section-title')
+        self.box.pack_start(alerts_title, False, False, 0)
+        self.alerts_store = Gtk.ListStore(str, str, str)
+        alerts_tree = Gtk.TreeView(model=self.alerts_store)
+        for i, colname in enumerate(['Cuándo', 'Tipo', 'Mensaje']):
+            renderer = Gtk.CellRendererText()
+            col = Gtk.TreeViewColumn(colname, renderer, text=i)
+            col.set_resizable(True)
+            alerts_tree.append_column(col)
+        alerts_scroll = Gtk.ScrolledWindow()
+        alerts_scroll.set_min_content_height(120)
+        alerts_scroll.add(alerts_tree)
+        self.box.pack_start(alerts_scroll, False, False, 0)
+
+        table_title = Gtk.Label(label='ACTIVIDAD POR IP', xalign=0)
+        table_title.get_style_context().add_class('section-title')
+        self.box.pack_start(table_title, False, False, 0)
+
+        self.store = Gtk.ListStore(str, str, str, str, str, str)
+        tree = Gtk.TreeView(model=self.store)
+        for i, (colname, w) in enumerate([
+            ('IP', 130), ('Requests/5min', 100), ('Fallos auth', 90),
+            ('Rutas 404', 90), ('Última ruta', 220), ('Estado', 100),
+        ]):
+            renderer = Gtk.CellRendererText()
+            col = Gtk.TreeViewColumn(colname, renderer, text=i)
+            col.set_resizable(True)
+            col.set_min_width(w)
+            tree.append_column(col)
+        tree.connect('row-activated', self._on_row_activated)
+        hint = Gtk.Label(label='Doble clic en una IP para ver detalle y bloquear/desbloquear', xalign=0)
+        hint.get_style_context().add_class('label-dim')
+        self.box.pack_start(hint, False, False, 0)
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        scroll.add(tree)
+        scroll.set_min_content_height(320)
+        self.box.pack_start(scroll, True, True, 0)
+
+    def _is_suspicious(self, requests, auth_fails, scans):
+        return (requests > self.REQUESTS_THRESHOLD
+                or auth_fails >= self.AUTH_FAIL_THRESHOLD
+                or scans >= self.SCAN_THRESHOLD)
+
+    def refresh(self):
+        rows = query("""
+            SELECT ip,
+                   SUM(requests)  AS requests,
+                   SUM(count_401) + SUM(count_403) AS auth_fails,
+                   SUM(count_404) AS scans,
+                   MAX(last_path) AS last_path
+            FROM ip_activity
+            WHERE minute >= strftime('%Y-%m-%dT%H:%M', datetime('now','localtime','-5 minutes'))
+            GROUP BY ip
+            ORDER BY requests DESC
+        """)
+        blocked = {r[0] for r in query("SELECT ip FROM blocked_ips")}
+
+        self.card_total.set_value(str(len(rows)))
+        suspicious = [r for r in rows if self._is_suspicious(r[1], r[2], r[3])]
+        self.card_suspect.set_value(str(len(suspicious)))
+        self.card_blocked.set_value(str(len(blocked)))
+
+        self.store.clear()
+        for ip, requests, auth_fails, scans, last_path in rows:
+            estado = 'BLOQUEADA' if ip in blocked else ('SOSPECHOSA' if self._is_suspicious(requests, auth_fails, scans) else 'normal')
+            self.store.append([ip, str(requests), str(auth_fails), str(scans), last_path or '—', estado])
+
+        alerts = query("SELECT kind, message, created_at FROM security_alerts ORDER BY id DESC LIMIT 20")
+        self.alerts_store.clear()
+        for kind, message, created_at in alerts:
+            try:
+                dt = datetime.datetime.fromisoformat(created_at.replace('Z', '+00:00')).astimezone()
+                when_str = dt.strftime('%d/%m %H:%M')
+            except Exception:
+                when_str = created_at or '—'
+            self.alerts_store.append([when_str, kind, message])
+        db_write("UPDATE security_alerts SET read_at = datetime('now','localtime') WHERE read_at IS NULL")
+
+    def _on_row_activated(self, tree, path, column):
+        row = tree.get_model()[path]
+        self._show_detail(row[0], row[5])
+
+    def _show_detail(self, ip, estado_actual):
+        dialog = Gtk.Dialog(title=f'IP — {ip}', transient_for=self.parent,
+                             modal=True, destroy_with_parent=True)
+        is_blocked = (estado_actual == 'BLOQUEADA')
+        action_label = 'Desbloquear IP' if is_blocked else 'Bloquear IP'
+        dialog.add_buttons(action_label, Gtk.ResponseType.APPLY, 'Cerrar', Gtk.ResponseType.CLOSE)
+        dialog.set_default_size(480, 420)
+        box = dialog.get_content_area()
+        box.set_spacing(10)
+        box.set_border_width(14)
+
+        history = query("""
+            SELECT minute, requests, count_401, count_403, count_404, last_path
+            FROM ip_activity WHERE ip = ? ORDER BY minute DESC LIMIT 60
+        """, (ip,))
+        store = Gtk.ListStore(str, str, str, str)
+        tree = Gtk.TreeView(model=store)
+        for i, colname in enumerate(['Minuto', 'Requests', 'Fallos auth', 'Ruta']):
+            renderer = Gtk.CellRendererText()
+            col = Gtk.TreeViewColumn(colname, renderer, text=i)
+            tree.append_column(col)
+        for minute, requests, c401, c403, c404, last_path in history:
+            store.append([minute, str(requests), str(c401 + c403), last_path or '—'])
+        scroll = Gtk.ScrolledWindow()
+        scroll.add(tree)
+        box.pack_start(scroll, True, True, 0)
+        box.show_all()
+
+        response = dialog.run()
+        if response == Gtk.ResponseType.APPLY:
+            self._toggle_block(ip, block=not is_blocked)
+        dialog.destroy()
+        self.refresh()
+
+    def _toggle_block(self, ip, block):
+        action = 'block' if block else 'unblock'
+        sh(f"sudo /usr/local/bin/pedidos-block-ip.sh {ip} {action}")
+        if block:
+            db_write("INSERT OR REPLACE INTO blocked_ips (ip, reason, blocked_at) VALUES (?, ?, datetime('now','localtime'))",
+                      (ip, 'Bloqueada manualmente desde el dashboard'))
+            self._raise_alert('ip_blocked', f'IP {ip} bloqueada manualmente desde el dashboard')
+        else:
+            db_write("DELETE FROM blocked_ips WHERE ip = ?", (ip,))
+
+    def _raise_alert(self, kind, message):
+        """Espejo Python de server/src/utils/securityAlert.js -- misma tabla,
+        mismo mecanismo de cola de WhatsApp (tabla messages, direction=outbound),
+        para que el bot ya existente la recoja sin cambios."""
+        db_write("INSERT INTO security_alerts (kind, message) VALUES (?, ?)", (kind, message))
+        admin = query("SELECT phone FROM users WHERE role='admin' AND phone IS NOT NULL LIMIT 1")
+        if admin:
+            db_write("INSERT INTO messages (phone, content, direction, sent, type) VALUES (?, ?, 'outbound', 0, 'security_alert')",
+                      (admin[0][0], f'🔒 Alerta de seguridad: {message}'))
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # MÓDULO: DATOS
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -3479,6 +3649,7 @@ class DashboardWindow(Gtk.ApplicationWindow):
         self._add_module('sales',   'Ventas', SalesModule)
         self._add_module('employees','Empleados', EmployeesModule)
         self._add_module('locations','Ubicaciones', LocationsModule)
+        self._add_module('connections', 'Conexiones', ConnectionsModule)
         self._add_module('data',    'Datos', DataModule)
 
         # Sección: CONFIGURACIÓN

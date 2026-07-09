@@ -635,6 +635,24 @@ EOF
 }
 
 # ================================================================
+#  Bloqueo de IP desde el dashboard: script + sudoers acotado
+# ================================================================
+setup_ip_block_sudoers() {
+    step "Permisos para bloqueo de IP desde el dashboard"
+    as_root cp "$PROJ/scripts/block-ip.sh" /usr/local/bin/pedidos-block-ip.sh
+    as_root chmod 755 /usr/local/bin/pedidos-block-ip.sh
+    as_root tee /etc/sudoers.d/pedidos-bot-ipblock > /dev/null <<EOF
+# Permite al usuario del dashboard ejecutar SOLO este script exacto sin
+# password -- nunca sudo general, nunca iptables arbitrario.
+$REAL_USER ALL=(root) NOPASSWD: /usr/local/bin/pedidos-block-ip.sh
+EOF
+    as_root chmod 440 /etc/sudoers.d/pedidos-bot-ipblock
+    as_root visudo -c -f /etc/sudoers.d/pedidos-bot-ipblock &>/dev/null \
+        && ok "Bloqueo de IP habilitado para $REAL_USER (sin password, acotado al script)" \
+        || { as_root rm -f /etc/sudoers.d/pedidos-bot-ipblock; warn "sudoers invalido -- se revirtio, bloqueo de IP quedara deshabilitado"; }
+}
+
+# ================================================================
 #  PASO 8 — Acceso publico: cloudflared (recomendado, sin abrir puertos)
 #           o nginx+certbot (alternativa, requiere 80/443 abiertos)
 # ================================================================
@@ -990,6 +1008,7 @@ main_install() {
     esac
 
     install_fail2ban
+    setup_ip_block_sudoers
 
     if ui_yesno "Configurar actualizacion automatica de DuckDNS?"; then
         local sd tk
