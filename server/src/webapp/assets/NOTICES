@@ -2095,7 +2095,6 @@ file_selector_linux
 file_selector_macos
 file_selector_platform_interface
 file_selector_windows
-flutter_plugin_android_lifecycle
 google_fonts
 image_picker_for_web
 image_picker_macos
@@ -6211,6 +6210,7 @@ SOFTWARE.
 
 --------------------------------------------------------------------------------
 flutter_lints
+flutter_plugin_android_lifecycle
 image_picker_linux
 image_picker_windows
 path_provider

@@ -48,6 +48,7 @@ app.use(helmet({
 const allowedOrigins = [
   process.env.SERVER_DOMAIN  ? `https://${process.env.SERVER_DOMAIN}` : null,
   'https://tu-dominio.duckdns.org',
+  'https://midominio.ts.net',
   'http://localhost:3000',
   'http://127.0.0.1:3000',
 ].filter(Boolean);

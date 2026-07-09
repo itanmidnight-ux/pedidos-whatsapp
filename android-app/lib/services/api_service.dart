@@ -34,7 +34,9 @@ class ApiService {
     aOptions: AndroidOptions(encryptedSharedPreferences: true),
   );
 
-  static const _defaultUrl = 'https://tu-dominio.duckdns.org';
+  // Tailscale Funnel: URL fija de por vida, sin depender del router del
+  // usuario (no requiere abrir puertos ni tener IP publica estable).
+  static const _defaultUrl = 'https://midominio.ts.net';
 
   // En web usa el mismo origen (funciona con DuckDNS HTTP y cloudflare HTTPS)
   static String get _autoUrl {

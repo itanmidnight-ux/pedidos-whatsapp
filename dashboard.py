@@ -24,7 +24,6 @@ import urllib.request, urllib.error
 
 # ─── Configuración de rutas y servicios ─────────────────────────────────────────
 SERVICE         = os.environ.get('DEPLOY_SERVICE', 'pedidos-bot')
-TUNNEL_SERVICE  = os.environ.get('DEPLOY_TUNNEL_SERVICE', 'pedidos-bot-tunnel')
 PROJ            = os.environ.get('DEPLOY_PROJ', os.path.dirname(os.path.abspath(__file__)))
 ENV_FILE        = os.path.join(PROJ, 'server', '.env')
 LOG_DIR         = os.environ.get('DEPLOY_LOG_DIR', '/var/log/pedidos-bot')
@@ -1046,8 +1045,8 @@ class MonitorModule:
         self.card_node.pack_start(self.dot_node, False, False, 0)
         cards_box.pack_start(self.card_node, True, True, 0)
 
-        # Tunel Cloudflare
-        self.card_tunnel = StatCard('Túnel Cloudflare', sub= TUNNEL_SERVICE)
+        # Acceso público (Tailscale Funnel -- URL fija, sin abrir puertos)
+        self.card_tunnel = StatCard('Acceso público', sub='Tailscale Funnel')
         self.dot_tunnel = Gtk.Box()
         self.dot_tunnel.set_size_request(9, 9)
         self.dot_tunnel.get_style_context().add_class('status-dot')
@@ -1106,11 +1105,11 @@ class MonitorModule:
 
         actions.pack_start(Gtk.Label(label=''), True, True, 0)  # spacer
 
-        # Túnel control
-        actions.pack_start(make_btn('⇄ Reiniciar túnel', 'btn-flat', small=True,
-                            on_click=lambda _w: self._run(f'systemctl restart {TUNNEL_SERVICE}')),
+        # Tailscale control
+        actions.pack_start(make_btn('⇄ Reiniciar Tailscale', 'btn-flat', small=True,
+                            on_click=lambda _w: self._run('systemctl restart tailscaled')),
                             False, False, 0)
-        actions.pack_start(make_btn('⎘ Copiar URL túnel', 'btn-flat', small=True,
+        actions.pack_start(make_btn('⎘ Copiar URL pública', 'btn-flat', small=True,
                             on_click=lambda _w: self._copy_tunnel_url()),
                             False, False, 0)
 
@@ -1119,34 +1118,28 @@ class MonitorModule:
         GLib.timeout_add(1500, lambda: (self.parent.refresh_all(), False)[1])
 
     def _get_tunnel_url(self):
-        """URL publica actual del tunel rapido -- cambia en cada reinicio de
-        cloudflared (no es un tunel con dominio fijo), asi que hay que leerla
-        del log cada vez en vez de asumir que sigue siendo la misma."""
-        try:
-            with open(f'{LOG_DIR}/tunnel.log', 'r', errors='ignore') as f:
-                content = f.read()
-            matches = re.findall(r'https://[a-z0-9-]+\.trycloudflare\.com', content)
-            return matches[-1] if matches else None
-        except OSError:
+        """URL publica fija de Tailscale Funnel (no cambia, a diferencia del
+        viejo tunel rapido de Cloudflare) -- se lee del estado real por si
+        se reconfigura, en vez de asumir que siempre es la misma."""
+        out = sh('tailscale funnel status 2>/dev/null')
+        if not out:
             return None
+        matches = re.findall(r'https://[a-z0-9.-]+\.ts\.net', out)
+        return matches[0] if matches else None
 
     def _copy_tunnel_url(self):
         if not self._current_tunnel_url:
-            self.parent.show_toast('Túnel inactivo — no hay URL para copiar')
+            self.parent.show_toast('Acceso público inactivo — no hay URL para copiar')
             return
         clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
         clipboard.set_text(self._current_tunnel_url, -1)
         self.parent.show_toast(f'URL copiada: {self._current_tunnel_url}')
 
     def _run_with_tunnel(self, action):
-        """Inicia/detiene/reinicia el servidor Node Y el tunel Cloudflare juntos
-        (si esta instalacion usa tunel) -- sin servidor no tiene sentido tener
-        el tunel expuesto, y al reanudar el servidor el tunel debe volver solo."""
+        """Inicia/detiene/reinicia el servidor Node. Tailscale/Funnel es un
+        servicio del sistema independiente (siempre corriendo) -- no se
+        detiene ni reinicia junto con la app."""
         sh(f'systemctl {action} {SERVICE}')
-        tunnel_installed = bool(sh(f'systemctl cat {TUNNEL_SERVICE} 2>/dev/null'))
-        if tunnel_installed and (action in ('start', 'restart') and load_conf('ACCESS_METHOD') == 'tunnel'
-                                  or action == 'stop'):
-            sh(f'systemctl {action} {TUNNEL_SERVICE}')
         GLib.timeout_add(1500, lambda: (self.parent.refresh_all(), False)[1])
 
     def _update_action_buttons(self, is_active):
@@ -1162,12 +1155,13 @@ class MonitorModule:
         self._set_dot(self.dot_node, active == 'active', failed=(active == 'failed'))
         self._update_action_buttons(active == 'active')
 
-        # Túnel
-        tactive = sh(f'systemctl is-active {TUNNEL_SERVICE} 2>/dev/null') or 'no instalado'
+        # Acceso público (Tailscale Funnel)
+        ts_active = sh('systemctl is-active tailscaled 2>/dev/null') or 'no instalado'
+        self._current_tunnel_url = self._get_tunnel_url() if ts_active == 'active' else None
+        tactive = 'active' if self._current_tunnel_url else ('failed' if ts_active == 'active' else ts_active)
         self.card_tunnel.set_value(tactive.upper())
         self._set_dot(self.dot_tunnel, tactive == 'active', failed=(tactive == 'failed'))
-        self._current_tunnel_url = self._get_tunnel_url() if tactive == 'active' else None
-        self.card_tunnel.set_sub(self._current_tunnel_url or TUNNEL_SERVICE)
+        self.card_tunnel.set_sub(self._current_tunnel_url or 'Tailscale Funnel')
 
         # Bot WhatsApp (vía API HTTP)
         bot = http_get('/api/bot/status')
@@ -2879,7 +2873,7 @@ class SecurityModule:
         lines.append("")
         lines.append("─ SERVICIOS ─")
         lines.append(f"• Servicio Node: {sh(f'systemctl is-active {SERVICE} 2>/dev/null') or 'no instalado'}")
-        lines.append(f"• Túnel Cloudflare: {sh(f'systemctl is-active {TUNNEL_SERVICE} 2>/dev/null') or 'no instalado'}")
+        lines.append(f"• Acceso público (Tailscale): {sh('systemctl is-active tailscaled 2>/dev/null') or 'no instalado'}")
 
         # Recomendaciones
         lines.append("")
