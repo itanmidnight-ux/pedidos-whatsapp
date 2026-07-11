@@ -791,11 +791,12 @@ class ApiService {
 
   // ── Ubicaciones de staff (solo worker/admin, nunca clientes) ──
   static Future<void> reportLocation(double lat, double lng, double? accuracy) async {
-    await _client.post(
+    final res = await _client.post(
       Uri.parse('$_serverUrl/api/staff-locations'),
       headers: _headers,
       body: jsonEncode({'lat': lat, 'lng': lng, if (accuracy != null) 'accuracy': accuracy}),
     ).timeout(const Duration(seconds: 10));
+    if (res.statusCode != 201) throw Exception('Error reportando ubicación: ${res.statusCode}');
   }
 
   static Future<List<Map<String, dynamic>>> getStaffLocations() async {

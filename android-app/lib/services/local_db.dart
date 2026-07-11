@@ -25,7 +25,10 @@ class LocalDB {
   static Future<Database> _open() async {
     return openDatabase(
       p.join(await getDatabasesPath(), 'monserrath_v2.db'),
-      version: 1,
+      version: 2,
+      onUpgrade: (db, oldVersion, newVersion) async {
+        if (oldVersion < 2) await db.execute(_locationQueueSql);
+      },
       onCreate: (db, _) async {
         await db.execute('''
           CREATE TABLE cached_products (
@@ -75,8 +78,53 @@ class LocalDB {
             value TEXT NOT NULL
           )
         ''');
+        await db.execute(_locationQueueSql);
       },
     );
+  }
+
+  // Cola de reintento de ubicaciones -- si el POST al servidor falla (sin
+  // señal, servidor caído un momento), la lectura se guarda acá en vez de
+  // perderse, y se reintenta en el siguiente ciclo del tracker.
+  static const _locationQueueSql = '''
+    CREATE TABLE IF NOT EXISTS location_queue (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      lat REAL NOT NULL,
+      lng REAL NOT NULL,
+      accuracy REAL,
+      recorded_at INTEGER NOT NULL
+    )
+  ''';
+
+  // ── Cola de ubicaciones pendientes ───────────────────────────
+  static Future<void> queueLocation(double lat, double lng, double? accuracy) async {
+    if (kIsWeb) return;
+    final db = await _database;
+    await db.insert('location_queue', {
+      'lat': lat, 'lng': lng, 'accuracy': accuracy,
+      'recorded_at': DateTime.now().millisecondsSinceEpoch,
+    });
+  }
+
+  static Future<List<Map<String, dynamic>>> getQueuedLocations() async {
+    if (kIsWeb) return [];
+    final db = await _database;
+    return db.query('location_queue', orderBy: 'recorded_at ASC');
+  }
+
+  static Future<void> removeQueuedLocation(int id) async {
+    if (kIsWeb) return;
+    final db = await _database;
+    await db.delete('location_queue', where: 'id=?', whereArgs: [id]);
+  }
+
+  // Descarta lecturas de más de 24h -- si el teléfono estuvo offline mucho
+  // tiempo, no tiene sentido seguir reintentando un recorrido tan viejo.
+  static Future<void> pruneOldQueuedLocations() async {
+    if (kIsWeb) return;
+    final db = await _database;
+    final cutoff = DateTime.now().subtract(const Duration(hours: 24)).millisecondsSinceEpoch;
+    await db.delete('location_queue', where: 'recorded_at < ?', whereArgs: [cutoff]);
   }
 
   // ── Products ──────────────────────────────────────────────

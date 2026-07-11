@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:geolocator/geolocator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'api_service.dart';
+import 'local_db.dart';
 
 /// Rastreo de ubicación de trabajadores/admin -- SOLO esos roles, nunca
 /// clientes. El permiso se pide de forma explícita y con una pantalla de
@@ -50,22 +51,49 @@ class LocationTrackerService {
     _sub = Geolocator.getPositionStream(
       locationSettings: AndroidSettings(
         accuracy: LocationAccuracy.high,
-        distanceFilter: 50,
-        intervalDuration: const Duration(minutes: 5),
+        distanceFilter: 25,
+        intervalDuration: const Duration(seconds: 30),
         foregroundNotificationConfig: const ForegroundNotificationConfig(
           notificationTitle: 'Concentrados Monserrath',
           notificationText: 'Compartiendo tu ubicación por seguridad mientras trabajas',
           enableWakeLock: true,
         ),
       ),
-    ).listen((pos) {
-      ApiService.reportLocation(pos.latitude, pos.longitude, pos.accuracy)
-        .catchError((_) {});
-    }, onError: (_) {});
+    ).listen((pos) => _reportOrQueue(pos), onError: (_) {});
   }
 
   static Future<void> stop() async {
     await _sub?.cancel();
     _sub = null;
+  }
+
+  /// Reporta la posición actual; si falla (sin señal, servidor caído un
+  /// momento) la guarda en la cola local en vez de perderla. Luego intenta
+  /// vaciar la cola completa -- así un bache de conectividad no deja un
+  /// hueco real en el recorrido del empleado.
+  static Future<void> _reportOrQueue(Position pos) async {
+    try {
+      await ApiService.reportLocation(pos.latitude, pos.longitude, pos.accuracy);
+    } catch (_) {
+      await LocalDB.queueLocation(pos.latitude, pos.longitude, pos.accuracy);
+    }
+    await _flushQueue();
+  }
+
+  static Future<void> _flushQueue() async {
+    await LocalDB.pruneOldQueuedLocations();
+    final pending = await LocalDB.getQueuedLocations();
+    for (final row in pending) {
+      try {
+        await ApiService.reportLocation(
+          (row['lat'] as num).toDouble(),
+          (row['lng'] as num).toDouble(),
+          row['accuracy'] == null ? null : (row['accuracy'] as num).toDouble(),
+        );
+        await LocalDB.removeQueuedLocation(row['id'] as int);
+      } catch (_) {
+        break; // sigue sin red -- se reintenta el resto en el próximo ciclo
+      }
+    }
   }
 }
