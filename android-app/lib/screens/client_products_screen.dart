@@ -32,13 +32,28 @@ class _ClientProductsScreenState extends State<ClientProductsScreen>
   void dispose() { _searchCtrl.dispose(); super.dispose(); }
 
   Future<void> _load() async {
-    setState(() => _loading = true);
-    List<Product> list = [];
+    // Cache local primero: pinta al instante sin spinner si ya hay datos --
+    // antes cada apertura del catalogo mostraba "cargando" aunque los
+    // productos casi nunca cambian entre visitas.
+    final cached = await LocalDB.getCachedProducts();
+    if (cached.isNotEmpty && mounted) {
+      setState(() {
+        _all = cached.where((p) => p.available).toList();
+        _buildCategories();
+        _filter();
+        _loading = false;
+      });
+    } else if (mounted) {
+      setState(() => _loading = true);
+    }
+
+    List<Product> list;
     bool offline = false;
     try {
       list = await ApiService.getProducts();
       await LocalDB.cacheProducts(list);
     } catch (_) {
+      if (cached.isNotEmpty) return; // ya se ve el cache, nada nuevo que aplicar
       list = await LocalDB.getCachedProducts();
       offline = true;
     }

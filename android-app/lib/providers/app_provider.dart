@@ -90,8 +90,13 @@ class AppProvider extends ChangeNotifier {
     );
     isLoggedIn = true; isOnline = true;
     notifyListeners();
-    await refreshAll();
-    startAutoRefresh();
+    // Pedidos/mensajes-marcados son solo de staff (staffAuth) -- un cliente
+    // pidiendolos cada 20s solo genera 403 repetidos y trafico de red inutil.
+    // La pantalla de cliente ya tiene su propio refresco (NotificationService).
+    if (currentRole != 'client') {
+      await refreshAll();
+      startAutoRefresh();
+    }
   }
 
   Future<void> refreshAll() async {

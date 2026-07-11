@@ -197,6 +197,24 @@ class LocalDB {
       conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
+  /// Ultimo status conocido por pedido (id -> status), para detectar cambios
+  /// de estado del cliente (en_camino/entregado/cancelled) y notificar.
+  static Future<Map<String, String>> getOrderStatuses() async {
+    if (kIsWeb) return {};
+    final db  = await _database;
+    final row = await db.query('app_state', where: 'key=?', whereArgs: ['order_statuses']);
+    final raw = row.firstOrNull?['value'] as String?;
+    if (raw == null) return {};
+    try { return Map<String, String>.from(jsonDecode(raw) as Map); } catch (_) { return {}; }
+  }
+
+  static Future<void> setOrderStatuses(Map<String, String> statuses) async {
+    if (kIsWeb) return;
+    final db = await _database;
+    await db.insert('app_state', {'key': 'order_statuses', 'value': jsonEncode(statuses)},
+      conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
   // ── Orders cache ──────────────────────────────────────────
   static Future<void> saveOrders(List<Order> orders) async {
     if (kIsWeb) return;

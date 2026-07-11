@@ -90,6 +90,35 @@ class NotificationService {
         await LocalDB.cacheProducts(products);
       }
     } catch (_) {}
+
+    // Check status changes en los pedidos propios del cliente -- mismo
+    // aviso que ya manda el bot por WhatsApp, pero visible en la app.
+    if (ApiService.currentRole == 'client') await _pollMyOrders();
+  }
+
+  static const _orderStatusText = {
+    'en_camino': ('🛵 Tu pedido va en camino', 'El pedido #%d está en camino a tu dirección.'),
+    'entregado': ('✅ Pedido entregado', '¡Tu pedido #%d fue entregado! Gracias por tu compra.'),
+    'cancelled': ('❌ Pedido cancelado', 'Tu pedido #%d fue cancelado.'),
+  };
+
+  static Future<void> _pollMyOrders() async {
+    try {
+      final orders = await ApiService.getMyOrders();
+      final known  = await LocalDB.getOrderStatuses();
+      final fresh  = <String, String>{};
+      var notifyId = 100;
+      for (final o in orders) {
+        final key = (o.id ?? 0).toString();
+        fresh[key] = o.status;
+        final prev = known[key];
+        if (prev != null && prev != o.status && _orderStatusText.containsKey(o.status)) {
+          final (title, bodyTpl) = _orderStatusText[o.status]!;
+          await _notify(id: notifyId++, title: title, body: bodyTpl.replaceAll('%d', '${o.id}'));
+        }
+      }
+      await LocalDB.setOrderStatuses(fresh);
+    } catch (_) {}
   }
 
   static Future<void> _notify({required int id, required String title, required String body}) async {

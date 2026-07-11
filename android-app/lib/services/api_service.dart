@@ -288,6 +288,13 @@ class ApiService {
     throw Exception('Error pedidos: ${res.statusCode}');
   }
 
+  static Future<List<Order>> getMyOrders() async {
+    final res = _handleResponse(
+      await _client.get(Uri.parse('$_serverUrl/api/orders/mine'), headers: _headers).timeout(const Duration(seconds: 10)));
+    if (res.statusCode == 200) return (jsonDecode(res.body) as List).map((j) => Order.fromJson(j)).toList();
+    throw Exception('Error mis pedidos: ${res.statusCode}');
+  }
+
   static Future<Order> claimOrder(int id) async {
     final res = await _client.put(Uri.parse('$_serverUrl/api/orders/$id/claim'), headers: _headers).timeout(const Duration(seconds: 10));
     if (res.statusCode == 200) return Order.fromJson(jsonDecode(res.body));
