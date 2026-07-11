@@ -1,7 +1,7 @@
 'use strict';
 const express = require('express');
 const router  = express.Router();
-const { staffAuth, adminAuth } = require('../middleware/auth');
+const { staffAuth, adminAuth, clientAuth } = require('../middleware/auth');
 const { getDB } = require('../db/database');
 const { notifyOrderStatus } = require('../utils/orderNotify');
 
@@ -113,6 +113,23 @@ router.get('/stats', staffAuth, (req, res) => {
   `).get();
 
   res.json({ product_totals: productRows, daily_deliveries: dailyRows, summary });
+});
+
+// GET /api/orders/mine — pedidos del cliente autenticado en la app (por su
+// telefono registrado) -- debe ir antes de /:id para no ser capturada como id
+router.get('/mine', clientAuth, (req, res) => {
+  const db = getDB();
+  const user = db.prepare('SELECT phone FROM users WHERE id=?').get(req.user.id);
+  if (!user?.phone) return res.json([]);
+  const rows = db.prepare(`
+    SELECT o.*, c.phone, c.name AS customer_name
+    FROM orders o
+    JOIN customers c ON o.customer_id = c.id
+    WHERE c.phone = ?
+    ORDER BY o.requested_at DESC
+    LIMIT 30
+  `).all(user.phone);
+  res.json(ordersWithMeta(rows, db));
 });
 
 // GET /api/orders/:id
