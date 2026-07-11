@@ -8,7 +8,8 @@
 #
 #  Arquitectura:
 #   - Sidebar lateral colapsable + área principal responsive (1200x800 min 900x600)
-#   - Estilo Adwaita oscuro con acentos de marca (olivo/ámbar)
+#   - Estilo claro empresarial con acentos de marca (olivo/ámbar), crossfade
+#     nativo al cambiar de módulo
 #   - Gráficos Cairo dibujados a mano (barras, líneas, dona, sparklines)
 #   - Acceso híbrido: SQLite directo (stats) + systemd (control servicio)
 #                      + API HTTP (estado del bot WhatsApp, QR)
@@ -41,29 +42,31 @@ PRESETS = [
     ('Carbon & Lima',     '#22302B', '#8AB833'),
 ]
 
-# ─── Paleta "admin console" — Adwaita oscuro + acentos de marca ─────────────────
-# Nativa de GNOME: colores tomados de la spec Adwaita dark, con acentos
-# puntuales (verde olivo / ámbar) para highlights de marca sin romper la HIG.
-BG          = '#1e1e1e'   # window background (Adwaita dark)
-SURFACE     = '#242424'   # cards, sidebar
-SURFACE_2   = '#303030'   # hover, elevated
-SURFACE_3   = '#383838'   # active, pressed
-BORDER      = '#3d3d3d'   # 1px borders
-BORDER_SOFT = '#2e2e2e'   # subtle dividers
-FG          = '#ffffff'   # primary text
-FG_MUTED    = '#cdcdcd'   # secondary text (Adwaita uses 0.8 alpha on white)
-FG_DIM      = '#8d8d8d'   # tertiary / labels
-ACCENT      = '#3584e4'   # Adwaita accent blue (acciones primarias)
+# ─── Paleta "admin console" — claro empresarial + acentos de marca ──────────────
+# Fondo blanco/gris claro, texto casi-negro (no negro puro), acentos
+# puntuales (verde olivo / ámbar) para highlights de marca sin romper
+# contraste. WARNING se oscurece respecto al amarillo original -- como
+# texto sobre blanco el amarillo puro es ilegible.
+BG          = '#ffffff'   # window background
+SURFACE     = '#ffffff'   # cards, contenido
+SURFACE_2   = '#f4f5f6'   # sidebar, hover, elevated
+SURFACE_3   = '#e9ebed'   # active, pressed
+BORDER      = '#dde0e3'   # 1px borders — visible pero no duro
+BORDER_SOFT = '#eef0f2'   # subtle dividers
+FG          = '#1a1d21'   # primary text
+FG_MUTED    = '#52585f'   # secondary text
+FG_DIM      = '#8a9099'   # tertiary / labels
+ACCENT      = '#1B3A6B'   # azul corporativo (acciones primarias)
 BRAND       = '#D4800A'   # acento de marca (highlights, indicadores activos)
 BRAND_DARK  = '#2D5016'   # primario de marca (presets, preview)
-SUCCESS     = '#26a269'   # estados activos / OK
-WARNING     = '#f5c211'   # advertencias / acciones sensibles
-DANGER      = '#e01b24'   # errores / cancelados / crítico
-INFO        = '#3584e4'   # info / charts secundarios
+SUCCESS     = '#1e8e5a'   # estados activos / OK
+WARNING     = '#b8860b'   # advertencias / acciones sensibles
+DANGER      = '#c62828'   # errores / cancelados / crítico
+INFO        = '#1B3A6B'   # info / charts secundarios
 
-# ─── CSS (Adwaita dark + brand accents) ─────────────────────────────────────────
-# HIG de GNOME: esquinas 6-8px, padding generoso, transiciones 150-200ms,
-# sin sombras agresivas, jerarquía tipográfica clara.
+# ─── CSS (claro empresarial + acentos de marca) ─────────────────────────────────
+# Esquinas 6-10px, padding generoso, transiciones 150-200ms, sombras suaves
+# de elevación en cards (soportadas en GTK3 3.22+), jerarquía tipográfica clara.
 CSS = f"""
 * {{
     font-family: 'Cantarell', 'Inter', 'Fira Sans', 'Segoe UI', sans-serif;
@@ -119,30 +122,31 @@ headerbar button:active {{ background: {SURFACE_3}; }}
 .win-controls .win-close:hover {{ background: {DANGER}; color: white; }}
 
 .sidebar {{
-    background-color: {SURFACE};
+    background-color: {SURFACE_2};
     border-right: 1px solid {BORDER};
     padding: 8px 6px;
 }}
 .sidebar-btn {{
     background: transparent;
-    border: none;
+    border: 1px solid transparent;
     border-radius: 6px;
     color: {FG_MUTED};
     padding: 10px 12px;
     font-weight: 500;
     font-size: 15px;
-    transition: background 150ms ease, color 150ms ease;
+    transition: background 150ms ease, color 150ms ease, border-color 150ms ease;
     outline: none;
 }}
-.sidebar-btn:hover {{ background: {SURFACE_2}; color: {FG}; }}
+.sidebar-btn:hover {{ background: {SURFACE_3}; color: {FG}; }}
 .sidebar-btn.active {{
-    background: {SURFACE_3};
+    background: {SURFACE};
     color: {FG};
+    border-color: {BORDER};
     box-shadow: inset 2px 0 0 {BRAND};
 }}
 .sidebar-btn .badge {{
     background: {BRAND};
-    color: {BG};
+    color: {FG};
     border-radius: 10px;
     padding: 1px 7px;
     font-size: 10px;
@@ -186,11 +190,13 @@ headerbar button:active {{ background: {SURFACE_3}; }}
     border-radius: 10px;
     border: 1px solid {BORDER};
     padding: 14px 16px;
-    transition: border-color 150ms ease, background-color 150ms ease;
+    box-shadow: 0 1px 2px rgba(20,25,32,0.06);
+    transition: border-color 150ms ease, background-color 150ms ease, box-shadow 150ms ease;
 }}
 .stat-card:hover {{
     border-color: {FG_DIM};
     background-color: {SURFACE_2};
+    box-shadow: 0 2px 8px rgba(20,25,32,0.09);
 }}
 .stat-label {{
     color: {FG_DIM};
@@ -222,12 +228,12 @@ headerbar button:active {{ background: {SURFACE_3}; }}
     font-weight: 700;
     letter-spacing: 0.5px;
 }}
-.pill-success {{ background: rgba(38,162,105,0.18); color: {SUCCESS}; border: 1px solid rgba(38,162,105,0.4); }}
-.pill-warning {{ background: rgba(245,194,17,0.18); color: {WARNING}; border: 1px solid rgba(245,194,17,0.4); }}
-.pill-danger  {{ background: rgba(224,27,36,0.18); color: {DANGER};  border: 1px solid rgba(224,27,36,0.4); }}
+.pill-success {{ background: rgba(30,142,90,0.14); color: {SUCCESS}; border: 1px solid rgba(30,142,90,0.35); }}
+.pill-warning {{ background: rgba(184,134,11,0.14); color: {WARNING}; border: 1px solid rgba(184,134,11,0.35); }}
+.pill-danger  {{ background: rgba(198,40,40,0.14); color: {DANGER};  border: 1px solid rgba(198,40,40,0.35); }}
 .pill-muted   {{ background: {SURFACE_3};            color: {FG_MUTED}; border: 1px solid {BORDER}; }}
-.pill-info    {{ background: rgba(53,132,228,0.18); color: {INFO};    border: 1px solid rgba(53,132,228,0.4); }}
-.pill-brand   {{ background: rgba(212,128,10,0.18); color: {BRAND};   border: 1px solid rgba(212,128,10,0.4); }}
+.pill-info    {{ background: rgba(27,58,107,0.12); color: {INFO};    border: 1px solid rgba(27,58,107,0.3); }}
+.pill-brand   {{ background: rgba(212,128,10,0.14); color: {BRAND};   border: 1px solid rgba(212,128,10,0.35); }}
 
 .status-dot {{ border-radius: 999px; min-width: 9px; min-height: 9px; }}
 .dot-active   {{ background-color: {SUCCESS}; }}
@@ -250,14 +256,14 @@ button.action-btn:disabled {{
 }}
 .btn-primary {{
     background-color: {ACCENT};
-    color: {FG};
+    color: #ffffff;
     border: 1px solid {ACCENT};
 }}
-.btn-primary:hover {{ background-color: #4990e4; }}
-.btn-primary:active {{ background-color: #2675d4; }}
+.btn-primary:hover {{ background-color: #24487f; }}
+.btn-primary:active {{ background-color: #142c50; }}
 .btn-brand {{
     background-color: {BRAND};
-    color: {BG};
+    color: {FG};
     border: 1px solid {BRAND};
 }}
 .btn-brand:hover {{ background-color: #e8901f; }}
@@ -266,13 +272,13 @@ button.action-btn:disabled {{
     color: {WARNING};
     border: 1px solid {WARNING};
 }}
-.btn-warn:hover {{ background-color: rgba(245,194,17,0.12); }}
+.btn-warn:hover {{ background-color: rgba(184,134,11,0.10); }}
 .btn-danger {{
     background-color: transparent;
     color: {DANGER};
     border: 1px solid {DANGER};
 }}
-.btn-danger:hover {{ background-color: rgba(224,27,36,0.12); }}
+.btn-danger:hover {{ background-color: rgba(198,40,40,0.10); }}
 .btn-flat {{
     background-color: {SURFACE_2};
     color: {FG};
@@ -284,7 +290,7 @@ button.action-btn:disabled {{
 
 /* ─── Inputs ─────────────────────────────────────── */
 entry {{
-    background-color: {SURFACE_2};
+    background-color: {SURFACE};
     color: {FG};
     border-radius: 6px;
     border: 1px solid {BORDER};
@@ -293,9 +299,9 @@ entry {{
 }}
 entry:focus {{
     border-color: {ACCENT};
-    box-shadow: 0 0 0 2px rgba(53,132,228,0.25);
+    box-shadow: 0 0 0 2px rgba(27,58,107,0.18);
 }}
-entry:disabled {{ color: {FG_DIM}; background: {SURFACE}; }}
+entry:disabled {{ color: {FG_DIM}; background: {SURFACE_2}; }}
 
 label {{ color: {FG}; }}
 .label-muted {{ color: {FG_MUTED}; font-size: 12px; }}
@@ -319,12 +325,12 @@ treeview header button {{
 }}
 treeview row:nth-child(even) {{ background-color: {SURFACE}; }}
 treeview row:nth-child(odd)  {{ background-color: {SURFACE_2}; }}
-treeview row:selected {{ background-color: rgba(53,132,228,0.25); color: {FG}; }}
+treeview row:selected {{ background-color: rgba(27,58,107,0.14); color: {FG}; }}
 
 /* ─── Textview (logs, security) ──────────────────── */
 textview {{ background-color: {SURFACE}; }}
 textview text {{ background-color: {SURFACE}; color: {FG_MUTED}; }}
-textview selection {{ background-color: rgba(53,132,228,0.3); }}
+textview selection {{ background-color: rgba(27,58,107,0.22); }}
 
 /* ─── Separator / divider ────────────────────────── */
 separator {{ background-color: {BORDER}; min-height: 1px; }}
@@ -347,6 +353,7 @@ separator {{ background-color: {BORDER}; min-height: 1px; }}
     border: 1px solid {BORDER};
     border-radius: 10px;
     padding: 14px;
+    box-shadow: 0 1px 2px rgba(20,25,32,0.05);
 }}
 
 /* ─── Order card (Pedidos Activos) ───────────────── */
@@ -356,9 +363,10 @@ separator {{ background-color: {BORDER}; min-height: 1px; }}
     border-left: 3px solid {FG_DIM};
     border-radius: 8px;
     padding: 12px 14px;
-    transition: border-color 150ms ease;
+    box-shadow: 0 1px 2px rgba(20,25,32,0.05);
+    transition: border-color 150ms ease, box-shadow 150ms ease;
 }}
-.order-card:hover {{ border-color: {FG_DIM}; }}
+.order-card:hover {{ border-color: {FG_DIM}; box-shadow: 0 2px 6px rgba(20,25,32,0.08); }}
 .order-pending  {{ border-left-color: {WARNING}; }}
 .order-claimed  {{ border-left-color: {INFO}; }}
 .order-en_camino{{ border-left-color: {BRAND}; }}
@@ -369,6 +377,7 @@ separator {{ background-color: {BORDER}; min-height: 1px; }}
     border: 1px solid {BORDER};
     border-radius: 12px;
     padding: 18px;
+    box-shadow: 0 1px 3px rgba(20,25,32,0.06);
 }}
 
 /* ─── Scrollbar slim ─────────────────────────────── */
@@ -3700,6 +3709,14 @@ class DashboardWindow(Gtk.ApplicationWindow):
         self.module_buttons = {}
         self.modules = {}
 
+        # Stack con crossfade nativo -- reemplaza el pack/remove manual del
+        # área de contenido. GTK3 no soporta animaciones CSS @keyframes,
+        # pero Gtk.Stack trae su propia transición animada entre hijos.
+        self.content_stack = Gtk.Stack()
+        self.content_stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
+        self.content_stack.set_transition_duration(180)
+        self.content_stack.get_style_context().add_class('content')
+
         # Sección: OPERACIÓN
         op_label = Gtk.Label(label='OPERACIÓN')
         op_label.get_style_context().add_class('sidebar-section')
@@ -3752,9 +3769,7 @@ class DashboardWindow(Gtk.ApplicationWindow):
         self.content_scroll.get_style_context().add_class('content-scrolled')
         self.main_box.pack_start(self.content_scroll, True, True, 0)
 
-        self.content_area = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        self.content_area.get_style_context().add_class('content')
-        self.content_scroll.add(self.content_area)
+        self.content_scroll.add(self.content_stack)
 
         # ─── Toast / status bar ─────────────────────────────────────
         self.status_bar = Gtk.Box()
@@ -3800,30 +3815,27 @@ class DashboardWindow(Gtk.ApplicationWindow):
         btn.connect('clicked', lambda *_: self.switch_module(key))
         self.sidebar.pack_start(btn, False, False, 1)
         self.module_buttons[key] = btn
-        # Instanciar módulo — su .box será el contenido del área principal
+        # Instanciar módulo y registrarlo en el stack -- su .box es un hijo
+        # nombrado más, Gtk.Stack decide solo cuál mostrar
         self.modules[key] = ModuleClass(self)
+        self.content_stack.add_named(self.modules[key].box, key)
+        self.modules[key].box.show_all()
 
     def switch_module(self, name):
-        """Cambia el módulo visible en el área de contenido."""
+        """Cambia el módulo visible en el área de contenido (crossfade nativo)."""
         if name not in self.modules:
             return
-        # Limpiar actual
-        for child in self.content_area.get_children():
-            self.content_area.remove(child)
         # Marcar botón activo
         for key, btn in self.module_buttons.items():
             if key == name:
                 btn.get_style_context().add_class('active')
             else:
                 btn.get_style_context().remove_class('active')
-        # Mostrar nuevo
-        mod = self.modules[name]
-        self.content_area.pack_start(mod.box, True, True, 0)
-        mod.box.show_all()
+        self.content_stack.set_visible_child_name(name)
         self.current_module = name
         # Refrescar el módulo recién mostrado
         try:
-            mod.refresh()
+            self.modules[name].refresh()
         except Exception as e:
             print(f'[dashboard] refresh {name}: {e}', file=sys.stderr)
 
