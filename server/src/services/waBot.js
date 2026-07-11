@@ -521,6 +521,12 @@ function scheduleReconnect() {
         { attempts: reconnectAttempts },
         '[bot] reintentos de reconexión agotados — se requiere reinicio manual (POST /api/bot/resume)'
       );
+      // La alerta por WhatsApp queda encolada y se envia apenas el bot
+      // vuelva a conectar (degradacion aceptable -- sin WhatsApp activo no
+      // hay otro canal para avisar de inmediato) -- SIEMPRE queda visible
+      // igual en el panel de alertas del dashboard sin depender del bot.
+      try { require('../utils/securityAlert').raiseAlert('bot_disconnected', `Bot de WhatsApp perdió la sesión tras ${reconnectAttempts} reintentos — requiere reinicio manual`); }
+      catch (e) { logger.error({ err: e.message }, '[bot] error registrando alerta de desconexion'); }
     }
     return;
   }

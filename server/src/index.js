@@ -12,7 +12,10 @@ const PORT = process.env.PORT || 3000;
 const HOST = process.env.HOST || '127.0.0.1';
 initDB().then(() => {
   schedulePDFJob();
-  if (process.env.NODE_ENV !== 'test') require('./services/securityMonitor').startSecurityMonitor();
+  if (process.env.NODE_ENV !== 'test') {
+    require('./services/securityMonitor').startSecurityMonitor();
+    require('./services/backupScheduler').scheduleBackupJob();
+  }
   const server = app.listen(PORT, HOST, async () => {
     logger.info(`Servidor corriendo en ${HOST}:${PORT}`);
     if (process.env.BOT_ENABLED === 'true') {
