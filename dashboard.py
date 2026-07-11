@@ -1138,7 +1138,10 @@ class MonitorModule:
         self.box.pack_start(charts_title, False, False, 0)
 
         charts_box = Gtk.Box(spacing=12, homogeneous=True)
-        self.box.pack_start(charts_box, True, True, 0)
+        # False,False: los charts tienen su propio alto fijo (height=200) --
+        # con expand=True heredaban toda la altura sobrante del módulo y se
+        # veían desproporcionados.
+        self.box.pack_start(charts_box, False, False, 0)
 
         self.chart_orders = Chart('Pedidos por día', 'bar', hex_to_rgb(BRAND), height=200)
         self.chart_msgs   = Chart('Mensajes por día', 'line', hex_to_rgb(INFO), height=200)
@@ -1319,7 +1322,9 @@ class SalesModule:
 
         # ─── Fila: gráfico ingresos + dona estados ───────────────────
         charts_row = Gtk.Box(spacing=12, homogeneous=False)
-        self.box.pack_start(charts_row, True, True, 0)
+        # False,False por la misma razón que en Monitoreo: alto fijo por
+        # diseño (height=220), no debe estirarse con espacio sobrante.
+        self.box.pack_start(charts_row, False, False, 0)
 
         # Gráfico de barras 7 días (más ancho)
         left_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
@@ -1361,12 +1366,13 @@ class SalesModule:
         self.top_store = Gtk.ListStore(int, str, int, str)
         tree = Gtk.TreeView(model=self.top_store)
         tree.get_style_context().add_class('mono')
-        for i, (colname, _) in enumerate([('#', 40), ('Producto', 280), ('Unidades', 100), ('Ingresos estimado', 140)]):
+        for i, (colname, w) in enumerate([('#', 40), ('Producto', 280), ('Unidades', 100), ('Ingresos estimado', 140)]):
             renderer = Gtk.CellRendererText()
             col = Gtk.TreeViewColumn(colname, renderer, text=i)
             if i in (0, 2):
                 renderer.set_property('xalign', 1.0)
             col.set_resizable(True)
+            col.set_min_width(w)
             tree.append_column(col)
         scroll = Gtk.ScrolledWindow()
         scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
@@ -1533,10 +1539,11 @@ class SalesModule:
         store = Gtk.ListStore(str, str, str, int, str)
         tree = Gtk.TreeView(model=store)
         tree.get_style_context().add_class('mono')
-        for i, (colname, _) in enumerate([('#Pedido', 70), ('Cliente', 150), ('Producto', 200), ('Cant.', 60), ('Subtotal', 100)]):
+        for i, (colname, w) in enumerate([('#Pedido', 70), ('Cliente', 150), ('Producto', 200), ('Cant.', 60), ('Subtotal', 100)]):
             renderer = Gtk.CellRendererText()
             col = Gtk.TreeViewColumn(colname, renderer, text=i)
             col.set_resizable(True)
+            col.set_min_width(w)
             tree.append_column(col)
         for oid, customer, product, qty, subtotal, delivered_at in orders:
             hora = (delivered_at or '')[11:16]
@@ -3725,6 +3732,13 @@ class DashboardWindow(Gtk.ApplicationWindow):
         self.content_stack = Gtk.Stack()
         self.content_stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
         self.content_stack.set_transition_duration(180)
+        # Sin esto Gtk.Stack mide TODOS los módulos por el más alto de los
+        # 15 (tamaño homogéneo por defecto) y le regala esa altura sobrante
+        # a cualquier hijo con expand=True dentro de cada módulo -- los
+        # gráficos terminaban ocupando el doble o triple de su alto real.
+        # Cada módulo ya vive dentro de un ScrolledWindow propio, así que
+        # medirse por su propio contenido es seguro (no se corta nada).
+        self.content_stack.set_vhomogeneous(False)
         self.content_stack.get_style_context().add_class('content')
 
         # Sección: OPERACIÓN
@@ -3798,8 +3812,30 @@ class DashboardWindow(Gtk.ApplicationWindow):
 
         # Los módulos ya fueron inicializados en _add_module()
 
-        # Switch al primer módulo
-        self.switch_module('monitor')
+        # Switch al primer módulo -- recién cuando la ventana esté REALMENTE
+        # mapeada (evento map-event, no idle_add ni una llamada sincrónica
+        # en __init__: ambas corren antes de que exista una ventana X real).
+        # Llamado demasiado temprano, Gtk.Stack deja bien puesta la
+        # propiedad visible-child-name (y el botón del sidebar queda
+        # marcado activo) pero lo que se pinta en pantalla se queda
+        # mostrando el primer hijo agregado ('monitor'), sin importar cuál
+        # se pidió -- por eso 'monitor' siempre "funcionaba" (coincidía por
+        # accidente) y cualquier otro módulo no. Sin transición para este
+        # primer despliegue (nada que crossfadear todavía); CROSSFADE queda
+        # activo para la navegación real del usuario desde acá en adelante.
+        self.content_stack.set_transition_type(Gtk.StackTransitionType.NONE)
+        self._initial_module_shown = False
+        def _show_initial_module(*_a):
+            # map-event puede repetirse (minimizar/restaurar) -- solo debe
+            # forzar 'monitor' la primerísima vez, nunca pisar la
+            # navegación real del usuario en restauraciones posteriores.
+            if self._initial_module_shown:
+                return False
+            self._initial_module_shown = True
+            self.switch_module('monitor')
+            self.content_stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
+            return False
+        self.connect('map-event', _show_initial_module)
 
         # Auto-refresh cada 10s
         GLib.timeout_add_seconds(10, self._tick)
@@ -3826,10 +3862,16 @@ class DashboardWindow(Gtk.ApplicationWindow):
         self.sidebar.pack_start(btn, False, False, 1)
         self.module_buttons[key] = btn
         # Instanciar módulo y registrarlo en el stack -- su .box es un hijo
-        # nombrado más, Gtk.Stack decide solo cuál mostrar
+        # nombrado más, Gtk.Stack decide solo cuál mostrar. OJO: no llamar
+        # show_all() acá -- Gtk.Stack controla la visibilidad de sus hijos
+        # el mismo (oculta todos menos el activo); forzar visible=True a
+        # mano en cada uno pelea con esa lógica interna y el módulo que
+        # terminaba "ganando" como visible salía no-determinista entre
+        # corridas (una vez Pedidos, otra Conexiones, nunca el que se
+        # pedía con switch_module). El show_all() de la ventana en main()
+        # ya se encarga de revelar el árbol completo al final.
         self.modules[key] = ModuleClass(self)
         self.content_stack.add_named(self.modules[key].box, key)
-        self.modules[key].box.show_all()
 
     def switch_module(self, name):
         """Cambia el módulo visible en el área de contenido (crossfade nativo)."""
