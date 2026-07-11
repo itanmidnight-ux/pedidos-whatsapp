@@ -3,6 +3,7 @@ const express = require('express');
 const router  = express.Router();
 const { staffAuth, adminAuth } = require('../middleware/auth');
 const { getDB } = require('../db/database');
+const { notifyOrderStatus } = require('../utils/orderNotify');
 
 const ACTIVE_STATUSES = "'pending','claimed','en_camino'";
 
@@ -174,7 +175,9 @@ router.put('/:id/en_camino', staffAuth, (req, res) => {
 
   const claimed = o.claimed_by || req.user.id;
   db.prepare("UPDATE orders SET status='en_camino', claimed_by=? WHERE id=?").run(claimed, id);
-  res.json(findOrder(db, id));
+  const full = findOrder(db, id);
+  notifyOrderStatus(full);
+  res.json(full);
 });
 
 // PUT /api/orders/:id/deliver — mark entregado (worker/admin only)
@@ -186,7 +189,9 @@ router.put('/:id/deliver', staffAuth, (req, res) => {
   // se guardaba en hora local sin marca de zona, y julianday() las restaba
   // como si ambas fueran UTC, dando tiempos de entrega negativos.
   db.prepare(`UPDATE orders SET status='entregado', delivered_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`).run(id);
-  res.json(findOrder(db, id));
+  const full = findOrder(db, id);
+  notifyOrderStatus(full);
+  res.json(full);
 });
 
 // PUT /api/orders/:id/cancel — admin only
@@ -199,7 +204,9 @@ router.put('/:id/cancel', adminAuth, (req, res) => {
   const o  = db.prepare('SELECT id FROM orders WHERE id=?').get(id);
   if (!o) return res.status(404).json({ error: 'Pedido no encontrado' });
   db.prepare("UPDATE orders SET status='cancelled', cancel_reason=? WHERE id=?").run(reason.trim(), id);
-  res.json(findOrder(db, id));
+  const full = findOrder(db, id);
+  notifyOrderStatus(full);
+  res.json(full);
 });
 
 // PUT /api/orders/:id/comment
