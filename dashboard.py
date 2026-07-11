@@ -68,9 +68,19 @@ INFO        = '#1B3A6B'   # info / charts secundarios
 # Esquinas 6-10px, padding generoso, transiciones 150-200ms, sombras suaves
 # de elevación en cards (soportadas en GTK3 3.22+), jerarquía tipográfica clara.
 CSS = f"""
+/* Reset universal -- el tema del sistema (Kali-Dark) mete gradientes,
+   sombras y text-shadow propios en botones/headerbar/entries que una
+   simple background-color no tapa (background-image se dibuja ENCIMA
+   del background-color). Sin este reset se ve un remanente oscuro
+   detrás de cada widget aunque el color de fondo ya sea claro. Los
+   pocos casos que sí quieren sombra/gradiente (stat-card, bot-frame,
+   etc.) la redeclaran explícitamente más abajo y ganan por especificidad. */
 * {{
     font-family: 'Cantarell', 'Inter', 'Fira Sans', 'Segoe UI', sans-serif;
     color: {FG};
+    background-image: none;
+    box-shadow: none;
+    text-shadow: none;
 }}
 .mono {{ font-family: 'Fira Code', 'JetBrains Mono', 'DejaVu Sans Mono', monospace; }}
 
