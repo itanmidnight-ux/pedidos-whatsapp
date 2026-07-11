@@ -19,7 +19,7 @@ import gi
 gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk, Gdk, GLib, GdkPixbuf
 import cairo
-import subprocess, sqlite3, os, re, sys, datetime, secrets, json, base64
+import subprocess, sqlite3, os, re, sys, datetime, secrets, json, base64, threading
 import urllib.request, urllib.error
 
 # ─── Configuración de rutas y servicios ─────────────────────────────────────────
@@ -590,6 +590,22 @@ def http_delete(path, data=None, timeout=5):
             return json.loads(resp.read().decode('utf-8'))
     except Exception:
         return None
+
+
+def run_in_background(work_fn, on_done=None):
+    """Ejecuta work_fn() (típicamente una llamada http_*) en un hilo aparte y
+    entrega el resultado a on_done(resultado) en el hilo principal de GTK vía
+    GLib.idle_add -- sin esto, cada refresh/click con red lenta o el servidor
+    caído congela toda la ventana por el timeout completo (hasta 30s en
+    exportes)."""
+    def _worker():
+        try:
+            result = work_fn()
+        except Exception:
+            result = None
+        if on_done:
+            GLib.idle_add(lambda: (on_done(result), False)[1])
+    threading.Thread(target=_worker, daemon=True).start()
 
 
 # Cache del token admin (renovado cada 6h)
@@ -1186,21 +1202,9 @@ class MonitorModule:
         self._set_dot(self.dot_tunnel, tactive == 'active', failed=(tactive == 'failed'))
         self.card_tunnel.set_sub(self._current_tunnel_url or 'Tailscale Funnel')
 
-        # Bot WhatsApp (vía API HTTP)
-        bot = http_get('/api/bot/status')
-        if bot:
-            ready = bot.get('ready', False)
-            self.card_bot.set_value('CONECTADO' if ready else ('QR PENDIENTE' if bot.get('hasQR') else 'INACTIVO'))
-            self._set_dot(self.dot_bot, ready, failed=bot.get('reconnectExhausted', False))
-            pending_q = bot.get('pendingQueue', 0)
-            if pending_q:
-                self.card_bot.set_sub(f'Cola: {pending_q} mensaje(s) en espera')
-            else:
-                self.card_bot.set_sub('Sin cola pendiente')
-        else:
-            self.card_bot.set_value('— API no disponible')
-            self.card_bot.set_sub('El servidor no responde o credenciales inválidas')
-            self._set_dot(self.dot_bot, False)
+        # Bot WhatsApp (vía API HTTP) -- en background: no congelar la UI si
+        # el servidor tarda o está caído.
+        run_in_background(lambda: http_get('/api/bot/status'), self._apply_bot_status)
 
         # Uptime
         since = sh(f"systemctl show {SERVICE} -p ActiveEnterTimestamp --value")
@@ -1230,6 +1234,21 @@ class MonitorModule:
         # Gráficos
         self._refresh_chart(self.chart_orders, 'orders', 'requested_at')
         self._refresh_chart(self.chart_msgs, 'messages', 'created_at')
+
+    def _apply_bot_status(self, bot):
+        if bot:
+            ready = bot.get('ready', False)
+            self.card_bot.set_value('CONECTADO' if ready else ('QR PENDIENTE' if bot.get('hasQR') else 'INACTIVO'))
+            self._set_dot(self.dot_bot, ready, failed=bot.get('reconnectExhausted', False))
+            pending_q = bot.get('pendingQueue', 0)
+            if pending_q:
+                self.card_bot.set_sub(f'Cola: {pending_q} mensaje(s) en espera')
+            else:
+                self.card_bot.set_sub('Sin cola pendiente')
+        else:
+            self.card_bot.set_value('— API no disponible')
+            self.card_bot.set_sub('El servidor no responde o credenciales inválidas')
+            self._set_dot(self.dot_bot, False)
 
     def _set_dot(self, dot, active, failed=False):
         ctx = dot.get_style_context()
@@ -1696,8 +1715,11 @@ class OrdersModule:
         return card
 
     def _action(self, oid, action):
-        """Ejecuta acción sobre pedido vía API HTTP."""
-        result = http_put(f'/api/orders/{oid}/{action}', {})
+        """Ejecuta acción sobre pedido vía API HTTP (en background)."""
+        run_in_background(lambda: http_put(f'/api/orders/{oid}/{action}', {}),
+                           lambda result: self._on_action_done(oid, action, result))
+
+    def _on_action_done(self, oid, action, result):
         if result is None:
             self._toast(f'Error: no se pudo {action} el pedido #{oid}')
         else:
@@ -1723,10 +1745,13 @@ class OrdersModule:
         if dialog.run() == Gtk.ResponseType.OK:
             reason = entry.get_text().strip()
             if reason:
-                result = http_put(f'/api/orders/{oid}/cancel', {'reason': reason})
-                self._toast(f'#{oid} cancelado' if result else f'Error al cancelar #{oid}')
-                GLib.timeout_add(800, lambda: (self.refresh(), False)[1])
+                run_in_background(lambda: http_put(f'/api/orders/{oid}/cancel', {'reason': reason}),
+                                   lambda result: self._on_cancel_done(oid, result))
         dialog.destroy()
+
+    def _on_cancel_done(self, oid, result):
+        self._toast(f'#{oid} cancelado' if result else f'Error al cancelar #{oid}')
+        GLib.timeout_add(800, lambda: (self.refresh(), False)[1])
 
     def _toast(self, msg):
         # Usamos la barra de estado del parent
@@ -1868,7 +1893,9 @@ class BotModule:
         right_frame.pack_start(self.qr_status, False, False, 0)
 
     def refresh(self):
-        bot = http_get('/api/bot/status')
+        run_in_background(lambda: http_get('/api/bot/status'), self._apply_status)
+
+    def _apply_status(self, bot):
         if bot is None:
             self.card_status.set_value('API no disponible')
             self.card_phone.set_value('—')
@@ -1940,7 +1967,9 @@ class BotModule:
         self._refresh_bot_log()
 
     def _refresh_bot_log(self):
-        data = http_get('/api/bot/logs?limit=60')
+        run_in_background(lambda: http_get('/api/bot/logs?limit=60'), self._apply_bot_log)
+
+    def _apply_bot_log(self, data):
         logs = (data or {}).get('logs', [])
         lines = []
         for entry in logs:
@@ -1953,7 +1982,10 @@ class BotModule:
         self.bot_log_view.scroll_to_mark(mark, 0, False, 0, 0)
 
     def _load_qr(self):
-        """Descarga el QR como PNG desde /api/bot/qr y lo muestra."""
+        """Descarga el QR como PNG desde /api/bot/qr (en background) y lo muestra."""
+        run_in_background(self._fetch_qr_png, self._apply_qr)
+
+    def _fetch_qr_png(self):
         url = API_BASE + '/api/bot/qr'
         api_key = env_get('API_KEY')
         req = urllib.request.Request(url, headers={
@@ -1962,9 +1994,20 @@ class BotModule:
         })
         try:
             with urllib.request.urlopen(req, timeout=5) as resp:
-                png_data = resp.read()
+                return ('ok', resp.read())
+        except urllib.error.HTTPError as e:
+            return ('http_error', e.code)
+        except Exception as e:
+            return ('error', str(e))
+
+    def _apply_qr(self, result):
+        if result is None:
+            self._set_qr_status('Error al descargar QR', is_error=True)
+            return
+        kind, payload = result
+        if kind == 'ok':
             loader = GdkPixbuf.PixbufLoader()
-            loader.write(png_data)
+            loader.write(payload)
             loader.close()
             pixbuf = loader.get_pixbuf()
             if pixbuf:
@@ -1972,13 +2015,13 @@ class BotModule:
                 scaled = pixbuf.scale_simple(260, 260, GdkPixbuf.InterpType.BILINEAR)
                 self.qr_image.set_from_pixbuf(scaled)
                 self._set_qr_status('QR listo — escanea pronto (expira en ~20s)')
-        except urllib.error.HTTPError as e:
-            if e.code == 404:
+        elif kind == 'http_error':
+            if payload == 404:
                 self._set_qr_status('No hay QR pendiente — bot ya conectado', is_error=False)
             else:
-                self._set_qr_status(f'Error HTTP {e.code} al descargar QR', is_error=True)
-        except Exception as e:
-            self._set_qr_status(f'Error: {str(e)[:60]}', is_error=True)
+                self._set_qr_status(f'Error HTTP {payload} al descargar QR', is_error=True)
+        else:
+            self._set_qr_status(f'Error: {str(payload)[:60]}', is_error=True)
 
     def _set_qr_status(self, text, is_error=False):
         self.qr_status.set_text(text)
@@ -2015,26 +2058,33 @@ class BotModule:
             phone = entry.get_text().strip()
             if phone:
                 self.bot_status_label.set_text('Guardando número…')
-                result = http_post('/api/bot/configure', {'phone': phone})
-                if result and result.get('ok'):
-                    self.bot_status_label.set_text('Número guardado. Generando QR…')
-                else:
-                    err = (result or {}).get('error', 'error desconocido')
-                    self.bot_status_label.set_text(f'Error: {err}')
-                GLib.timeout_add(2000, lambda: (self.refresh(), False)[1])
+                run_in_background(lambda: http_post('/api/bot/configure', {'phone': phone}),
+                                   self._on_configure_done)
         dialog.destroy()
+
+    def _on_configure_done(self, result):
+        if result and result.get('ok'):
+            self.bot_status_label.set_text('Número guardado. Generando QR…')
+        else:
+            err = (result or {}).get('error', 'error desconocido')
+            self.bot_status_label.set_text(f'Error: {err}')
+        GLib.timeout_add(2000, lambda: (self.refresh(), False)[1])
 
     def _toggle_pause(self):
         endpoint = '/api/bot/resume' if self._paused else '/api/bot/pause'
         self.bot_status_label.set_text('Reanudando…' if self._paused else 'Pausando…')
-        result = http_post(endpoint, {})
+        run_in_background(lambda: http_post(endpoint, {}), self._on_pause_done)
+
+    def _on_pause_done(self, result):
         if result is None or not result.get('ok'):
             self.bot_status_label.set_text(f"Error: {(result or {}).get('error', 'no se pudo cambiar el estado')}")
         GLib.timeout_add(1200, lambda: (self.refresh(), False)[1])
 
     def _retry(self):
         self.bot_status_label.set_text('Reintentando conexión…')
-        result = http_post('/api/bot/resume', {})
+        run_in_background(lambda: http_post('/api/bot/resume', {}), self._on_retry_done)
+
+    def _on_retry_done(self, result):
         if result is None or not result.get('ok'):
             self.bot_status_label.set_text(f"Error: {(result or {}).get('error', 'no se pudo reconectar')}")
         GLib.timeout_add(1500, lambda: (self.refresh(), False)[1])
@@ -2051,10 +2101,12 @@ class BotModule:
         resp = dialog.run()
         dialog.destroy()
         if resp == Gtk.ResponseType.YES:
-            result = http_post('/api/bot/logout', {})
-            self.bot_status_label.set_text('Desvinculado.' if result and result.get('ok')
-                                           else 'Error al desvincular')
-            GLib.timeout_add(1000, lambda: (self.refresh(), False)[1])
+            run_in_background(lambda: http_post('/api/bot/logout', {}), self._on_logout_done)
+
+    def _on_logout_done(self, result):
+        self.bot_status_label.set_text('Desvinculado.' if result and result.get('ok')
+                                       else 'Error al desvincular')
+        GLib.timeout_add(1000, lambda: (self.refresh(), False)[1])
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -2118,7 +2170,9 @@ class PaymentsModule:
         frame.pack_start(self.status_label, False, False, 8)
 
     def refresh(self):
-        data = http_get('/api/payments/nequi')
+        run_in_background(lambda: http_get('/api/payments/nequi'), self._apply_refresh)
+
+    def _apply_refresh(self, data):
         if data is None:
             self.card_status.set_value('API no disponible')
             self.card_phone.set_value('—')
@@ -2170,19 +2224,25 @@ class PaymentsModule:
             name  = name_entry.get_text().strip()
             if phone and name:
                 self.status_label.set_text('Guardando...')
-                result = http_post('/api/payments/nequi/connect', {'phone': phone, 'account_name': name})
-                if result and result.get('ok'):
-                    self.status_label.set_text('Cuenta Nequi conectada.')
-                else:
-                    err = (result or {}).get('error', 'error desconocido')
-                    self.status_label.set_text(f'Error: {err}')
-                GLib.timeout_add(800, lambda: (self.refresh(), False)[1])
+                run_in_background(
+                    lambda: http_post('/api/payments/nequi/connect', {'phone': phone, 'account_name': name}),
+                    self._on_connect_done)
         dialog.destroy()
+
+    def _on_connect_done(self, result):
+        if result and result.get('ok'):
+            self.status_label.set_text('Cuenta Nequi conectada.')
+        else:
+            err = (result or {}).get('error', 'error desconocido')
+            self.status_label.set_text(f'Error: {err}')
+        GLib.timeout_add(800, lambda: (self.refresh(), False)[1])
 
     def _toggle_pause(self):
         endpoint = '/api/payments/nequi/resume' if self.btn_pause.get_label() == 'Reanudar' else '/api/payments/nequi/pause'
         self.status_label.set_text('Actualizando...')
-        result = http_post(endpoint, {})
+        run_in_background(lambda: http_post(endpoint, {}), self._on_toggle_pause_done)
+
+    def _on_toggle_pause_done(self, result):
         if result is None or not result.get('ok'):
             self.status_label.set_text(f"Error: {(result or {}).get('error', 'no se pudo cambiar el estado')}")
         GLib.timeout_add(600, lambda: (self.refresh(), False)[1])
@@ -2197,10 +2257,12 @@ class PaymentsModule:
         resp = dialog.run()
         dialog.destroy()
         if resp == Gtk.ResponseType.YES:
-            result = http_post('/api/payments/nequi/disconnect', {})
-            self.status_label.set_text('Desconectado.' if result and result.get('ok')
-                                       else 'Error al desconectar')
-            GLib.timeout_add(600, lambda: (self.refresh(), False)[1])
+            run_in_background(lambda: http_post('/api/payments/nequi/disconnect', {}), self._on_disconnect_done)
+
+    def _on_disconnect_done(self, result):
+        self.status_label.set_text('Desconectado.' if result and result.get('ok')
+                                   else 'Error al desconectar')
+        GLib.timeout_add(600, lambda: (self.refresh(), False)[1])
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -2867,7 +2929,9 @@ class DataModule:
         dialog.destroy()
         if response != Gtk.ResponseType.YES:
             return
-        result = http_delete('/api/orders/bulk', {'ids': ids})
+        run_in_background(lambda: http_delete('/api/orders/bulk', {'ids': ids}), self._on_delete_done)
+
+    def _on_delete_done(self, result):
         if result and result.get('success'):
             self.parent.show_toast(f'{result.get("deleted", 0)} pedido(s) eliminado(s)')
             self.refresh()
@@ -2887,28 +2951,27 @@ class DataModule:
         if not rng: return
         from_date, to_date = rng
         self.parent.show_toast('Generando reporte, esto puede tardar unos segundos...')
-        result = http_post('/api/reports/export-range', {'from': from_date, 'to': to_date}, timeout=30)
-        if result and result.get('success'):
-            filepath = result.get('filepath')
-            self.parent.show_toast(f'Reporte generado: {result.get("filename")}')
-            if filepath and os.path.exists(filepath):
-                sh(f'xdg-open "{filepath}" 2>/dev/null &')
-        else:
-            self.parent.show_toast('Error generando el reporte')
+        run_in_background(
+            lambda: http_post('/api/reports/export-range', {'from': from_date, 'to': to_date}, timeout=30),
+            lambda result: self._on_export_done(result, 'reporte'))
 
     def _export_excel(self):
         rng = self._get_valid_range()
         if not rng: return
         from_date, to_date = rng
         self.parent.show_toast('Generando Excel, esto puede tardar unos segundos...')
-        result = http_post('/api/reports/export-range-excel', {'from': from_date, 'to': to_date}, timeout=30)
+        run_in_background(
+            lambda: http_post('/api/reports/export-range-excel', {'from': from_date, 'to': to_date}, timeout=30),
+            lambda result: self._on_export_done(result, 'Excel'))
+
+    def _on_export_done(self, result, label):
         if result and result.get('success'):
             filepath = result.get('filepath')
-            self.parent.show_toast(f'Excel generado: {result.get("filename")}')
+            self.parent.show_toast(f'{label.capitalize()} generado: {result.get("filename")}')
             if filepath and os.path.exists(filepath):
                 sh(f'xdg-open "{filepath}" 2>/dev/null &')
         else:
-            self.parent.show_toast('Error generando el Excel')
+            self.parent.show_toast(f'Error generando el {label}')
 
 
 # ══════════════════════════════════════════════════════════════════════════════
