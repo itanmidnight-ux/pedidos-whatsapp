@@ -20,7 +20,7 @@ import gi
 gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk, Gdk, GLib, GdkPixbuf
 import cairo
-import subprocess, sqlite3, os, re, sys, datetime, secrets, json, base64, threading
+import subprocess, sqlite3, os, re, sys, datetime, secrets, json, base64, threading, math
 import urllib.request, urllib.error
 
 # ─── Configuración de rutas y servicios ─────────────────────────────────────────
@@ -546,6 +546,121 @@ def hex_to_rgb(h):
         return tuple(int(h[i:i + 2], 16) / 255 for i in (0, 2, 4))
     except Exception:
         return (0.2, 0.3, 0.1)
+
+
+# ─── Mapa estático en vivo (tiles OSM compuestos a mano) ────────────────────────
+# Sin webkit2gtk instalado en el sistema, un WebView con Leaflet no es viable sin
+# agregar una dependencia nueva al deploy. En cambio: se descargan los mismos
+# tiles publicos que usa cualquier mapa web (proyeccion Web Mercator estandar,
+# "slippy map"), se componen a mano con Cairo y se dibuja un pin por persona --
+# mismo patron que ya usa _load_qr() (fetch de imagen + Gtk.Image).
+_MAP_TILE_SIZE = 256
+_MAP_TILE_URL = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png'
+_MAP_TILE_CACHE = {}  # (z,x,y) -> bytes PNG, valido mientras corra el proceso
+
+
+def _map_lonlat_to_pixel(lon, lat, zoom):
+    """Proyeccion Web Mercator estandar -- lon/lat a pixel global en ese zoom."""
+    n = 2 ** zoom
+    x = (lon + 180.0) / 360.0 * n * _MAP_TILE_SIZE
+    lat_rad = math.radians(max(min(lat, 85.05), -85.05))
+    y = (1.0 - math.log(math.tan(lat_rad) + 1 / math.cos(lat_rad)) / math.pi) / 2.0 * n * _MAP_TILE_SIZE
+    return x, y
+
+
+def _map_fetch_tile(z, x, y):
+    key = (z, x, y)
+    if key in _MAP_TILE_CACHE:
+        return _MAP_TILE_CACHE[key]
+    n = 2 ** z
+    if not (0 <= x < n and 0 <= y < n):
+        return None
+    req = urllib.request.Request(
+        _MAP_TILE_URL.format(z=z, x=x, y=y),
+        headers={'User-Agent': 'MonserrathDashboard/1.0 (panel interno, uso propio)'})
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = resp.read()
+        _MAP_TILE_CACHE[key] = data
+        return data
+    except Exception:
+        return None
+
+
+def _map_draw_pin(cr, x, y):
+    cr.set_source_rgb(*hex_to_rgb(BRAND))
+    cr.arc(x, y, 7, 0, 2 * math.pi)
+    cr.fill()
+    cr.set_source_rgb(1, 1, 1)
+    cr.set_line_width(2)
+    cr.arc(x, y, 7, 0, 2 * math.pi)
+    cr.stroke()
+
+
+def render_static_map(points, width=640, height=220):
+    """points: lista de (label, lat, lng). Devuelve un GdkPixbuf.Pixbuf con
+    el mapa compuesto + un pin por punto, o None si no hay puntos."""
+    if not points:
+        return None
+
+    lats = [p[1] for p in points]
+    lngs = [p[2] for p in points]
+    min_lat, max_lat = min(lats), max(lats)
+    min_lng, max_lng = min(lngs), max(lngs)
+    # Si todos los puntos coinciden (o hay uno solo), dar un margen fijo en
+    # vez de una caja de ancho cero (que rompería el calculo de zoom).
+    if max_lat - min_lat < 0.002:
+        min_lat -= 0.01; max_lat += 0.01
+    if max_lng - min_lng < 0.002:
+        min_lng -= 0.01; max_lng += 0.01
+    center_lat = (min_lat + max_lat) / 2
+    center_lng = (min_lng + max_lng) / 2
+
+    padding_px = 40  # margen visual para que los pines no queden pegados al borde
+    zoom = 2
+    for z in range(16, 1, -1):
+        x1, y1 = _map_lonlat_to_pixel(min_lng, max_lat, z)
+        x2, y2 = _map_lonlat_to_pixel(max_lng, min_lat, z)
+        if (x2 - x1) <= (width - 2 * padding_px) and (y2 - y1) <= (height - 2 * padding_px):
+            zoom = z
+            break
+
+    center_px, center_py = _map_lonlat_to_pixel(center_lng, center_lat, zoom)
+    top_left_x = center_px - width / 2
+    top_left_y = center_py - height / 2
+
+    surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, width, height)
+    cr = cairo.Context(surface)
+    cr.set_source_rgb(0.93, 0.94, 0.95)  # fondo por si algun tile no carga
+    cr.paint()
+
+    first_tx, first_ty = int(top_left_x // _MAP_TILE_SIZE), int(top_left_y // _MAP_TILE_SIZE)
+    last_tx  = int((top_left_x + width) // _MAP_TILE_SIZE)
+    last_ty  = int((top_left_y + height) // _MAP_TILE_SIZE)
+
+    for tx in range(first_tx, last_tx + 1):
+        for ty in range(first_ty, last_ty + 1):
+            data = _map_fetch_tile(zoom, tx, ty)
+            if not data:
+                continue
+            try:
+                loader = GdkPixbuf.PixbufLoader()
+                loader.write(data)
+                loader.close()
+                pixbuf = loader.get_pixbuf()
+            except Exception:
+                continue
+            if not pixbuf:
+                continue
+            Gdk.cairo_set_source_pixbuf(cr, pixbuf, tx * _MAP_TILE_SIZE - top_left_x, ty * _MAP_TILE_SIZE - top_left_y)
+            cr.paint()
+
+    for _label, lat, lng in points:
+        px, py = _map_lonlat_to_pixel(lng, lat, zoom)
+        _map_draw_pin(cr, px - top_left_x, py - top_left_y)
+
+    surface.flush()
+    return Gdk.pixbuf_get_from_surface(surface, 0, 0, width, height)
 
 
 def http_get(path, timeout=4):
@@ -2528,6 +2643,21 @@ class LocationsModule:
         for c in (self.card_total, self.card_reporting, self.card_recent):
             cards.pack_start(c, True, True, 0)
 
+        # ─── Mapa en vivo ─────────────────────────────────────────────
+        map_title = Gtk.Label(label='MAPA EN VIVO', xalign=0)
+        map_title.get_style_context().add_class('section-title')
+        self.box.pack_start(map_title, False, False, 0)
+
+        map_frame = Gtk.Box()
+        map_frame.get_style_context().add_class('frame')
+        self.box.pack_start(map_frame, False, False, 0)
+        self.map_image = Gtk.Image()
+        self.map_image.set_size_request(-1, 220)
+        map_frame.pack_start(self.map_image, True, True, 0)
+        self.map_empty_label = Gtk.Label(label='Sin ubicaciones activas')
+        self.map_empty_label.get_style_context().add_class('empty-state')
+        map_frame.pack_start(self.map_empty_label, True, True, 0)
+
         table_title = Gtk.Label(label='STAFF', xalign=0)
         table_title.get_style_context().add_class('section-title')
         self.box.pack_start(table_title, False, False, 0)
@@ -2587,6 +2717,19 @@ class LocationsModule:
                 pos_str = 'Sin reportar'
                 when_str = '—'
             self.store.append([username, name, role, pos_str, when_str, uid])
+
+        # Mapa en background -- descargar/componer tiles no debe congelar la UI.
+        points = [(name, lat, lng) for _uid, _u, name, _r, lat, lng, _t in rows if lat is not None]
+        run_in_background(lambda: render_static_map(points), self._apply_map)
+
+    def _apply_map(self, pixbuf):
+        if pixbuf is None:
+            self.map_image.hide()
+            self.map_empty_label.show()
+        else:
+            self.map_image.set_from_pixbuf(pixbuf)
+            self.map_image.show()
+            self.map_empty_label.hide()
 
     def _on_row_activated(self, tree, path, column):
         row = tree.get_model()[path]
