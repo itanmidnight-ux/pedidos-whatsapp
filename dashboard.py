@@ -495,6 +495,20 @@ def db_path():
     return p if p else os.path.join(PROJ, 'server', 'pedidos.db')
 
 
+def read_location_history(user_id):
+    """Historial de ubicaciones de un trabajador -- vive en JSON liviano
+    junto a la DB (server/src/services/locationHistory.js), no en
+    staff_locations (esa tabla solo guarda la posición ACTUAL). Devuelve
+    lista de dicts mas reciente primero, o [] si no hay archivo/error."""
+    path = os.path.join(os.path.dirname(db_path()), 'locations', f'{user_id}.json')
+    try:
+        with open(path, encoding='utf-8') as f:
+            history = json.load(f)
+        return list(reversed(history)) if isinstance(history, list) else []
+    except Exception:
+        return []
+
+
 def query(sql, params=()):
     """Query SQLite read-only (mode=ro) — devuelve lista de tuplas o [] si falla."""
     p = db_path()
@@ -2762,10 +2776,8 @@ class LocationsModule:
         hist_title.get_style_context().add_class('section-title')
         box.pack_start(hist_title, False, False, 0)
 
-        history = query("""
-            SELECT lat, lng, accuracy, recorded_at FROM staff_locations
-            WHERE user_id = ? ORDER BY id DESC LIMIT 200
-        """, (user_id,))
+        history = [(h.get('lat'), h.get('lng'), h.get('accuracy'), h.get('recorded_at'))
+                   for h in read_location_history(user_id)[:200]]
 
         store = Gtk.ListStore(str, str, str)
         tree = Gtk.TreeView(model=store)

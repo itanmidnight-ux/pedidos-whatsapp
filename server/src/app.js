@@ -19,13 +19,26 @@ app.use(ipActivityMiddleware);
 if (process.env.NODE_ENV !== 'test') startIpActivityFlusher();
 
 // ── Flutter web ANTES de helmet ──────────────────────────────
+// CSP y los headers cross-origin quedan fuera de helmet aca a proposito:
+// CanvasKit (el renderer de Flutter web) carga .wasm y Web Workers via
+// blob: -- una CSP generica los bloquea, y COOP/COEP/CORP ya se fijan a
+// mano abajo con los valores exactos que CanvasKit necesita. El resto de
+// proteccion de helmet (HSTS, nosniff, X-Frame-Options, oculta
+// X-Powered-By, etc.) si aplica: no afecta la carga de assets.
+const appSecurityHeaders = helmet({
+  contentSecurityPolicy: false,
+  crossOriginEmbedderPolicy: false,
+  crossOriginOpenerPolicy: false,
+  crossOriginResourcePolicy: false,
+});
+
 app.use('/app', (req, res, next) => {
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Cross-Origin-Opener-Policy',   'same-origin');
   res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
   res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
   next();
-}, express.static(path.join(__dirname, 'webapp')));
+}, appSecurityHeaders, express.static(path.join(__dirname, 'webapp')));
 
 // ── Seguridad para el resto (API) ────────────────────────────
 app.use(helmet({

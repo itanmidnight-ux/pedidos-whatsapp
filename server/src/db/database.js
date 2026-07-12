@@ -5,6 +5,7 @@ const path      = require('path');
 const fs        = require('fs');
 const logger    = require('../utils/logger');
 const { runMigrations } = require('./migrations');
+const { archiveLegacyRows } = require('../services/locationHistory');
 
 const DB_PATH    = process.env.DB_PATH || path.join(__dirname, '../../pedidos.db');
 const SALT_ROUNDS = 10;
@@ -41,6 +42,7 @@ async function initDB() {
   const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
   db.exec(schema);
   runMigrations(db);
+  archiveLegacyRows(db);
 
   // Seed users — insert if missing, update display_name + role if changed
   for (const u of SEED_USERS) {

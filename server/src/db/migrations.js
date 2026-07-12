@@ -181,8 +181,9 @@ const MIGRATIONS = [
   // seguridad: saber en que dispositivos entra cada trabajador.
   { name: '050_login_events_device', sql: 'ALTER TABLE login_events ADD COLUMN device_info TEXT' },
   // Ubicacion GPS de staff (worker/admin) -- solo se pide permiso y se
-  // rastrea a ese rol, nunca a clientes. Historico completo (no solo la
-  // ultima posicion) para poder auditar el recorrido si hace falta.
+  // rastrea a ese rol, nunca a clientes. Solo la ULTIMA posicion vive aca
+  // (una fila por user_id, ver services/locationHistory.js) -- el recorrido
+  // completo se guarda aparte en JSON liviano, no en esta tabla.
   { name: '051_staff_locations', sql: `
     CREATE TABLE IF NOT EXISTS staff_locations (
       id         INTEGER PRIMARY KEY AUTOINCREMENT,
