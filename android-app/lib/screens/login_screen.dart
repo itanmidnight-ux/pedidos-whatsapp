@@ -222,6 +222,12 @@ class _LoginScreenState extends State<LoginScreen>
                       style: TextStyle(
                         color: Colors.white70, fontSize: 12, fontWeight: FontWeight.w400,
                         letterSpacing: 0.3)),
+                    // Aire fijo debajo del subtítulo -- sin esto, en ventanas
+                    // anchas y bajas (navegador de escritorio) headerH queda
+                    // chico y la tarjeta de login (que se superpone hacia
+                    // arriba, ver headerH - 30 más abajo) terminaba casi
+                    // pegada a este texto.
+                    const SizedBox(height: 14),
                   ],
                 ),
               ),
@@ -248,7 +254,11 @@ class _LoginScreenState extends State<LoginScreen>
               child: SlideTransition(
                 position: _slideAnim,
                 child: Column(children: [
-                  SizedBox(height: headerH - 30),
+                  // headerH - 16: la tarjeta se superpone un poco al header
+                  // (efecto "tarjeta flotante") -- 16px en vez de 30 para que
+                  // no quede pegada al texto cuando headerH es chico (ventana
+                  // de navegador ancha y baja).
+                  SizedBox(height: headerH - 16),
 
                   // Login card
                   AnimatedBuilder(
