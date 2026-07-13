@@ -641,6 +641,48 @@ harden_firewall() {
 }
 
 # ================================================================
+#  Dependencias del panel de analisis (dashboard.py — GTK3 + WebKit2)
+# ================================================================
+# dashboard.py es una herramienta aparte del servidor (el usuario la abre
+# manualmente, nunca se lanza sola), pero necesita su propio stack de
+# paquetes de SISTEMA (no de npm/pip) para correr: bindings GTK3 de Python,
+# Cairo, y WebKit2 para el mapa interactivo de Ubicaciones (arrastrar/zoom
+# real con Leaflet, en vez del mapa estatico). Se verifica con un import
+# real de Python antes de instalar nada -- en Kali/GNOME de escritorio esto
+# normalmente ya viene con el sistema, instalar de nuevo no hace nada
+# (idempotente) pero en un servidor headless/otra distro sin GUI hace falta.
+dashboard_deps_ok() {
+    python3 -c "
+import gi
+gi.require_version('Gtk', '3.0')
+from gi.repository import Gtk, Gdk, GdkPixbuf
+import cairo
+gi.require_version('WebKit2', '4.1')
+from gi.repository import WebKit2
+" &>/dev/null
+}
+
+install_dashboard_deps() {
+    step "Dependencias del panel de análisis (GTK3 + WebKit2 para el mapa interactivo)"
+    if dashboard_deps_ok; then
+        ok "Ya instaladas (python3-gi, GTK3, WebKit2 con typelib)"
+        return 0
+    fi
+    warn "Faltan dependencias del panel — instalando..."
+    case "$PKG_MGR" in
+        apt)    pkg_install python3-gi python3-gi-cairo gir1.2-gtk-3.0 gir1.2-webkit2-4.1 ;;
+        dnf)    pkg_install python3-gobject gtk3 webkit2gtk4.1 ;;
+        pacman) pkg_install python-gobject python-cairo gtk3 webkit2gtk-4.1 ;;
+        *)      warn "Gestor de paquetes desconocido -- instala manualmente python3-gi/GTK3/WebKit2 (gir1.2-webkit2-4.1 en Debian/Kali)"; return 1 ;;
+    esac
+    if dashboard_deps_ok; then
+        ok "Panel de análisis listo (mapa interactivo disponible)"
+    else
+        warn "No se pudo confirmar la instalación -- el panel seguirá funcionando, el mapa de Ubicaciones cae al modo estático sin WebKit2"
+    fi
+}
+
+# ================================================================
 #  PASO 7 — fail2ban (fuerza bruta SSH)
 # ================================================================
 install_fail2ban() {
@@ -1072,6 +1114,7 @@ main_install() {
         local env_before; env_before=$(md5sum "$ENV_FILE" 2>/dev/null | cut -d' ' -f1)
         install_npm_deps
         configure_env
+        install_dashboard_deps
         local env_after; env_after=$(md5sum "$ENV_FILE" 2>/dev/null | cut -d' ' -f1)
         as_root systemctl start "$NODE_SVC" 2>/dev/null || true
         # Reinicia si cambio el codigo (git pull trajo commits nuevos) O el
@@ -1096,6 +1139,7 @@ main_install() {
     setup_service_user
     install_npm_deps
     configure_env
+    install_dashboard_deps
 
     local port; port=$(env_get PORT); port="${port:-$DEFAULT_PORT}"
 
