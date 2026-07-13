@@ -2,6 +2,7 @@ const express = require('express');
 const router  = express.Router();
 const jwt     = require('jsonwebtoken');
 const bcrypt  = require('bcrypt');
+const crypto  = require('crypto');
 const { getDB } = require('../db/database');
 const { getIP } = require('../utils/ip');
 const { raiseAlert } = require('../utils/securityAlert');
@@ -47,8 +48,9 @@ function clearAttempts(key) {
 
 // ── Helpers ────────────────────────────────────────────────────
 function signToken(user) {
+  const jti = crypto.randomUUID();
   const token = jwt.sign(
-    { id: user.id, username: user.username, role: user.role },
+    { id: user.id, username: user.username, role: user.role, jti },
     process.env.JWT_SECRET,
     { expiresIn: '30d' }
   );
@@ -128,9 +130,17 @@ router.post('/token', (req, res) => {
 // Se actualiza la fila de login_events mas reciente sin salida registrada
 // para saber cuando un trabajador se desconecto (control de asistencia).
 router.post('/logout', require('../middleware/auth').clientAuth, (req, res) => {
+  const db = getDB();
+  // jti viene del token decodificado por el middleware (ver jwtAuth) --
+  // si el token es viejo (pre-deploy, sin jti), no hay nada que revocar
+  // individualmente; expira solo en su ciclo normal de 30 dias.
+  if (req.user.jti) {
+    db.prepare('INSERT OR IGNORE INTO revoked_tokens (jti, user_id) VALUES (?, ?)')
+      .run(req.user.jti, req.user.id);
+  }
   // SQLite estandar no soporta ORDER BY/LIMIT en UPDATE -- se resuelve con
   // subquery para agarrar solo la fila abierta mas reciente de ese usuario.
-  getDB().prepare(`
+  db.prepare(`
     UPDATE login_events SET logged_out_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
     WHERE id = (
       SELECT id FROM login_events

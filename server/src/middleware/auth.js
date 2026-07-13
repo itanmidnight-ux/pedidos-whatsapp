@@ -19,11 +19,17 @@ function jwtAuth(req, res, next) {
   try {
     const payload = jwt.verify(header.slice(7), process.env.JWT_SECRET);
     const { getDB } = require('../db/database');
+    // payload.jti puede no existir en tokens emitidos antes de este cambio --
+    // esos simplemente no son revocables individualmente (expiran solos).
+    if (payload.jti) {
+      const revoked = getDB().prepare('SELECT 1 FROM revoked_tokens WHERE jti = ?').get(payload.jti);
+      if (revoked) return res.status(401).json({ error: 'Sesión cerrada' });
+    }
     const dbUser = getDB().prepare('SELECT id, username, role, display_name, active FROM users WHERE id = ?').get(payload.id);
     if (!dbUser || !dbUser.active)
       return res.status(401).json({ error: 'Cuenta desactivada o inexistente' });
     // Usar rol/estado actual de la DB, no el congelado en el token
-    req.user = { id: dbUser.id, username: dbUser.username, role: dbUser.role, display_name: dbUser.display_name };
+    req.user = { id: dbUser.id, username: dbUser.username, role: dbUser.role, display_name: dbUser.display_name, jti: payload.jti };
     next();
   } catch {
     return res.status(401).json({ error: 'Token inválido o expirado' });

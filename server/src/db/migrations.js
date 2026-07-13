@@ -239,6 +239,12 @@ const MIGRATIONS = [
       reason     TEXT,
       blocked_at TEXT DEFAULT (datetime('now','localtime'))
     )` },
+  { name: '059_revoked_tokens', sql: `
+    CREATE TABLE IF NOT EXISTS revoked_tokens (
+      jti        TEXT PRIMARY KEY,
+      user_id    INTEGER,
+      revoked_at TEXT DEFAULT (datetime('now','localtime'))
+    )` },
 ];
 
 function runMigrations(db) {
