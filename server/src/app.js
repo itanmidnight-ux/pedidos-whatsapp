@@ -4,6 +4,7 @@ const express = require('express');
 const helmet  = require('helmet');
 const cors    = require('cors');
 const rateLimit = require('express-rate-limit');
+const compression = require('compression');
 const path    = require('path');
 const logger = require('./utils/logger');
 const pinoHttp = require('pino-http');
@@ -13,6 +14,7 @@ const app = express();
 // Necesario cuando el servidor está detrás de un proxy (ngrok, nginx, etc.)
 // Sin esto express-rate-limit lanza ERR_ERL_UNEXPECTED_X_FORWARDED_FOR
 app.set('trust proxy', 1);
+app.use(compression());
 
 const { ipActivityMiddleware, startIpActivityFlusher } = require('./middleware/ipActivity');
 app.use(ipActivityMiddleware);
