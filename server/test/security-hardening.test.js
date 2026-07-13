@@ -133,12 +133,25 @@ describe('anti formula-injection en export Excel', () => {
     db.prepare(`INSERT INTO orders (customer_id, product_name, product_price, status, requested_at)
                 VALUES (?, 'Producto test', 20000, 'entregado', datetime('now','localtime'))`).run(customer.lastInsertRowid);
     const { generateRangeReportXLSX } = require('../src/services/excelGenerator');
-    const today = new Date().toISOString().split('T')[0];
-    const filepath = await generateRangeReportXLSX(today, today);
+    // toISOString() da la fecha en UTC -- de noche en Colombia (UTC-5) ya es
+    // "manana" en UTC, y el filtro de rango (que compara contra
+    // datetime('now','localtime') de SQLite, en hora local) quedaba
+    // desalineado. en-CA formatea como YYYY-MM-DD directo, en la zona horaria
+    // real del negocio.
+    const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Bogota' });
+    const filepath = await generateRangeReportXLSX(today, today, ['clientes']);
     const wb = new ExcelJS.Workbook();
     await wb.xlsx.readFile(filepath);
-    const ws = wb.getWorksheet('Pedidos');
-    const clienteCell = ws.getRow(2).getCell(2);
+    const ws = wb.getWorksheet('Clientes');
+    // La hoja se ordena por gastado DESC y la DB del archivo acumula datos de
+    // tests anteriores -- buscar la fila por telefono en vez de asumir una
+    // posicion fija, para no depender del orden relativo con otras filas.
+    let clienteCell = null;
+    ws.eachRow((row, rowNumber) => {
+      if (rowNumber === 1) return;
+      if (row.getCell(2).value === '573009998877') clienteCell = row.getCell(1);
+    });
+    expect(clienteCell).not.toBeNull();
     expect(clienteCell.value.toString().startsWith('=')).toBe(false);
     expect(clienteCell.value.toString()).toContain('cmd');
     fs.unlinkSync(filepath);

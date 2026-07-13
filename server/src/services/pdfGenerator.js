@@ -268,38 +268,137 @@ async function generateDailyPDF() {
   return filepath;
 }
 
-// ── Reporte por rango de fechas (pestaña "Datos" del dashboard) ────────
-// A diferencia de generateDailyPDF: incluye pedidos de CUALQUIER estado
-// (no solo entregados) y TODOS los mensajes del rango, incluidos los ya
-// borrados por el staff (deleted_at) -- el requisito es que el texto de
-// los chats quede disponible para exportar aunque ya no se vea en la app.
-async function generateRangeReportPDF(fromISO, toISO) {
+// ── Reporte por categorias (pestaña "Datos" del dashboard) ─────────────
+// Cada categoria es un dato real de negocio (ventas, empleados, clientes),
+// nunca contenido de chats -- eso es exclusivo de generateDailyPDF, que
+// sigue igual y no se toca aca.
+const CATEGORIES = ['resumen', 'ventas_dia', 'ventas_producto', 'empleados', 'clientes'];
+const CATEGORY_LABELS = {
+  resumen: 'Resumen financiero',
+  ventas_dia: 'Ventas por día',
+  ventas_producto: 'Ventas por producto',
+  empleados: 'Desempeño de empleados',
+  clientes: 'Clientes',
+};
+
+function getFinancialSummary(db, fromISO, toISO) {
+  const row = db.prepare(`
+    SELECT COUNT(*) AS total,
+           COUNT(*) FILTER (WHERE status IN ('entregado','delivered')) AS entregados,
+           COUNT(*) FILTER (WHERE status = 'cancelled') AS cancelados,
+           COUNT(*) FILTER (WHERE is_fiado = 1) AS fiados
+    FROM orders WHERE date(requested_at,'localtime') BETWEEN ? AND ?
+  `).get(fromISO, toISO);
+  const ingresos = db.prepare(`
+    SELECT COALESCE(SUM(oi.product_price*oi.quantity),0) AS t
+    FROM orders o JOIN order_items oi ON oi.order_id=o.id
+    WHERE o.status IN ('entregado','delivered') AND date(o.requested_at,'localtime') BETWEEN ? AND ?
+  `).get(fromISO, toISO).t;
+  const avg = db.prepare(`
+    SELECT COALESCE(AVG(t),0) AS a FROM (
+      SELECT SUM(oi.product_price*oi.quantity) t FROM orders o
+      JOIN order_items oi ON oi.order_id=o.id
+      WHERE o.status IN ('entregado','delivered') AND date(o.requested_at,'localtime') BETWEEN ? AND ?
+      GROUP BY o.id)
+  `).get(fromISO, toISO).a;
+  return { ...row, ingresos, ticket_promedio: avg };
+}
+
+function getSalesByDay(db, fromISO, toISO) {
+  return db.prepare(`
+    SELECT date(o.delivered_at,'localtime') AS dia,
+           COUNT(*) AS pedidos,
+           SUM(oi.product_price*oi.quantity) AS ingresos
+    FROM orders o JOIN order_items oi ON oi.order_id=o.id
+    WHERE o.status IN ('entregado','delivered') AND date(o.delivered_at,'localtime') BETWEEN ? AND ?
+    GROUP BY dia ORDER BY dia ASC
+  `).all(fromISO, toISO);
+}
+
+function getSalesByProduct(db, fromISO, toISO) {
+  return db.prepare(`
+    SELECT oi.product_name AS producto,
+           SUM(oi.quantity) AS unidades,
+           SUM(oi.product_price*oi.quantity) AS ingresos
+    FROM orders o JOIN order_items oi ON oi.order_id=o.id
+    WHERE o.status IN ('entregado','delivered') AND date(o.requested_at,'localtime') BETWEEN ? AND ?
+    GROUP BY oi.product_name ORDER BY ingresos DESC
+  `).all(fromISO, toISO);
+}
+
+function getEmployeePerformance(db, fromISO, toISO) {
+  return db.prepare(`
+    SELECT u.username, COALESCE(u.display_name, u.username) AS nombre,
+           COUNT(*) AS entregados,
+           ROUND(AVG((julianday(o.delivered_at) - julianday(o.requested_at)) * 24 * 60)) AS minutos_prom
+    FROM orders o JOIN users u ON u.id = o.claimed_by
+    WHERE o.status IN ('entregado','delivered') AND date(o.requested_at,'localtime') BETWEEN ? AND ?
+    GROUP BY u.id ORDER BY entregados DESC
+  `).all(fromISO, toISO);
+}
+
+function getCustomerReport(db, fromISO, toISO) {
+  const nuevos = db.prepare(`
+    SELECT COUNT(*) AS c FROM customers WHERE date(created_at,'localtime') BETWEEN ? AND ?
+  `).get(fromISO, toISO).c;
+  const clientes = db.prepare(`
+    SELECT c.name, c.phone, COUNT(*) AS pedidos,
+           COALESCE(SUM(CASE WHEN o.status IN ('entregado','delivered') THEN o.product_price ELSE 0 END),0) AS gastado
+    FROM orders o JOIN customers c ON c.id = o.customer_id
+    WHERE date(o.requested_at,'localtime') BETWEEN ? AND ?
+    GROUP BY o.customer_id ORDER BY gastado DESC
+  `).all(fromISO, toISO);
+  const recurrentes = clientes.filter(c => c.pedidos > 1).length;
+  return { nuevos, recurrentes, clientes };
+}
+
+function renderCategorySection(doc, category, data) {
+  sectionHeader(doc, CATEGORY_LABELS[category]);
+  if (category === 'resumen') {
+    drawSummary(doc, [
+      ['Pedidos totales', data.total],
+      ['Entregados', data.entregados],
+      ['Cancelados', data.cancelados],
+      ['Fiados', data.fiados],
+      ['Ingresos', `$${Number(data.ingresos).toLocaleString('es-CO')}`],
+      ['Ticket promedio', `$${Math.round(Number(data.ticket_promedio)).toLocaleString('es-CO')}`],
+    ]);
+  } else if (category === 'ventas_dia') {
+    for (const row of data) {
+      ensureSpace(doc, 20);
+      doc.fontSize(10).font('Helvetica').fillColor('#333')
+         .text(`${row.dia}   ${row.pedidos} pedidos   $${Number(row.ingresos).toLocaleString('es-CO')}`);
+    }
+  } else if (category === 'ventas_producto') {
+    for (const row of data) {
+      ensureSpace(doc, 20);
+      doc.fontSize(10).font('Helvetica').fillColor('#333')
+         .text(`${stripEmoji(row.producto)}   ${row.unidades} unidades   $${Number(row.ingresos).toLocaleString('es-CO')}`);
+    }
+  } else if (category === 'empleados') {
+    for (const row of data) {
+      ensureSpace(doc, 20);
+      doc.fontSize(10).font('Helvetica').fillColor('#333')
+         .text(`${stripEmoji(row.nombre)}   ${row.entregados} entregados   ${row.minutos_prom || 0} min prom.`);
+    }
+  } else if (category === 'clientes') {
+    doc.fontSize(10).font('Helvetica-Bold').fillColor('#444')
+       .text(`Nuevos: ${data.nuevos}   Recurrentes: ${data.recurrentes}`);
+    doc.moveDown(0.3);
+    for (const c of data.clientes) {
+      ensureSpace(doc, 20);
+      doc.fontSize(10).font('Helvetica').fillColor('#333')
+         .text(`${stripEmoji(c.name || c.phone)}   ${c.pedidos} pedidos   $${Number(c.gastado).toLocaleString('es-CO')}`);
+    }
+  }
+  doc.moveDown(0.5);
+}
+
+async function generateRangeReportPDF(fromISO, toISO, categories) {
+  const cats = (categories && categories.length ? categories : CATEGORIES).filter(c => CATEGORIES.includes(c));
   const db = getDB();
   const fromLabel = new Date(fromISO).toLocaleDateString('es-CO', { timeZone: TZ, day: '2-digit', month: 'long', year: 'numeric' });
   const toLabel   = new Date(toISO).toLocaleDateString('es-CO',   { timeZone: TZ, day: '2-digit', month: 'long', year: 'numeric' });
-
-  const orders = db.prepare(`
-    SELECT o.*, c.phone, c.name AS customer_name,
-           u.display_name AS delivered_by_name
-    FROM orders o
-    LEFT JOIN customers c ON o.customer_id = c.id
-    LEFT JOIN users     u ON o.claimed_by  = u.id
-    WHERE date(o.requested_at, 'localtime') BETWEEN ? AND ?
-    ORDER BY o.requested_at ASC
-  `).all(fromISO, toISO);
-
-  const itemsStmt = db.prepare('SELECT * FROM order_items WHERE order_id=?');
-  orders.forEach(o => { o.items = itemsStmt.all(o.id); });
-
-  const messages = db.prepare(`
-    SELECT m.*, COALESCE(c.name, m.customer_name) AS display_name
-    FROM messages m
-    LEFT JOIN customers c ON c.phone = m.phone
-    WHERE date(m.created_at, 'localtime') BETWEEN ? AND ?
-    ORDER BY m.phone, m.created_at ASC
-  `).all(fromISO, toISO);
-
-  const { byPhone, phones } = buildCustomerMap(orders, messages);
 
   const reportsDir = process.env.REPORTS_DIR || path.join(__dirname, '../../reports');
   if (!fs.existsSync(reportsDir)) fs.mkdirSync(reportsDir, { recursive: true });
@@ -310,26 +409,16 @@ async function generateRangeReportPDF(fromISO, toISO) {
   const stream = fs.createWriteStream(filepath);
   doc.pipe(stream);
 
-  drawCover(doc, 'Reporte de Datos — Pedidos y Chats', `${fromLabel}  —  ${toLabel}`);
+  drawCover(doc, 'Reporte de Datos', `${fromLabel}  —  ${toLabel}`);
 
-  const delivered      = orders.filter(o => ['entregado', 'delivered'].includes(o.status));
-  const cancelled       = orders.filter(o => o.status === 'cancelled');
-  const totalIngresos   = delivered.reduce((s, o) => s + (Number(o.product_price) || 0), 0);
-  drawSummary(doc, [
-    ['Pedidos totales',      orders.length],
-    ['Entregados',           delivered.length],
-    ['Cancelados',           cancelled.length],
-    ['Ingresos del rango',   `$${totalIngresos.toLocaleString('es-CO')}`],
-    ['Cuentas con actividad', phones.length],
-    ['Mensajes totales',     messages.length],
-  ]);
-
-  doc.addPage();
-  sectionHeader(doc, `REGISTRO POR CLIENTE (${phones.length}) -- incluye chats borrados`);
-  if (!phones.length) {
-    doc.fontSize(12).fillColor('#777').text('Sin actividad en este rango.', { align: 'center' });
-  } else {
-    for (const phone of phones) renderCustomerSection(doc, phone, byPhone.get(phone));
+  for (const cat of cats) {
+    let data;
+    if (cat === 'resumen') data = getFinancialSummary(db, fromISO, toISO);
+    else if (cat === 'ventas_dia') data = getSalesByDay(db, fromISO, toISO);
+    else if (cat === 'ventas_producto') data = getSalesByProduct(db, fromISO, toISO);
+    else if (cat === 'empleados') data = getEmployeePerformance(db, fromISO, toISO);
+    else if (cat === 'clientes') data = getCustomerReport(db, fromISO, toISO);
+    renderCategorySection(doc, cat, data);
   }
 
   paginate(doc, filename);
@@ -339,8 +428,11 @@ async function generateRangeReportPDF(fromISO, toISO) {
     stream.on('error', reject);
   });
 
-  logger.info({ filepath, orders: orders.length, cuentas: phones.length }, '[PDF] reporte de rango generado');
+  logger.info({ filepath, categories: cats }, '[PDF] reporte por categorias generado');
   return filepath;
 }
 
-module.exports = { generateDailyPDF, generateRangeReportPDF };
+module.exports = {
+  generateDailyPDF, generateRangeReportPDF, CATEGORIES,
+  getFinancialSummary, getSalesByDay, getSalesByProduct, getEmployeePerformance, getCustomerReport,
+};
