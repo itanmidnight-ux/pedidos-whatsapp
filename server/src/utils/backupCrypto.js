@@ -16,14 +16,21 @@ function getKey() {
 // completo -- nunca deja ambas copias (cifrada y plana) coexistiendo.
 async function encryptFile(srcPath) {
   const destPath = srcPath + '.enc';
-  const iv = crypto.randomBytes(12);
-  const cipher = crypto.createCipheriv('aes-256-gcm', getKey(), iv);
-  const plaintext = fs.readFileSync(srcPath);
-  const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
-  const authTag = cipher.getAuthTag();
-  fs.writeFileSync(destPath, Buffer.concat([iv, authTag, ciphertext]));
-  fs.unlinkSync(srcPath);
-  return destPath;
+  const tmpPath = destPath + '.tmp';
+  try {
+    const iv = crypto.randomBytes(12);
+    const cipher = crypto.createCipheriv('aes-256-gcm', getKey(), iv);
+    const plaintext = fs.readFileSync(srcPath);
+    const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
+    const authTag = cipher.getAuthTag();
+    fs.writeFileSync(tmpPath, Buffer.concat([iv, authTag, ciphertext]));
+    fs.renameSync(tmpPath, destPath); // atomic en mismo filesystem -- destPath nunca se observa parcial
+    fs.unlinkSync(srcPath);
+    return destPath;
+  } catch (e) {
+    try { fs.unlinkSync(tmpPath); } catch (_) {} // limpieza best-effort del temp parcial
+    throw e;
+  }
 }
 
 function decryptFile(encPath, destPath) {
