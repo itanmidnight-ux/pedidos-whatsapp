@@ -237,22 +237,6 @@ router.put('/:id/comment', staffAuth, (req, res) => {
   res.json({ ok: true });
 });
 
-// DELETE /api/orders/bulk — borra uno, varios o todos los pedidos (admin)
-// body: { ids: [1,2,3] } o { all: true }
-router.delete('/bulk', adminAuth, (req, res) => {
-  const { ids, all } = req.body;
-  const db = getDB();
-  if (all === true) {
-    const { changes } = db.prepare('DELETE FROM orders').run();
-    return res.json({ success: true, deleted: changes });
-  }
-  if (!Array.isArray(ids) || !ids.length || !ids.every(n => Number.isInteger(n)))
-    return res.status(400).json({ error: 'ids requerido (array de enteros) o all=true' });
-  const placeholders = ids.map(() => '?').join(',');
-  const { changes } = db.prepare(`DELETE FROM orders WHERE id IN (${placeholders})`).run(...ids);
-  res.json({ success: true, deleted: changes });
-});
-
 // Legacy route — keep backward compat
 router.get('/pending', staffAuth, (req, res) => {
   const today = new Date().toISOString().split('T')[0];
