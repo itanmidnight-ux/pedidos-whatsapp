@@ -149,8 +149,28 @@ router.put('/:id/flag', staffAuth, (req, res) => {
 });
 
 // ── POST /send-media — Enviar media al cliente ────────────────
-router.post('/send-media', staffAuth, upload.single('file'), (req, res) => {
+router.post('/send-media', staffAuth, upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'Archivo requerido' });
+
+  const { fileTypeFromFile } = await import('file-type');
+  const detected = await fileTypeFromFile(req.file.path).catch(() => null);
+  const allowedRealTypes = /^(audio|image|video)\//.test(detected?.mime || '')
+    || detected?.mime === 'application/pdf';
+  // Si file-type no reconoce ningun magic number conocido (documentos Word
+  // .doc/.docx son ZIP/OLE sin firma unica reconocible por esta lib para
+  // todos los casos) Y el cliente declaro octet-stream, es la combinacion
+  // exacta que describe el hallazgo -- rechazar. mimetype declarado
+  // confiable (no octet-stream) para Word se deja pasar como hoy.
+  const declaredOctetStream = req.file.mimetype === 'application/octet-stream';
+  if (declaredOctetStream && (!detected || !allowedRealTypes)) {
+    fs.unlink(req.file.path, () => {});
+    return res.status(400).json({ error: 'Tipo de archivo no reconocido o no permitido' });
+  }
+  if (detected && !allowedRealTypes && !['application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'].includes(req.file.mimetype)) {
+    fs.unlink(req.file.path, () => {});
+    return res.status(400).json({ error: 'El contenido real del archivo no coincide con un tipo permitido' });
+  }
+
   const { phone, media_type } = req.body;
   if (!validPhone(phone)) return res.status(400).json({ error: 'phone inválido' });
   const validTypes = ['audio', 'image', 'video', 'document'];
