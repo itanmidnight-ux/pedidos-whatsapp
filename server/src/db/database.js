@@ -18,16 +18,13 @@ const SEED_USERS = [
 ];
 
 // Password de arranque para cuentas seed: viene de env (SEED_PASSWORD_<USUARIO>),
-// o se genera al azar y se imprime una sola vez — salvo 'jesus', cuyo default
-// pedido explicitamente es el mismo username (cambiarla tras el primer login).
+// o se genera al azar y se imprime una sola vez -- NUNCA hay un default
+// hardcodeado (ni siquiera para 'jesus'), para no dejar una credencial
+// conocida en ninguna instalacion nueva.
 function seedPassword(username) {
   const envVar = `SEED_PASSWORD_${username.toUpperCase()}`;
   if (process.env[envVar]) return process.env[envVar];
-  if (username === 'jesus') {
-    logger.warn(`[seed] ${envVar} no definida — usando password por defecto "jesus" (cámbiala tras el primer login)`);
-    return 'jesus';
-  }
-  const generated = crypto.randomBytes(9).toString('base64url');
+  const generated = crypto.randomBytes(24).toString('base64url');
   logger.warn(`[seed] ${envVar} no definida — password generada para "${username}": ${generated} (cámbiala tras el primer login)`);
   return generated;
 }
