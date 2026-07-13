@@ -3,7 +3,9 @@ const cron = require('node-cron');
 const fs = require('fs');
 const path = require('path');
 const Database = require('better-sqlite3');
+const { execFile } = require('child_process');
 const { getDB } = require('../db/database');
+const { encryptFile } = require('../utils/backupCrypto');
 const { raiseAlert } = require('../utils/securityAlert');
 const logger = require('../utils/logger');
 
@@ -37,7 +39,26 @@ async function runBackup() {
 
   pruneOldBackups();
   logger.info({ dest, userCount }, '[backup] backup diario verificado OK');
-  return dest;
+
+  // Cifrado local: encryptFile borra el .db en claro tras escribir el .enc
+  // completo -- nunca coexisten ambas copias en disco.
+  const encPath = await encryptFile(dest);
+  logger.info({ path: encPath }, '[backup] backup cifrado localmente (AES-256-GCM)');
+
+  const remoteUrl = process.env.BACKUP_REMOTE_URL;
+  if (remoteUrl) {
+    // rclone debe estar instalado y configurado por el usuario (rclone config) --
+    // si falla, se loguea como warning, NUNCA se aborta el backup (el archivo
+    // cifrado local ya existe y es válido con o sin la copia offsite).
+    execFile('rclone', ['copy', encPath, remoteUrl], (err) => {
+      if (err) logger.warn({ err: err.message }, '[backup] copia offsite falló — backup sigue disponible localmente');
+      else logger.info({ remoteUrl }, '[backup] copia offsite completada');
+    });
+  } else {
+    logger.info('[backup] BACKUP_REMOTE_URL no configurada — backup queda solo cifrado localmente');
+  }
+
+  return encPath;
 }
 
 function pruneOldBackups() {
@@ -45,7 +66,7 @@ function pruneOldBackups() {
   let files;
   try { files = fs.readdirSync(BACKUP_DIR); } catch (_) { return; }
   for (const f of files) {
-    if (!f.startsWith('pedidos-') || !f.endsWith('.db')) continue;
+    if (!f.startsWith('pedidos-') || !f.endsWith('.db.enc')) continue;
     const fpath = path.join(BACKUP_DIR, f);
     try {
       if (fs.statSync(fpath).mtimeMs < cutoff) fs.unlinkSync(fpath);

@@ -14,6 +14,7 @@ process.env.NODE_ENV = 'test';
 const { initDB, closeDB } = require('../src/db/database');
 require('../src/app'); // fuerza init de rutas/env antes de tocar servicios
 const { runBackup, pruneOldBackups } = require('../src/services/backupScheduler');
+const { decryptFile } = require('../src/utils/backupCrypto');
 
 beforeAll(async () => { await initDB(); });
 afterAll(() => {
@@ -23,21 +24,27 @@ afterAll(() => {
 });
 
 describe('backupScheduler', () => {
-  test('runBackup crea backup valido e integro', async () => {
+  test('runBackup crea backup cifrado (.enc) valido e integro, sin dejar el .db en claro', async () => {
     const dest = await runBackup();
+    expect(dest.endsWith('.db.enc')).toBe(true);
     expect(fs.existsSync(dest)).toBe(true);
+    expect(fs.existsSync(dest.slice(0, -'.enc'.length))).toBe(false);
+
+    const restoredPath = dest.slice(0, -'.enc'.length) + '.restored';
+    decryptFile(dest, restoredPath);
 
     const Database = require('better-sqlite3');
-    const check = new Database(dest, { readonly: true });
+    const check = new Database(restoredPath, { readonly: true });
     expect(check.pragma('integrity_check', { simple: true })).toBe('ok');
     expect(check.prepare('SELECT COUNT(*) c FROM users').get().c).toBeGreaterThan(0);
     check.close();
+    fs.unlinkSync(restoredPath);
   });
 
   test('pruneOldBackups borra backups viejos, conserva recientes', () => {
     fs.mkdirSync(BACKUP_DIR, { recursive: true });
-    const oldFile = path.join(BACKUP_DIR, 'pedidos-old.db');
-    const freshFile = path.join(BACKUP_DIR, 'pedidos-fresh.db');
+    const oldFile = path.join(BACKUP_DIR, 'pedidos-old.db.enc');
+    const freshFile = path.join(BACKUP_DIR, 'pedidos-fresh.db.enc');
     fs.writeFileSync(oldFile, 'x');
     fs.writeFileSync(freshFile, 'x');
     const oldTime = (Date.now() - 20 * 86_400_000) / 1000;
