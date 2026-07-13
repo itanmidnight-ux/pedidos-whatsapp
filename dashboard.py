@@ -3853,8 +3853,20 @@ class DashboardWindow(Gtk.ApplicationWindow):
         # Sidebar
         self.sidebar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         self.sidebar.get_style_context().add_class('sidebar')
-        self.sidebar.set_size_request(220, -1)
-        self.main_box.pack_start(self.sidebar, False, False, 0)
+        # Envuelto en ScrolledWindow: sin esto, los 13 botones de modulo
+        # exigen ~850px de alto como MINIMO de la ventana entera (GTK suma
+        # el alto natural de todo lo que hay dentro de self.sidebar, que no
+        # tenia scroll propio). En pantallas mas chicas ese minimo termina
+        # siendo mayor que la pantalla disponible -- la ventana queda
+        # "trabada" en ese tamaño y maximizar no hace nada visible. Con
+        # scroll vertical automatico, el sidebar puede encoger y el resto
+        # de botones queda accesible deslizando, sin arrastrar el minimo
+        # de toda la ventana con el.
+        self.sidebar_scroll = Gtk.ScrolledWindow()
+        self.sidebar_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        self.sidebar_scroll.set_size_request(220, -1)
+        self.sidebar_scroll.add(self.sidebar)
+        self.main_box.pack_start(self.sidebar_scroll, False, False, 0)
 
         # Branding en sidebar
         brand_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
@@ -3894,6 +3906,17 @@ class DashboardWindow(Gtk.ApplicationWindow):
         # Cada módulo ya vive dentro de un ScrolledWindow propio, así que
         # medirse por su propio contenido es seguro (no se corta nada).
         self.content_stack.set_vhomogeneous(False)
+        # Mismo problema en ancho: por defecto Gtk.Stack tambien mide TODOS
+        # los modulos por el mas ancho de los 15 (ej. una tabla con muchas
+        # columnas en Conexiones/Seguridad) y ese ancho queda como minimo
+        # de LA VENTANA ENTERA aunque el usuario este viendo Monitoreo. En
+        # pantallas mas chicas ese minimo termina siendo mayor que la
+        # pantalla disponible -- la ventana queda "trabada" en ese tamaño y
+        # el boton de maximizar no hace nada visible (ya esta al maximo que
+        # el contenido permite encoger). Igual que con el alto: cada modulo
+        # ya vive en su propio ScrolledWindow, medirse por su propio ancho
+        # es seguro.
+        self.content_stack.set_hhomogeneous(False)
         self.content_stack.get_style_context().add_class('content')
 
         # Sección: OPERACIÓN
@@ -4073,12 +4096,12 @@ class DashboardWindow(Gtk.ApplicationWindow):
     def _toggle_sidebar(self):
         """Colapsa/expande el sidebar lateral."""
         self._sidebar_visible = not self._sidebar_visible
-        self.sidebar.set_visible(self._sidebar_visible)
+        self.sidebar_scroll.set_visible(self._sidebar_visible)
         # Reajustar tamaño mínimo cuando está oculto
         if self._sidebar_visible:
-            self.sidebar.set_size_request(220, -1)
+            self.sidebar_scroll.set_size_request(220, -1)
         else:
-            self.sidebar.set_size_request(0, -1)
+            self.sidebar_scroll.set_size_request(0, -1)
 
     def _tick(self):
         """Refresh automático cada 10s."""
