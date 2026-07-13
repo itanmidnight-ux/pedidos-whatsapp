@@ -1057,8 +1057,25 @@ main_install() {
     if systemctl list-unit-files "${NODE_SVC}.service" &>/dev/null 2>&1 \
         && systemctl cat "${NODE_SVC}.service" &>/dev/null 2>&1 \
         && [ -f "$ENV_FILE" ]; then
-        info "Ya existe un despliegue de '$NODE_SVC' -- verificando que el servicio este arriba."
+        info "Ya existe un despliegue de '$NODE_SVC' -- actualizando codigo, dependencias y secretos antes de verificar."
+        # No repite el wizard interactivo (dominio/DuckDNS/telefono), pero SI
+        # debe traer codigo nuevo, dejar dependencias npm nuevas instaladas,
+        # y backfillear cualquier secreto nuevo (ej. WEBHOOK_SECRET agregado
+        # en una version mas nueva del script) en el .env existente -- asi
+        # "solo correr ./deploy-linux.sh" alcanza siempre, sin pasos
+        # manuales aparte.
+        if [ -d "$PROJ/.git" ] && ui_yesno "Actualizar codigo desde git (git pull) antes de verificar?"; then
+            (cd "$PROJ" && git pull --ff-only 2>&1 | tail -10) || warn "git pull fallo — continuando con el codigo actual"
+        fi
+        local env_before; env_before=$(md5sum "$ENV_FILE" 2>/dev/null | cut -d' ' -f1)
+        install_npm_deps
+        configure_env
+        local env_after; env_after=$(md5sum "$ENV_FILE" 2>/dev/null | cut -d' ' -f1)
         as_root systemctl start "$NODE_SVC" 2>/dev/null || true
+        if [ "$env_before" != "$env_after" ]; then
+            info "Se agregaron secretos nuevos al .env -- reiniciando para que el servicio los tome."
+            as_root systemctl restart "$NODE_SVC"
+        fi
         wait_server_healthy "$(env_get PORT)" 20 || true
         ok "Servidor arriba en http://127.0.0.1:$(env_get PORT)/app/"
         info "Panel de analisis: python3 $PROJ/dashboard.py"
