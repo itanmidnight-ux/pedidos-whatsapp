@@ -733,6 +733,42 @@ EOF
     fi
 }
 
+install_tailscale() {
+    step "Tailscale"
+    if has_cmd tailscale; then ok "tailscale ya instalado"; return 0; fi
+    local log="/tmp/tailscale-install-$$.log"
+    ( curl -fsSL https://tailscale.com/install.sh | as_root sh ) &>"$log" &
+    if ! spinner $! "Instalando tailscale (script oficial)..."; then
+        tail -10 "$log"; rm -f "$log"
+        warn "Instalacion de tailscale fallo -- instalalo manualmente: https://tailscale.com/download"
+        return 1
+    fi
+    rm -f "$log"
+    has_cmd tailscale && ok "tailscale instalado" || { warn "tailscale no quedo disponible tras la instalacion"; return 1; }
+}
+
+setup_tailscale_funnel() {
+    local port="$1"
+    has_cmd tailscale || { warn "tailscale no disponible -- omite Funnel."; return 1; }
+    if ! as_root tailscale status &>/dev/null || as_root tailscale status 2>/dev/null | grep -qi "logged out\|stopped"; then
+        echo ""
+        echo -e "${CYAN}  +======================================================+${NC}"
+        echo -e "${CYAN}  |   TAILSCALE — inicia sesion en este dispositivo      |${NC}"
+        echo -e "${CYAN}  +======================================================+${NC}"
+        info "Se abrira una URL de autenticacion -- entra con tu cuenta de Tailscale."
+        as_root tailscale up || { warn "tailscale up no se completo -- reintenta manualmente: sudo tailscale up"; return 1; }
+    fi
+    local log="/tmp/tailscale-funnel-$$.log"
+    if as_root tailscale funnel --bg "$port" &>"$log"; then
+        ok "Tailscale Funnel activo en el puerto $port"
+    else
+        tail -10 "$log"; rm -f "$log"
+        warn "No se pudo activar Tailscale Funnel -- revisa: tailscale funnel status"
+        return 1
+    fi
+    rm -f "$log"
+}
+
 setup_nginx_certbot() {
     local port="$1" domain="$2"
     step "nginx + Let's Encrypt (dominio: $domain)"
@@ -1019,7 +1055,8 @@ main_install() {
     access_method=$(ui_menu "Como quieres exponer el servidor a internet?" \
         1 "Cloudflare Tunnel (recomendado: sin abrir puertos, HTTPS auto)" \
         2 "Dominio propio + nginx + Let's Encrypt (abre 80/443)" \
-        3 "Solo red local / VPN (no exponer a internet)")
+        3 "Tailscale Funnel (HTTPS auto via tu tailnet, sin abrir puertos)" \
+        4 "Solo red local / VPN (no exponer a internet)")
 
     case "$access_method" in
         1) install_cloudflared; setup_cloudflared_tunnel "$port"; harden_firewall false
@@ -1027,6 +1064,8 @@ main_install() {
         2) local dm; dm=$(ui_input "Dominio (debe apuntar a la IP de este servidor)" "")
            setup_nginx_certbot "$port" "$dm"; harden_firewall true
            save_conf ACCESS_METHOD nginx ;;
+        3) install_tailscale && setup_tailscale_funnel "$port"; harden_firewall false
+           save_conf ACCESS_METHOD tailscale-funnel ;;
         *) harden_firewall false; save_conf ACCESS_METHOD local ;;
     esac
 
