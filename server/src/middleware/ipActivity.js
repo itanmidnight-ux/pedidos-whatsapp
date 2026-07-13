@@ -6,20 +6,29 @@ const { getIP } = require('../utils/ip');
 // usuarios concurrentes eso seria un cuello de botella real). Se acumula
 // aca y un flush periodico (cada 10s, ver startIpActivityFlusher) hace UN
 // solo upsert por IP activa en esa ventana.
-let buffer = new Map(); // ip -> { requests, count_401, count_403, count_404, last_path, last_user_agent }
+let buffer = new Map(); // ip -> { requests, count_401, count_403, count_404, count_auth_fail, last_path, last_user_agent }
 
 function currentMinute() {
   return new Date().toISOString().slice(0, 16); // 'YYYY-MM-DDTHH:MM'
 }
 
+// Login real (fuerza bruta) vs 401 generico (token expirado antes de
+// refrescar, etc, normal en cualquier cliente de larga duracion) -- solo
+// el primero es señal confiable de ataque.
+function isLoginAttempt(path) {
+  return path === '/api/auth/token' || path === '/api/auth/register';
+}
+
 function ipActivityMiddleware(req, res, next) {
   const ip = getIP(req);
   res.on('finish', () => {
-    const entry = buffer.get(ip) || { requests: 0, count_401: 0, count_403: 0, count_404: 0, last_path: null, last_user_agent: null };
+    const entry = buffer.get(ip) || { requests: 0, count_401: 0, count_403: 0, count_404: 0, count_auth_fail: 0, last_path: null, last_user_agent: null };
     entry.requests += 1;
     if (res.statusCode === 401) entry.count_401 += 1;
     if (res.statusCode === 403) entry.count_403 += 1;
     if (res.statusCode === 404) entry.count_404 += 1;
+    const path = (req.originalUrl || req.url || '').split('?')[0];
+    if (isLoginAttempt(path) && (res.statusCode === 401 || res.statusCode === 429)) entry.count_auth_fail += 1;
     entry.last_path = req.originalUrl || req.url;
     entry.last_user_agent = req.headers['user-agent'] || null;
     buffer.set(ip, entry);
@@ -37,13 +46,14 @@ function flushIpActivity() {
 
   const db = getDB();
   const upsert = db.prepare(`
-    INSERT INTO ip_activity (ip, minute, requests, count_401, count_403, count_404, last_path, last_user_agent)
-    VALUES (@ip, @minute, @requests, @count_401, @count_403, @count_404, @last_path, @last_user_agent)
+    INSERT INTO ip_activity (ip, minute, requests, count_401, count_403, count_404, count_auth_fail, last_path, last_user_agent)
+    VALUES (@ip, @minute, @requests, @count_401, @count_403, @count_404, @count_auth_fail, @last_path, @last_user_agent)
     ON CONFLICT(ip, minute) DO UPDATE SET
       requests        = requests + excluded.requests,
       count_401       = count_401 + excluded.count_401,
       count_403       = count_403 + excluded.count_403,
       count_404       = count_404 + excluded.count_404,
+      count_auth_fail = count_auth_fail + excluded.count_auth_fail,
       last_path       = excluded.last_path,
       last_user_agent = excluded.last_user_agent
   `);

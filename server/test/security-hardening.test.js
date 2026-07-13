@@ -169,6 +169,23 @@ describe('tracking de actividad por IP', () => {
     expect(rows[0].requests).toBe(3);
     expect(rows[0].count_401).toBe(1);
   });
+
+  test('un 401 generico (token expirado en ruta protegida) NO cuenta como login fallido', async () => {
+    // GET /api/orders sin token -- 401 generico, no es un intento de login.
+    await request(app).get('/api/orders').set('X-Forwarded-For', '203.0.113.222');
+    flushIpActivity();
+    const row = getDB().prepare('SELECT * FROM ip_activity WHERE ip = ?').get('203.0.113.222');
+    expect(row.count_401).toBe(1);
+    expect(row.count_auth_fail).toBe(0);
+  });
+
+  test('un login fallido real en /api/auth/token SI cuenta como login fallido', async () => {
+    await request(app).post('/api/auth/token').set('X-Forwarded-For', '203.0.113.223')
+      .send({ username: 'no-existe', password: 'x' });
+    flushIpActivity();
+    const row = getDB().prepare('SELECT * FROM ip_activity WHERE ip = ?').get('203.0.113.223');
+    expect(row.count_auth_fail).toBe(1);
+  });
 });
 
 describe('raiseAlert', () => {
@@ -184,12 +201,34 @@ describe('raiseAlert', () => {
 });
 
 describe('scanSuspiciousIPs', () => {
-  test('marca alerta cuando una IP supera el umbral de fallos de auth', () => {
+  test('marca alerta cuando una IP supera el umbral de LOGINS fallidos reales', () => {
     const db = getDB();
     const minute = new Date().toISOString().slice(0, 16);
-    db.prepare(`INSERT INTO ip_activity (ip, minute, requests, count_401, count_403, count_404) VALUES ('198.51.100.77', ?, 20, 6, 0, 0)`).run(minute);
+    db.prepare(`INSERT INTO ip_activity (ip, minute, requests, count_401, count_403, count_404, count_auth_fail) VALUES ('198.51.100.77', ?, 20, 6, 0, 0, 6)`).run(minute);
     scanSuspiciousIPs();
     const alert = db.prepare(`SELECT * FROM security_alerts WHERE kind='ip_flagged' ORDER BY id DESC LIMIT 1`).get();
     expect(alert.message).toContain('198.51.100.77');
+  });
+
+  test('NO marca alerta por 401/403 genericos sin logins fallidos reales (evita falsos positivos)', () => {
+    const db = getDB();
+    const minute = new Date().toISOString().slice(0, 16);
+    // Mismo volumen de 401/403 que antes disparaba alerta -- ahora, sin
+    // count_auth_fail, es trafico normal (tokens expirando, recursos
+    // opcionales sin encontrar), no debe generar ninguna alerta nueva.
+    db.prepare(`INSERT INTO ip_activity (ip, minute, requests, count_401, count_403, count_404, count_auth_fail) VALUES ('198.51.100.88', ?, 20, 6, 0, 0, 0)`).run(minute);
+    const before = db.prepare(`SELECT COUNT(*) c FROM security_alerts WHERE kind='ip_flagged' AND message LIKE '%198.51.100.88%'`).get().c;
+    scanSuspiciousIPs();
+    const after = db.prepare(`SELECT COUNT(*) c FROM security_alerts WHERE kind='ip_flagged' AND message LIKE '%198.51.100.88%'`).get().c;
+    expect(after).toBe(before);
+  });
+
+  test('nunca marca localhost (webhook interno del bot) como sospechoso', () => {
+    const db = getDB();
+    const minute = new Date().toISOString().slice(0, 16);
+    db.prepare(`INSERT INTO ip_activity (ip, minute, requests, count_401, count_403, count_404, count_auth_fail) VALUES ('127.0.0.1', ?, 1000, 50, 50, 50, 50)`).run(minute);
+    scanSuspiciousIPs();
+    const alert = db.prepare(`SELECT COUNT(*) c FROM security_alerts WHERE kind='ip_flagged' AND message LIKE '%127.0.0.1%'`).get().c;
+    expect(alert).toBe(0);
   });
 });

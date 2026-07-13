@@ -245,6 +245,12 @@ const MIGRATIONS = [
       user_id    INTEGER,
       revoked_at TEXT DEFAULT (datetime('now','localtime'))
     )` },
+  // count_401/403/404 son globales (cualquier ruta) -- disparan con trafico
+  // normal (token expirado antes de refrescar, imagen de perfil que no
+  // existe, etc). count_auth_fail cuenta SOLO fallos reales de login
+  // (/api/auth/token, /api/auth/register), la señal real de fuerza bruta --
+  // separa el ruido de la amenaza real para no marcar sospechosos falsos.
+  { name: '060_ip_activity_auth_fail', sql: `ALTER TABLE ip_activity ADD COLUMN count_auth_fail INTEGER DEFAULT 0` },
 ];
 
 function runMigrations(db) {
