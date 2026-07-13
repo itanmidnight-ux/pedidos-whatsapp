@@ -48,6 +48,25 @@ info() { echo -e "${CYAN}  >>  ${NC}  $1"; }
 step() { echo -e "\n${BOLD}  == $1${NC}"; }
 die()  { echo -e "\n${RED}  [ERROR]${NC} $1"; exit 1; }
 
+# spinner PID MSG -- anima MSG con un spinner mientras el proceso PID corre
+# en background; al terminar imprime ok/warn segun su codigo de salida y
+# devuelve ese mismo codigo (para que el llamador decida con && / || / die).
+spinner() {
+    local pid="$1" msg="$2" i=0 rc=0
+    local frames=(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏)
+    tput civis 2>/dev/null || true
+    while kill -0 "$pid" 2>/dev/null; do
+        printf "\r${CYAN}  %s${NC}  %s" "${frames[i]}" "$msg"
+        i=$(( (i + 1) % ${#frames[@]} ))
+        sleep 0.1
+    done
+    wait "$pid" || rc=$?
+    tput cnorm 2>/dev/null || true
+    printf "\r\033[K"
+    if [ "$rc" -eq 0 ]; then ok "$msg"; else warn "$msg (codigo salida $rc)"; fi
+    return "$rc"
+}
+
 has_cmd() { command -v "$1" &>/dev/null; }
 
 # Ya somos root (auto-elevado arriba) — as_root es solo semantico, ejecuta directo.
@@ -63,12 +82,16 @@ fi
 pkg_install() {
     # Instala paquetes del sistema si hay privilegios; si no, solo advierte.
     [ -z "$PKG_MGR" ] && { warn "Gestor de paquetes desconocido — instala manualmente: $*"; return 1; }
+    local log="/tmp/pkg-install-$$.log" rc=0
     case "$PKG_MGR" in
         apt)    as_root apt-get update -qq &>/dev/null || true
-                as_root apt-get install -y -qq "$@" ;;
-        dnf)    as_root dnf install -y -q "$@" ;;
-        pacman) as_root pacman -S --noconfirm --needed "$@" ;;
+                ( as_root apt-get install -y -qq "$@" &>"$log" ) & spinner $! "Instalando paquetes: $*" || rc=$? ;;
+        dnf)    ( as_root dnf install -y -q "$@" &>"$log" ) & spinner $! "Instalando paquetes: $*" || rc=$? ;;
+        pacman) ( as_root pacman -S --noconfirm --needed "$@" &>"$log" ) & spinner $! "Instalando paquetes: $*" || rc=$? ;;
     esac
+    [ "$rc" -ne 0 ] && tail -5 "$log"
+    rm -f "$log"
+    return "$rc"
 }
 
 # ================================================================
@@ -238,9 +261,8 @@ install_node() {
     local fname; fname=$(curl -fsSL "$url" | grep -oE "node-v${NODE_MAJOR}\.[0-9.]+-linux-${arch}\.tar\.xz" | head -1)
     [ -n "$fname" ] || die "No se pudo determinar la version de Node $NODE_MAJOR para descargar."
     mkdir -p /opt/nodejs
-    curl -fsSL "${url}${fname}" -o /tmp/node.tar.xz || die "Descarga de Node.js fallo."
-    tar xf /tmp/node.tar.xz -C /opt/nodejs
-    rm -f /tmp/node.tar.xz
+    ( curl -fsSL "${url}${fname}" -o /tmp/node.tar.xz && tar xf /tmp/node.tar.xz -C /opt/nodejs && rm -f /tmp/node.tar.xz ) &
+    spinner $! "Descargando e instalando Node.js $NODE_MAJOR..." || die "Descarga/instalacion de Node.js fallo."
     local nodedir; nodedir=$(find /opt/nodejs -maxdepth 1 -iname "node-v${NODE_MAJOR}*" | head -1)
     ln -sfn "$nodedir" /opt/nodejs/current
     ln -sf /opt/nodejs/current/bin/node /usr/local/bin/node
@@ -299,9 +321,10 @@ install_npm_deps() {
     step "Dependencias npm"
     cd "$SERVER_DIR"
     if [ ! -d node_modules ] || [ package.json -nt node_modules/.package-lock.json 2>/dev/null ]; then
-        warn "Instalando dependencias (npm ci --omit=dev)..."
-        npm ci --omit=dev 2>&1 | tail -5 || npm install --omit=dev 2>&1 | tail -5
-        ok "Dependencias instaladas"
+        local log="/tmp/npm-install-$$.log"
+        ( npm ci --omit=dev &>"$log" || npm install --omit=dev &>"$log" ) &
+        spinner $! "Instalando dependencias npm..."
+        tail -5 "$log"; rm -f "$log"
     else
         ok "Dependencias npm OK (cache)"
     fi
