@@ -1064,7 +1064,7 @@ main_install() {
         2) local dm; dm=$(ui_input "Dominio (debe apuntar a la IP de este servidor)" "")
            setup_nginx_certbot "$port" "$dm"; harden_firewall true
            save_conf ACCESS_METHOD nginx ;;
-        3) install_tailscale && setup_tailscale_funnel "$port"; harden_firewall false
+        3) install_tailscale && setup_tailscale_funnel "$port" || true; harden_firewall false
            save_conf ACCESS_METHOD tailscale-funnel ;;
         *) harden_firewall false; save_conf ACCESS_METHOD local ;;
     esac
