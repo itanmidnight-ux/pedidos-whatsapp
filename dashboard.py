@@ -2979,21 +2979,30 @@ class ConnectionsModule:
 # ══════════════════════════════════════════════════════════════════════════════
 
 class DataModule:
-    """Exportar historial completo (pedidos + chats, incluidos los ya
-    borrados) a PDF por rango de fechas, y administrar pedidos viejos con
-    seleccion multiple (uno por uno o todos a la vez)."""
+    """Exportar datos reales del negocio (ventas, empleados, clientes) por
+    categoria a PDF/Excel, por rango de fechas. Nunca incluye contenido de
+    chats, y no permite borrar pedidos -- son registros de negocio, no se
+    hacen desaparecer desde acá."""
+
+    CATEGORY_LABELS = {
+        'resumen': 'Resumen financiero',
+        'ventas_dia': 'Ventas por día',
+        'ventas_producto': 'Ventas por producto',
+        'empleados': 'Desempeño de empleados',
+        'clientes': 'Clientes',
+    }
 
     def __init__(self, parent):
         self.parent = parent
         self.box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
 
         header = SectionHeader('Datos y exportación',
-                               'Exportar historial completo a PDF, o eliminar pedidos antiguos',
+                               'Exportar datos reales del negocio por categoría a PDF/Excel',
                                make_btn('↻ Actualizar', 'btn-flat', small=True, on_click=lambda *_: self.refresh()))
         self.box.pack_start(header, False, False, 0)
 
-        # ─── Exportar a PDF por rango ────────────────────────────────
-        export_title = Gtk.Label(label='EXPORTAR A PDF', xalign=0)
+        # ─── Exportar por rango ──────────────────────────────────────
+        export_title = Gtk.Label(label='EXPORTAR', xalign=0)
         export_title.get_style_context().add_class('section-title')
         self.box.pack_start(export_title, False, False, 0)
 
@@ -3017,44 +3026,29 @@ class DataModule:
         export_card.pack_start(self.to_entry, False, False, 0)
 
         export_card.pack_start(make_btn('📄 Exportar a PDF', 'btn-primary', small=True,
-                                         on_click=lambda *_: self._export_pdf()), False, False, 0)
+                                         on_click=lambda *_: self._open_export_dialog('pdf')), False, False, 0)
         export_card.pack_start(make_btn('📊 Exportar a Excel', 'btn-primary', small=True,
-                                         on_click=lambda *_: self._export_excel()), False, False, 0)
+                                         on_click=lambda *_: self._open_export_dialog('excel')), False, False, 0)
         export_card.pack_start(Gtk.Label(label=''), True, True, 0)
 
         hint = Gtk.Label(
-            label='Incluye pedidos de cualquier estado y todos los mensajes del rango '
-                  '(incluye conversaciones ya borradas de la app -- el texto siempre queda guardado).',
+            label='Elegís qué datos exportar (ventas, empleados, clientes, etc.) -- '
+                  'nunca incluye el contenido de los chats.',
             xalign=0)
         hint.get_style_context().add_class('label-dim')
         hint.set_line_wrap(True)
         self.box.pack_start(hint, False, False, 0)
 
-        # ─── Tabla de pedidos con selección múltiple ─────────────────
-        table_title = Gtk.Label(label='PEDIDOS — ÚLTIMOS 300 (selección múltiple para eliminar)', xalign=0)
+        # ─── Tabla de pedidos (solo lectura) ──────────────────────────
+        table_title = Gtk.Label(label='PEDIDOS — ÚLTIMOS 300', xalign=0)
         table_title.get_style_context().add_class('section-title')
         self.box.pack_start(table_title, False, False, 0)
 
-        toolbar = Gtk.Box(spacing=8)
-        self.box.pack_start(toolbar, False, False, 0)
-        self.select_all_chk = Gtk.CheckButton(label='Seleccionar todos')
-        self.select_all_chk.connect('toggled', self._on_select_all)
-        toolbar.pack_start(self.select_all_chk, False, False, 0)
-        self.selected_lbl = Gtk.Label(label='0 seleccionados')
-        self.selected_lbl.get_style_context().add_class('label-dim')
-        toolbar.pack_start(self.selected_lbl, False, False, 0)
-        toolbar.pack_start(Gtk.Label(label=''), True, True, 0)
-        toolbar.pack_start(make_btn('🗑 Eliminar seleccionados', 'btn-warn', small=True,
-                                     on_click=lambda *_: self._delete_selected()), False, False, 0)
-
-        # store: seleccionado, id, fecha, producto, cliente, estado, total
-        self.store = Gtk.ListStore(bool, int, str, str, str, str, str)
+        # store: id, fecha, producto, cliente, estado, total
+        self.store = Gtk.ListStore(int, str, str, str, str, str)
         tree = Gtk.TreeView(model=self.store)
-        toggle = Gtk.CellRendererToggle()
-        toggle.connect('toggled', self._on_row_toggled)
-        tree.append_column(Gtk.TreeViewColumn('', toggle, active=0))
-        for colname, idx in [('#Pedido', 1), ('Fecha', 2), ('Producto', 3),
-                              ('Cliente', 4), ('Estado', 5), ('Total', 6)]:
+        for colname, idx in [('#Pedido', 0), ('Fecha', 1), ('Producto', 2),
+                              ('Cliente', 3), ('Estado', 4), ('Total', 5)]:
             renderer = Gtk.CellRendererText()
             col = Gtk.TreeViewColumn(colname, renderer, text=idx)
             col.set_resizable(True)
@@ -3066,7 +3060,6 @@ class DataModule:
         self.box.pack_start(scroll, True, True, 0)
 
     def refresh(self):
-        self.select_all_chk.set_active(False)
         rows = query("""
             SELECT o.id, o.requested_at, COALESCE(o.product_name,'—'),
                    COALESCE(c.name, c.phone, '—'), o.status, o.product_price
@@ -3079,45 +3072,7 @@ class DataModule:
         for oid, req_at, product, customer, status, price in rows:
             fecha = (req_at or '')[:16].replace('T', ' ')
             total = fmt_money(price) if price else '—'
-            self.store.append([False, oid, fecha, product, customer, status, total])
-        self._update_selected_count()
-
-    def _on_row_toggled(self, renderer, path):
-        self.store[path][0] = not self.store[path][0]
-        self._update_selected_count()
-
-    def _on_select_all(self, chk):
-        active = chk.get_active()
-        for row in self.store:
-            row[0] = active
-        self._update_selected_count()
-
-    def _update_selected_count(self):
-        n = sum(1 for row in self.store if row[0])
-        self.selected_lbl.set_text(f'{n} seleccionados')
-
-    def _delete_selected(self):
-        ids = [row[1] for row in self.store if row[0]]
-        if not ids:
-            self.parent.show_toast('No hay pedidos seleccionados')
-            return
-        dialog = Gtk.MessageDialog(
-            transient_for=self.parent, flags=0,
-            message_type=Gtk.MessageType.WARNING,
-            buttons=Gtk.ButtonsType.YES_NO,
-            text=f'¿Eliminar {len(ids)} pedido(s) seleccionado(s)?\nEsta acción no se puede deshacer.')
-        response = dialog.run()
-        dialog.destroy()
-        if response != Gtk.ResponseType.YES:
-            return
-        run_in_background(lambda: http_delete('/api/orders/bulk', {'ids': ids}), self._on_delete_done)
-
-    def _on_delete_done(self, result):
-        if result and result.get('success'):
-            self.parent.show_toast(f'{result.get("deleted", 0)} pedido(s) eliminado(s)')
-            self.refresh()
-        else:
-            self.parent.show_toast('Error eliminando pedidos')
+            self.store.append([oid, fecha, product, customer, status, total])
 
     def _get_valid_range(self):
         from_date = self.from_entry.get_text().strip()
@@ -3127,28 +3082,57 @@ class DataModule:
             return None
         return from_date, to_date
 
-    def _export_pdf(self):
+    def _open_export_dialog(self, fmt):
         rng = self._get_valid_range()
         if not rng: return
         from_date, to_date = rng
-        self.parent.show_toast('Generando reporte, esto puede tardar unos segundos...')
-        run_in_background(
-            lambda: http_post('/api/reports/export-range', {'from': from_date, 'to': to_date}, timeout=30),
-            lambda result: self._on_export_done(result, 'reporte'))
 
-    def _export_excel(self):
-        rng = self._get_valid_range()
-        if not rng: return
-        from_date, to_date = rng
-        self.parent.show_toast('Generando Excel, esto puede tardar unos segundos...')
+        data = http_get('/api/reports/categories') or {}
+        categories = data.get('categories') or list(self.CATEGORY_LABELS.keys())
+
+        dialog = Gtk.Dialog(title=f'Exportar a {fmt.upper()}', transient_for=self.parent, modal=True)
+        dialog.add_buttons('Cancelar', Gtk.ResponseType.CANCEL, 'Exportar', Gtk.ResponseType.OK)
+        dialog.set_default_size(360, 320)
+        box = dialog.get_content_area()
+        box.set_spacing(8)
+        box.set_border_width(16)
+
+        box.pack_start(Gtk.Label(label=f'Rango: {from_date} a {to_date}', xalign=0), False, False, 0)
+        box.pack_start(Gtk.Label(label='Elegí qué datos exportar:', xalign=0), False, False, 4)
+
+        checks = {}
+        select_all = Gtk.CheckButton(label='Seleccionar todas')
+        box.pack_start(select_all, False, False, 0)
+        box.pack_start(Gtk.Separator(), False, False, 4)
+        for key in categories:
+            chk = Gtk.CheckButton(label=self.CATEGORY_LABELS.get(key, key))
+            chk.set_active(True)
+            checks[key] = chk
+            box.pack_start(chk, False, False, 0)
+        select_all.set_active(True)
+        select_all.connect('toggled', lambda w: [c.set_active(w.get_active()) for c in checks.values()])
+
+        box.show_all()
+        response = dialog.run()
+        selected = [k for k, c in checks.items() if c.get_active()]
+        dialog.destroy()
+
+        if response != Gtk.ResponseType.OK:
+            return
+        if not selected:
+            self.parent.show_toast('Elegí al menos una categoría')
+            return
+
+        self.parent.show_toast(f'Generando {fmt.upper()}, esto puede tardar unos segundos...')
+        endpoint = '/api/reports/export-range' if fmt == 'pdf' else '/api/reports/export-range-excel'
         run_in_background(
-            lambda: http_post('/api/reports/export-range-excel', {'from': from_date, 'to': to_date}, timeout=30),
-            lambda result: self._on_export_done(result, 'Excel'))
+            lambda: http_post(endpoint, {'from': from_date, 'to': to_date, 'categories': selected}, timeout=30),
+            lambda result: self._on_export_done(result, fmt.upper()))
 
     def _on_export_done(self, result, label):
         if result and result.get('success'):
             filepath = result.get('filepath')
-            self.parent.show_toast(f'{label.capitalize()} generado: {result.get("filename")}')
+            self.parent.show_toast(f'{label} generado: {result.get("filename")}')
             if filepath and os.path.exists(filepath):
                 sh(f'xdg-open "{filepath}" 2>/dev/null &')
         else:
