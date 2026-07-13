@@ -191,12 +191,18 @@ async function sendTyping(jid, durationMs = 1500) {
 
 async function postInbound(jid, phone, name, message, mediaType, mediaUrl, profilePicUrl) {
   try {
-    await http.post('/api/webhook/message', {
+    const body = {
       phone, name, message, jid,
       media_type:      mediaType    || undefined,
       media_url:       mediaUrl     || undefined,
       profile_pic_url: profilePicUrl || undefined,
       timestamp:       new Date().toISOString(),
+    };
+    const ts = Date.now();
+    const signature = crypto.createHmac('sha256', process.env.WEBHOOK_SECRET || '')
+      .update(JSON.stringify(body) + ':' + ts).digest('hex');
+    await http.post('/api/webhook/message', body, {
+      headers: { 'X-Baileys-Timestamp': String(ts), 'X-Baileys-Signature': signature },
     });
     lastMessageAt = new Date().toISOString();
   } catch (e) {

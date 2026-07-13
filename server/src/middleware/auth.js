@@ -61,4 +61,25 @@ function clientAuth(req, res, next) {
   });
 }
 
-module.exports = { apiKeyAuth, jwtAuth, adminAuth, staffAuth, clientAuth };
+function verifyWebhookSignature(req, res, next) {
+  const secret = process.env.WEBHOOK_SECRET;
+  if (!secret) return res.status(401).json({ error: 'Webhook no configurado' });
+
+  const signature = req.headers['x-baileys-signature'];
+  const timestamp = req.headers['x-baileys-timestamp'];
+  if (!signature || !timestamp) return res.status(401).json({ error: 'Firma requerida' });
+
+  const age = Math.abs(Date.now() - Number(timestamp));
+  if (!Number.isFinite(age) || age > 5 * 60 * 1000)
+    return res.status(401).json({ error: 'Timestamp fuera de ventana' });
+
+  const expected = crypto.createHmac('sha256', secret)
+    .update(JSON.stringify(req.body) + ':' + timestamp).digest('hex');
+  const sigBuf = Buffer.from(String(signature));
+  const expBuf = Buffer.from(expected);
+  const valid = sigBuf.length === expBuf.length && crypto.timingSafeEqual(sigBuf, expBuf);
+  if (!valid) return res.status(401).json({ error: 'Firma inválida' });
+  next();
+}
+
+module.exports = { apiKeyAuth, jwtAuth, adminAuth, staffAuth, clientAuth, verifyWebhookSignature };

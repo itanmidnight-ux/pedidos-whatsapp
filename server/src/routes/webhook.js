@@ -1,6 +1,6 @@
 const express = require('express');
 const router  = express.Router();
-const { apiKeyAuth } = require('../middleware/auth');
+const { apiKeyAuth, verifyWebhookSignature } = require('../middleware/auth');
 const {
   parseOrderMessage, parseMultiItems, fuzzyProductMatch, extractAddress,
   isGreeting, isClosing, isComplaint, isConfirmation, isDenial,
@@ -78,7 +78,7 @@ function flagLastMessage(db, phone, reason) {
 }
 
 // ── Ruta principal ────────────────────────────────────────────
-router.post('/message', apiKeyAuth, async (req, res) => {
+router.post('/message', apiKeyAuth, verifyWebhookSignature, async (req, res) => {
   const rawPhone     = req.body.phone;
   const rawMessage   = req.body.message;
   const rawName      = req.body.name;
