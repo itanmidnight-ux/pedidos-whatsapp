@@ -799,12 +799,38 @@ EOF
     ok "nginx: reverse proxy 80 -> 127.0.0.1:$port"
 
     if pkg_install certbot python3-certbot-nginx; then
-        as_root certbot --nginx -d "$domain" --non-interactive --agree-tos -m "admin@${domain}" --redirect \
-            && ok "Certificado HTTPS (Let's Encrypt) instalado para $domain" \
-            || warn "certbot fallo — revisa DNS de $domain apunte a esta IP y reintenta: certbot --nginx -d $domain"
+        if as_root certbot --nginx -d "$domain" --non-interactive --agree-tos -m "admin@${domain}" --redirect; then
+            ok "Certificado HTTPS (Let's Encrypt) instalado para $domain"
+            harden_nginx_tls
+        else
+            warn "certbot fallo — revisa DNS de $domain apunte a esta IP y reintenta: certbot --nginx -d $domain"
+        fi
     else
         warn "certbot no disponible — instalalo para HTTPS: apt install certbot python3-certbot-nginx"
     fi
+}
+
+# Certbot ya deja TLS razonable por defecto, pero su archivo de opciones
+# varia entre versiones/distros -- se fija explicito TLS 1.2/1.3 unicamente
+# (nada de TLS 1.0/1.1/SSL) y cifrados AEAD modernos, para no depender de
+# ese default cambiante. TLS 1.3 negocia su propio set de cifrados en el
+# cliente, por eso ssl_prefer_server_ciphers se deja off.
+harden_nginx_tls() {
+    local opts="/etc/letsencrypt/options-ssl-nginx.conf"
+    [ -f "$opts" ] || { warn "options-ssl-nginx.conf no encontrado -- certbot no lo genero, omite hardening TLS explicito"; return 0; }
+    as_root tee "$opts" > /dev/null <<'EOF'
+# Generado/endurecido por deploy-linux.sh
+ssl_session_cache shared:le_nginx_SSL:10m;
+ssl_session_timeout 1440m;
+ssl_session_tickets off;
+
+ssl_protocols TLSv1.2 TLSv1.3;
+ssl_prefer_server_ciphers off;
+ssl_ciphers "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305";
+EOF
+    as_root nginx -t &>/dev/null \
+        && { as_root systemctl reload nginx; ok "TLS endurecido: solo TLSv1.2/TLSv1.3, cifrados AEAD modernos"; } \
+        || warn "nginx -t fallo tras endurecer TLS -- revisa manualmente $opts"
 }
 
 # ================================================================
