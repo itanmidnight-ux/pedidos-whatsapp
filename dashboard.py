@@ -23,6 +23,19 @@ import cairo
 import subprocess, sqlite3, os, re, sys, datetime, secrets, json, base64, threading, math
 import urllib.request, urllib.error
 
+# Mapa interactivo (arrastrar/zoom) en Ubicaciones via WebKit2 + Leaflet local.
+# Opcional a proposito: en un servidor donde deploy-linux.sh todavia no
+# instalo gir1.2-webkit2-4.1 (deploy viejo sin actualizar), el dashboard
+# sigue funcionando entero -- Ubicaciones cae al mapa estatico Cairo de
+# siempre en vez de romper toda la app por un import faltante.
+try:
+    gi.require_version('WebKit2', '4.1')
+    from gi.repository import WebKit2
+    HAS_WEBKIT = True
+except Exception:
+    WebKit2 = None
+    HAS_WEBKIT = False
+
 # ─── Configuración de rutas y servicios ─────────────────────────────────────────
 SERVICE         = os.environ.get('DEPLOY_SERVICE', 'pedidos-bot')
 PROJ            = os.environ.get('DEPLOY_PROJ', os.path.dirname(os.path.abspath(__file__)))
@@ -562,12 +575,67 @@ def hex_to_rgb(h):
         return (0.2, 0.3, 0.1)
 
 
-# ─── Mapa estático en vivo (tiles OSM compuestos a mano) ────────────────────────
-# Sin webkit2gtk instalado en el sistema, un WebView con Leaflet no es viable sin
-# agregar una dependencia nueva al deploy. En cambio: se descargan los mismos
-# tiles publicos que usa cualquier mapa web (proyeccion Web Mercator estandar,
-# "slippy map"), se componen a mano con Cairo y se dibuja un pin por persona --
-# mismo patron que ya usa _load_qr() (fetch de imagen + Gtk.Image).
+# ─── Mapa interactivo en vivo (WebKit2 + Leaflet local) ─────────────────────────
+# Leaflet.js/css y los iconos de marcador quedan bundleados en
+# dashboard_assets/leaflet/ (bajados una sola vez, sin CDN en runtime) --
+# solo los TILES de OpenStreetMap se piden por red, igual que el mapa
+# estatico de antes. deploy-linux.sh instala gir1.2-webkit2-4.1; si por
+# algun motivo no esta disponible, HAS_WEBKIT queda False y se cae al mapa
+# estatico Cairo de mas abajo (render_static_map) sin romper nada.
+LEAFLET_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'dashboard_assets', 'leaflet')
+
+
+def build_leaflet_html(points):
+    """points: lista de (label, lat, lng, role). Arma un HTML standalone con
+    Leaflet + marcadores + auto-fit de bounds -- arrastrable y con zoom real,
+    como cualquier mapa web."""
+    markers_js = json.dumps([
+        {'label': label, 'lat': lat, 'lng': lng, 'role': role}
+        for label, lat, lng, role in points
+    ])
+    return f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="leaflet.css">
+<style>
+  html, body, #map {{ height: 100%; margin: 0; padding: 0; }}
+  .leaflet-popup-content {{ font-family: sans-serif; font-size: 13px; }}
+</style>
+</head>
+<body>
+<div id="map"></div>
+<script src="leaflet.js"></script>
+<script>
+  var points = {markers_js};
+  var map = L.map('map', {{ zoomControl: true }});
+  L.tileLayer('https://tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
+    attribution: '&copy; OpenStreetMap',
+    maxZoom: 19,
+  }}).addTo(map);
+
+  if (points.length > 0) {{
+    var markers = [];
+    points.forEach(function (p) {{
+      var m = L.marker([p.lat, p.lng]).addTo(map);
+      m.bindPopup('<b>' + p.label + '</b><br>' + p.role);
+      markers.push(m);
+    }});
+    if (points.length === 1) {{
+      map.setView([points[0].lat, points[0].lng], 15);
+    }} else {{
+      var group = L.featureGroup(markers);
+      map.fitBounds(group.getBounds().pad(0.2));
+    }}
+  }} else {{
+    map.setView([4.6097, -74.0817], 5);  // Bogota, punto de partida neutro sin datos
+  }}
+</script>
+</body></html>"""
+
+
+# ─── Mapa estático en vivo (fallback sin WebKit2, tiles OSM compuestos a mano) ──
+# Se conserva como respaldo para servidores que todavia no tengan
+# gir1.2-webkit2-4.1 instalado -- mismo patron que ya usa _load_qr() (fetch
+# de imagen + Gtk.Image).
 _MAP_TILE_SIZE = 256
 _MAP_TILE_URL = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png'
 _MAP_TILE_CACHE = {}  # (z,x,y) -> bytes PNG, valido mientras corra el proceso
@@ -1601,7 +1669,12 @@ class SalesModule:
         for child in self.days_flow.get_children():
             self.days_flow.remove(child)
         max_total = max((t for _, t in by_day.values()), default=0) or 1
-        for i in range(0, 14):
+        # Orden cronologico ascendente (mas viejo -> hoy), igual que el
+        # grafico de "Ingresos por dia" de mas arriba en esta misma pestana --
+        # antes esta grilla iba al reves (hoy primero) y quedaba
+        # inconsistente con el grafico, dos lecturas de tiempo opuestas en
+        # la misma pantalla.
+        for i in range(13, -1, -1):
             d = datetime.date.today() - datetime.timedelta(days=i)
             iso = d.isoformat()
             n, t = by_day.get(iso, (0, 0))
@@ -2524,10 +2597,13 @@ class EmployeesModule:
             self.card_total_emp.set_value(str(len(employees)))
             total_del = sum(r[3] for r in employees)
             self.card_total_del.set_value(str(total_del))
-            # Promedio de tiempos
-            times = [r[4] for r in employees if r[4]]
-            if times:
-                avg_t = int(sum(times) / len(times))
+            # Promedio de tiempos: ponderado por pedidos entregados, no
+            # promedio-de-promedios -- un empleado con 1 pedido no puede
+            # pesar igual que uno con 200 en el tiempo global del equipo.
+            weighted = [(r[4], r[3]) for r in employees if r[4]]
+            if weighted:
+                total_weight = sum(c for _, c in weighted)
+                avg_t = int(sum(t * c for t, c in weighted) / total_weight)
                 self.card_avg_time.set_value(f'{avg_t} min')
             else:
                 self.card_avg_time.set_value('—')
@@ -2544,9 +2620,12 @@ class EmployeesModule:
         chart_data = []
         for i, (uid, username, name, count, avg_min) in enumerate(employees, 1):
             avg_str = f'{int(avg_min)} min' if avg_min else '—'
-            # Eficiencia: pedidos/min (más alto = mejor)
+            # Eficiencia: pedidos/hora AL RITMO PROPIO del empleado (60/avg_min).
+            # Antes era count/(avg_min/60), que mezclaba volumen con velocidad --
+            # un empleado con 10x mas pedidos salia 10x "mas eficiente" aunque
+            # tuviera exactamente la misma velocidad real de entrega.
             if avg_min and avg_min > 0:
-                eff = count / (avg_min / 60)  # pedidos por hora
+                eff = 60 / avg_min
                 eff_str = f'{eff:.1f} ped/h'
             else:
                 eff_str = '—'
@@ -2665,9 +2744,19 @@ class LocationsModule:
         map_frame = Gtk.Box()
         map_frame.get_style_context().add_class('frame')
         self.box.pack_start(map_frame, False, False, 0)
-        self.map_image = Gtk.Image()
-        self.map_image.set_size_request(-1, 220)
-        map_frame.pack_start(self.map_image, True, True, 0)
+
+        # Mapa interactivo real (arrastrar/zoom, como Google Maps) via
+        # WebKit2 + Leaflet local si esta disponible; si no, cae al mapa
+        # estatico Cairo de siempre -- nunca rompe el modulo entero.
+        self.webview = None
+        if HAS_WEBKIT:
+            self.webview = WebKit2.WebView()
+            self.webview.set_size_request(-1, 320)
+            map_frame.pack_start(self.webview, True, True, 0)
+        else:
+            self.map_image = Gtk.Image()
+            self.map_image.set_size_request(-1, 220)
+            map_frame.pack_start(self.map_image, True, True, 0)
         self.map_empty_label = Gtk.Label(label='Sin ubicaciones activas')
         self.map_empty_label.get_style_context().add_class('empty-state')
         map_frame.pack_start(self.map_empty_label, True, True, 0)
@@ -2677,7 +2766,7 @@ class LocationsModule:
         self.box.pack_start(table_title, False, False, 0)
 
         self.store = Gtk.ListStore(str, str, str, str, str, int)  # ultima col: user_id (oculto)
-        tree = Gtk.TreeView(model=self.store)
+        self.tree = Gtk.TreeView(model=self.store)
         for i, (colname, w) in enumerate([
             ('Usuario', 120), ('Nombre', 180), ('Rol', 90),
             ('Última posición', 220), ('Actualizado', 140),
@@ -2686,16 +2775,26 @@ class LocationsModule:
             col = Gtk.TreeViewColumn(colname, renderer, text=i)
             col.set_resizable(True)
             col.set_min_width(w)
-            tree.append_column(col)
-        tree.connect('row-activated', self._on_row_activated)
+            self.tree.append_column(col)
+        self.tree.connect('row-activated', self._on_row_activated)
         hint = Gtk.Label(label='Doble clic en un trabajador para ver su historial de ubicaciones y dispositivo', xalign=0)
         hint.get_style_context().add_class('label-dim')
         self.box.pack_start(hint, False, False, 0)
         scroll = Gtk.ScrolledWindow()
         scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
-        scroll.add(tree)
+        scroll.add(self.tree)
         scroll.set_min_content_height(320)
         self.box.pack_start(scroll, True, True, 0)
+
+        maps_row = Gtk.Box(spacing=8)
+        self.box.pack_start(maps_row, False, False, 0)
+        maps_row.pack_start(make_btn('🗺 Ver en Google Maps', 'btn-flat', small=True,
+                                      on_click=lambda *_: self._open_selected_in_google_maps()), False, False, 0)
+        self.maps_hint = Gtk.Label(label='Seleccioná un trabajador en la tabla de arriba', xalign=0)
+        self.maps_hint.get_style_context().add_class('label-dim')
+        maps_row.pack_start(self.maps_hint, False, False, 0)
+
+        self._latlng_by_uid = {}  # uid -> (lat, lng), para el boton de Google Maps
 
     def refresh(self):
         rows = query("""
@@ -2722,21 +2821,37 @@ class LocationsModule:
             self.card_recent.set_value('—')
 
         self.store.clear()
+        self._latlng_by_uid = {}
         for uid, username, name, role, lat, lng, recorded_at in rows:
             if lat is not None:
                 pos_str = f'{lat:.5f}, {lng:.5f}'
                 dt = datetime.datetime.fromisoformat(recorded_at.replace('Z', '+00:00')).astimezone()
                 when_str = dt.strftime('%d/%m %H:%M')
+                self._latlng_by_uid[uid] = (lat, lng)
             else:
                 pos_str = 'Sin reportar'
                 when_str = '—'
             self.store.append([username, name, role, pos_str, when_str, uid])
 
-        # Mapa en background -- descargar/componer tiles no debe congelar la UI.
-        points = [(name, lat, lng) for _uid, _u, name, _r, lat, lng, _t in rows if lat is not None]
-        run_in_background(lambda: render_static_map(points), self._apply_map)
+        # points: TODAS las ubicaciones en tiempo real de staff+admin, sin
+        # tope -- un pin por persona con reporte, para monitoreo completo.
+        points = [(name, lat, lng, role) for _uid, _u, name, role, lat, lng, _t in rows if lat is not None]
+        if HAS_WEBKIT:
+            self._apply_leaflet_map(points)
+        else:
+            run_in_background(lambda: render_static_map([(p[0], p[1], p[2]) for p in points]), self._apply_static_map)
 
-    def _apply_map(self, pixbuf):
+    def _apply_leaflet_map(self, points):
+        if not points:
+            self.webview.hide()
+            self.map_empty_label.show()
+            return
+        self.webview.show()
+        self.map_empty_label.hide()
+        html = build_leaflet_html(points)
+        self.webview.load_html(html, 'file://' + LEAFLET_DIR + '/')
+
+    def _apply_static_map(self, pixbuf):
         if pixbuf is None:
             self.map_image.hide()
             self.map_empty_label.show()
@@ -2744,6 +2859,22 @@ class LocationsModule:
             self.map_image.set_from_pixbuf(pixbuf)
             self.map_image.show()
             self.map_empty_label.hide()
+
+    def _open_selected_in_google_maps(self):
+        selection = self.tree.get_selection()
+        model, treeiter = selection.get_selected()
+        if treeiter is None:
+            self.parent.show_toast('Seleccioná un trabajador en la tabla primero')
+            return
+        uid = model[treeiter][5]
+        name = model[treeiter][1]
+        latlng = self._latlng_by_uid.get(uid)
+        if not latlng:
+            self.parent.show_toast(f'{name} todavía no reportó ubicación')
+            return
+        lat, lng = latlng
+        url = f'https://www.google.com/maps/search/?api=1&query={lat},{lng}'
+        sh(f'xdg-open "{url}" 2>/dev/null &')
 
     def _on_row_activated(self, tree, path, column):
         row = tree.get_model()[path]
@@ -2854,10 +2985,10 @@ class ConnectionsModule:
         table_title.get_style_context().add_class('section-title')
         self.box.pack_start(table_title, False, False, 0)
 
-        self.store = Gtk.ListStore(str, str, str, str, str, str)
+        self.store = Gtk.ListStore(str, str, str, str, str, str, str)
         tree = Gtk.TreeView(model=self.store)
         for i, (colname, w) in enumerate([
-            ('IP', 130), ('Requests/5min', 100), ('Fallos auth', 90),
+            ('IP', 130), ('Requests/5min', 100), ('Login fallido', 100), ('401/403 (info)', 100),
             ('Rutas 404', 90), ('Última ruta', 220), ('Estado', 100),
         ]):
             renderer = Gtk.CellRendererText()
@@ -2875,16 +3006,32 @@ class ConnectionsModule:
         scroll.set_min_content_height(320)
         self.box.pack_start(scroll, True, True, 0)
 
-    def _is_suspicious(self, requests, auth_fails, scans):
+    # localhost es el propio bot llamando a su webhook (waBot.js -> este
+    # mismo servidor) -- nunca es un atacante externo, y un 401 transitorio
+    # ahi (ej. reloj desincronizado en la firma HMAC) no debe marcarse como
+    # sospechoso.
+    LOOPBACK_IPS = {'127.0.0.1', '::1', '::ffff:127.0.0.1'}
+
+    def _is_suspicious(self, ip, requests, auth_fail_real, scans):
+        if ip in self.LOOPBACK_IPS:
+            return False
+        # Señal real de fuerza bruta: intentos de login fallidos
+        # (/api/auth/token, /api/auth/register), mismo umbral que el
+        # bloqueo por cuenta ya usa en auth.js (5 intentos). Los 401/403
+        # genericos (token expirado antes de refrescar, recurso opcional
+        # que no existe, etc.) son trafico normal de cualquier cliente de
+        # larga duracion -- no entran en esta cuenta, solo se muestran
+        # como informacion en la tabla.
         return (requests > self.REQUESTS_THRESHOLD
-                or auth_fails >= self.AUTH_FAIL_THRESHOLD
+                or auth_fail_real >= self.AUTH_FAIL_THRESHOLD
                 or scans >= self.SCAN_THRESHOLD)
 
     def refresh(self):
         rows = query("""
             SELECT ip,
                    SUM(requests)  AS requests,
-                   SUM(count_401) + SUM(count_403) AS auth_fails,
+                   SUM(count_auth_fail) AS auth_fail_real,
+                   SUM(count_401) + SUM(count_403) AS auth_fails_info,
                    SUM(count_404) AS scans,
                    MAX(last_path) AS last_path
             FROM ip_activity
@@ -2895,14 +3042,14 @@ class ConnectionsModule:
         blocked = {r[0] for r in query("SELECT ip FROM blocked_ips")}
 
         self.card_total.set_value(str(len(rows)))
-        suspicious = [r for r in rows if self._is_suspicious(r[1], r[2], r[3])]
+        suspicious = [r for r in rows if self._is_suspicious(r[0], r[1], r[2], r[4])]
         self.card_suspect.set_value(str(len(suspicious)))
         self.card_blocked.set_value(str(len(blocked)))
 
         self.store.clear()
-        for ip, requests, auth_fails, scans, last_path in rows:
-            estado = 'BLOQUEADA' if ip in blocked else ('SOSPECHOSA' if self._is_suspicious(requests, auth_fails, scans) else 'normal')
-            self.store.append([ip, str(requests), str(auth_fails), str(scans), last_path or '—', estado])
+        for ip, requests, auth_fail_real, auth_fails_info, scans, last_path in rows:
+            estado = 'BLOQUEADA' if ip in blocked else ('SOSPECHOSA' if self._is_suspicious(ip, requests, auth_fail_real, scans) else 'normal')
+            self.store.append([ip, str(requests), str(auth_fail_real), str(auth_fails_info), str(scans), last_path or '—', estado])
 
         alerts = query("SELECT kind, message, created_at FROM security_alerts ORDER BY id DESC LIMIT 20")
         self.alerts_store.clear()
@@ -2917,7 +3064,7 @@ class ConnectionsModule:
 
     def _on_row_activated(self, tree, path, column):
         row = tree.get_model()[path]
-        self._show_detail(row[0], row[5])
+        self._show_detail(row[0], row[6])
 
     def _show_detail(self, ip, estado_actual):
         dialog = Gtk.Dialog(title=f'IP — {ip}', transient_for=self.parent,
@@ -2931,17 +3078,17 @@ class ConnectionsModule:
         box.set_border_width(14)
 
         history = query("""
-            SELECT minute, requests, count_401, count_403, count_404, last_path
+            SELECT minute, requests, count_auth_fail, count_401, count_403, count_404, last_path
             FROM ip_activity WHERE ip = ? ORDER BY minute DESC LIMIT 60
         """, (ip,))
         store = Gtk.ListStore(str, str, str, str)
         tree = Gtk.TreeView(model=store)
-        for i, colname in enumerate(['Minuto', 'Requests', 'Fallos auth', 'Ruta']):
+        for i, colname in enumerate(['Minuto', 'Requests', 'Login fallido', 'Ruta']):
             renderer = Gtk.CellRendererText()
             col = Gtk.TreeViewColumn(colname, renderer, text=i)
             tree.append_column(col)
-        for minute, requests, c401, c403, c404, last_path in history:
-            store.append([minute, str(requests), str(c401 + c403), last_path or '—'])
+        for minute, requests, auth_fail_real, c401, c403, c404, last_path in history:
+            store.append([minute, str(requests), str(auth_fail_real), last_path or '—'])
         scroll = Gtk.ScrolledWindow()
         scroll.add(tree)
         box.pack_start(scroll, True, True, 0)
@@ -3123,20 +3270,32 @@ class DataModule:
             self.parent.show_toast('Elegí al menos una categoría')
             return
 
-        self.parent.show_toast(f'Generando {fmt.upper()}, esto puede tardar unos segundos...')
+        self.parent.show_toast(f'Generando {len(selected)} archivo(s) {fmt.upper()}, esto puede tardar unos segundos...')
         endpoint = '/api/reports/export-range' if fmt == 'pdf' else '/api/reports/export-range-excel'
+        # Un archivo POR CATEGORIA -- cada categoria es un tipo de dato
+        # distinto (ventas, empleados, clientes, etc.), no tiene sentido
+        # mezclarlos en un solo PDF/Excel gigante. Un request por categoria
+        # en vez de mandar el array completo de una.
         run_in_background(
-            lambda: http_post(endpoint, {'from': from_date, 'to': to_date, 'categories': selected}, timeout=30),
-            lambda result: self._on_export_done(result, fmt.upper()))
+            lambda: [http_post(endpoint, {'from': from_date, 'to': to_date, 'categories': [cat]}, timeout=30) for cat in selected],
+            lambda results: self._on_export_done(results, fmt.upper()))
 
-    def _on_export_done(self, result, label):
-        if result and result.get('success'):
-            filepath = result.get('filepath')
-            self.parent.show_toast(f'{label} generado: {result.get("filename")}')
-            if filepath and os.path.exists(filepath):
-                sh(f'xdg-open "{filepath}" 2>/dev/null &')
+    def _on_export_done(self, results, label):
+        results = results or []
+        ok_count = 0
+        for result in results:
+            if result and result.get('success'):
+                ok_count += 1
+                filepath = result.get('filepath')
+                if filepath and os.path.exists(filepath):
+                    sh(f'xdg-open "{filepath}" 2>/dev/null &')
+        fail_count = len(results) - ok_count
+        if ok_count and not fail_count:
+            self.parent.show_toast(f'{ok_count} archivo(s) {label} generado(s) correctamente')
+        elif ok_count:
+            self.parent.show_toast(f'{ok_count} archivo(s) generados, {fail_count} fallaron')
         else:
-            self.parent.show_toast(f'Error generando el {label}')
+            self.parent.show_toast(f'Error generando los archivos {label}')
 
 
 # ══════════════════════════════════════════════════════════════════════════════
