@@ -24,8 +24,7 @@ router.get('/', clientAuth, (req, res) => {
 });
 
 const ALLOWED_SETTINGS_KEYS = [
-  'nequi_phone', 'nequi_name', 'business_name', 'business_phone',
-  'delivery_message', 'greeting_message',
+  'nequi_phone', 'nequi_name',
   'empresa_nombre', 'empresa_descripcion', 'horario_atencion',
   'theme_primary', 'theme_accent', 'theme_name',
 ];

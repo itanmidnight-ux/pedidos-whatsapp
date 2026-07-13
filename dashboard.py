@@ -3409,6 +3409,32 @@ class ConfigModule:
 
         self.box.pack_start(make_btn('💾 Guardar y reiniciar servicio', 'btn-primary', on_click=lambda *_: self._save_config()), False, False, 8)
 
+        # ─── Información del negocio ─────────────────────────────────
+        biz_title = Gtk.Label(label='INFORMACIÓN DEL NEGOCIO', xalign=0)
+        biz_title.get_style_context().add_class('section-title')
+        self.box.pack_start(biz_title, False, False, 8)
+
+        biz_hint = Gtk.Label(
+            label='Esto lo ve el cliente en la app (nombre del negocio, horario). '
+                  'Se aplica al instante, sin reiniciar el servidor.',
+            xalign=0)
+        biz_hint.get_style_context().add_class('label-muted')
+        biz_hint.set_line_wrap(True)
+        self.box.pack_start(biz_hint, False, False, 0)
+
+        biz_grid = Gtk.Grid(column_spacing=14, row_spacing=10)
+        self.box.pack_start(biz_grid, False, False, 0)
+
+        settings = http_get('/api/settings') or {}
+        current = (settings or {}).get('settings', {})
+        self.entry_empresa_nombre = self._field(biz_grid, 0, 'Nombre del negocio', current.get('empresa_nombre', ''))
+        self.entry_empresa_desc   = self._field(biz_grid, 1, 'Descripción', current.get('empresa_descripcion', ''))
+        self.entry_horario        = self._field(biz_grid, 2, 'Horario de atención', current.get('horario_atencion', ''))
+
+        self.box.pack_start(
+            make_btn('💾 Guardar información del negocio', 'btn-primary', on_click=lambda *_: self._save_business_info()),
+            False, False, 8)
+
         # ─── Acciones sensibles ─────────────────────────────────────
         sec_title = Gtk.Label(label='ACCIONES SENSIBLES', xalign=0)
         sec_title.get_style_context().add_class('section-title')
@@ -3468,6 +3494,16 @@ class ConfigModule:
         sh(f'systemctl restart {SERVICE}')
         self.status_label.set_text('✓ Guardado. Servicio reiniciando…')
         GLib.timeout_add(2000, lambda: (self.parent.refresh_all(), False)[1])
+
+    def _save_business_info(self, _btn=None):
+        pairs = [
+            ('empresa_nombre', self.entry_empresa_nombre.get_text().strip()),
+            ('empresa_descripcion', self.entry_empresa_desc.get_text().strip()),
+            ('horario_atencion', self.entry_horario.get_text().strip()),
+        ]
+        for key, value in pairs:
+            http_put('/api/settings', {'key': key, 'value': value})
+        self.status_label.set_text('✓ Información del negocio guardada.')
 
     def _regen_secrets(self, _btn=None):
         dialog = Gtk.MessageDialog(
