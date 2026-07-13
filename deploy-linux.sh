@@ -323,7 +323,7 @@ install_npm_deps() {
     if [ ! -d node_modules ] || [ package.json -nt node_modules/.package-lock.json 2>/dev/null ]; then
         local log="/tmp/npm-install-$$.log"
         ( npm ci --omit=dev &>"$log" || npm install --omit=dev &>"$log" ) &
-        spinner $! "Instalando dependencias npm..."
+        spinner $! "Instalando dependencias npm..." || true
         tail -5 "$log"; rm -f "$log"
     else
         ok "Dependencias npm OK (cache)"
