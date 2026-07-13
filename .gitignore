@@ -28,3 +28,6 @@ installer/node_modules/
 logs/
 __pycache__/
 .deploy-config
+
+# Specs/planes internos (brainstorming/writing-plans) -- no se publican
+docs/
