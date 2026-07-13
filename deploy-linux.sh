@@ -380,6 +380,8 @@ configure_env() {
     fi
     [ -n "$(env_get API_KEY)" ]    || env_set API_KEY "$(gen_secret)"
     [ -n "$(env_get JWT_SECRET)" ] || env_set JWT_SECRET "$(gen_secret)"
+    [ -n "$(env_get WEBHOOK_SECRET)" ]        || env_set WEBHOOK_SECRET "$(gen_secret)"
+    [ -n "$(env_get BACKUP_ENCRYPTION_KEY)" ] || env_set BACKUP_ENCRYPTION_KEY "$(gen_secret)"
     [ -n "$(env_get DB_PATH)" ]      || env_set DB_PATH "$APPDATA_BOT/pedidos.db"
     [ -n "$(env_get REPORTS_DIR)" ]  || env_set REPORTS_DIR "$APPDATA_BOT/reports"
     port=$(env_get PORT); port="${port:-$DEFAULT_PORT}"
