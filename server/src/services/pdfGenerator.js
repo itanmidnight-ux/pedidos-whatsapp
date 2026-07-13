@@ -280,6 +280,15 @@ const CATEGORY_LABELS = {
   empleados: 'Desempeño de empleados',
   clientes: 'Clientes',
 };
+// Nombres de archivo ASCII (sin tildes/espacios) -- un archivo por
+// categoria, nunca se pisan entre si aunque se pidan en la misma corrida.
+const CATEGORY_SLUGS = {
+  resumen: 'resumen-financiero',
+  ventas_dia: 'ventas-por-dia',
+  ventas_producto: 'ventas-por-producto',
+  empleados: 'desempeno-empleados',
+  clientes: 'clientes',
+};
 
 function getFinancialSummary(db, fromISO, toISO) {
   const row = db.prepare(`
@@ -352,8 +361,31 @@ function getCustomerReport(db, fromISO, toISO) {
   return { nuevos, recurrentes, clientes };
 }
 
+// Fila de columnas en texto plano (PDFKit no trae tablas): un renglon de
+// headers en negrita/gris antes de los datos, con las mismas posiciones X
+// fijas que las filas de datos -- para que el lector identifique cada
+// columna sin ambiguedad, sin necesitar una tabla real.
+function tableHeader(doc, cols) {
+  ensureSpace(doc, 22);
+  const y = doc.y;
+  doc.fontSize(9).font('Helvetica-Bold').fillColor('#666');
+  for (const [label, x] of cols) doc.text(label, x, y, { lineBreak: false });
+  doc.moveDown(0.9);
+  doc.moveTo(doc.page.margins.left, doc.y).lineTo(doc.page.width - doc.page.margins.right, doc.y)
+     .strokeColor('#ddd').lineWidth(0.5).stroke();
+  doc.moveDown(0.4);
+}
+
+function emptyState(doc, msg) {
+  ensureSpace(doc, 30);
+  doc.fontSize(11).font('Helvetica-Oblique').fillColor('#999').text(msg, { align: 'center' });
+  doc.moveDown(0.5);
+}
+
 function renderCategorySection(doc, category, data) {
   sectionHeader(doc, CATEGORY_LABELS[category]);
+  const left = doc.page.margins.left;
+
   if (category === 'resumen') {
     drawSummary(doc, [
       ['Pedidos totales', data.total],
@@ -364,31 +396,55 @@ function renderCategorySection(doc, category, data) {
       ['Ticket promedio', `$${Math.round(Number(data.ticket_promedio)).toLocaleString('es-CO')}`],
     ]);
   } else if (category === 'ventas_dia') {
+    if (!data.length) { emptyState(doc, 'Sin ventas registradas en este rango de fechas.'); return; }
+    tableHeader(doc, [['Fecha', left], ['Pedidos', left + 160], ['Ingresos', left + 260]]);
     for (const row of data) {
       ensureSpace(doc, 20);
+      const y = doc.y;
       doc.fontSize(10).font('Helvetica').fillColor('#333')
-         .text(`${row.dia}   ${row.pedidos} pedidos   $${Number(row.ingresos).toLocaleString('es-CO')}`);
+        .text(row.dia, left, y, { lineBreak: false })
+        .text(String(row.pedidos), left + 160, y, { lineBreak: false })
+        .text(`$${Number(row.ingresos).toLocaleString('es-CO')}`, left + 260, y, { lineBreak: false });
+      doc.moveDown(0.6);
     }
   } else if (category === 'ventas_producto') {
+    if (!data.length) { emptyState(doc, 'Sin ventas registradas en este rango de fechas.'); return; }
+    tableHeader(doc, [['Producto', left], ['Unidades', left + 260], ['Ingresos', left + 350]]);
     for (const row of data) {
       ensureSpace(doc, 20);
+      const y = doc.y;
       doc.fontSize(10).font('Helvetica').fillColor('#333')
-         .text(`${stripEmoji(row.producto)}   ${row.unidades} unidades   $${Number(row.ingresos).toLocaleString('es-CO')}`);
+        .text(stripEmoji(row.producto).slice(0, 45), left, y, { width: 250, lineBreak: false })
+        .text(String(row.unidades), left + 260, y, { lineBreak: false })
+        .text(`$${Number(row.ingresos).toLocaleString('es-CO')}`, left + 350, y, { lineBreak: false });
+      doc.moveDown(0.6);
     }
   } else if (category === 'empleados') {
+    if (!data.length) { emptyState(doc, 'Sin entregas registradas en este rango de fechas.'); return; }
+    tableHeader(doc, [['Empleado', left], ['Entregados', left + 260], ['Min. promedio', left + 350]]);
     for (const row of data) {
       ensureSpace(doc, 20);
+      const y = doc.y;
       doc.fontSize(10).font('Helvetica').fillColor('#333')
-         .text(`${stripEmoji(row.nombre)}   ${row.entregados} entregados   ${row.minutos_prom || 0} min prom.`);
+        .text(stripEmoji(row.nombre).slice(0, 40), left, y, { width: 250, lineBreak: false })
+        .text(String(row.entregados), left + 260, y, { lineBreak: false })
+        .text(String(row.minutos_prom || 0), left + 350, y, { lineBreak: false });
+      doc.moveDown(0.6);
     }
   } else if (category === 'clientes') {
     doc.fontSize(10).font('Helvetica-Bold').fillColor('#444')
-       .text(`Nuevos: ${data.nuevos}   Recurrentes: ${data.recurrentes}`);
-    doc.moveDown(0.3);
+       .text(`Clientes nuevos en el rango: ${data.nuevos}     Clientes recurrentes: ${data.recurrentes}`);
+    doc.moveDown(0.5);
+    if (!data.clientes.length) { emptyState(doc, 'Sin clientes con pedidos en este rango de fechas.'); return; }
+    tableHeader(doc, [['Cliente', left], ['Pedidos', left + 260], ['Gastado', left + 350]]);
     for (const c of data.clientes) {
       ensureSpace(doc, 20);
+      const y = doc.y;
       doc.fontSize(10).font('Helvetica').fillColor('#333')
-         .text(`${stripEmoji(c.name || c.phone)}   ${c.pedidos} pedidos   $${Number(c.gastado).toLocaleString('es-CO')}`);
+        .text(stripEmoji(c.name || c.phone || 'N/A').slice(0, 40), left, y, { width: 250, lineBreak: false })
+        .text(String(c.pedidos), left + 260, y, { lineBreak: false })
+        .text(`$${Number(c.gastado).toLocaleString('es-CO')}`, left + 350, y, { lineBreak: false });
+      doc.moveDown(0.6);
     }
   }
   doc.moveDown(0.5);
@@ -403,13 +459,18 @@ async function generateRangeReportPDF(fromISO, toISO, categories) {
   const reportsDir = process.env.REPORTS_DIR || path.join(__dirname, '../../reports');
   if (!fs.existsSync(reportsDir)) fs.mkdirSync(reportsDir, { recursive: true });
 
-  const filename = `reporte-${fromISO}_a_${toISO}.pdf`;
+  // Nombre y portada identifican la categoria exacta -- el dashboard pide
+  // un archivo por categoria elegida, nunca deben pisarse ni confundirse
+  // entre si en la carpeta de descargas.
+  const slug = cats.map(c => CATEGORY_SLUGS[c]).join('_');
+  const title = cats.length === 1 ? CATEGORY_LABELS[cats[0]] : 'Reporte de Datos';
+  const filename = `${slug}-${fromISO}_a_${toISO}.pdf`;
   const filepath = path.join(reportsDir, filename);
   const doc = new PDFDocument({ margin: 40, size: 'A4', bufferPages: true });
   const stream = fs.createWriteStream(filepath);
   doc.pipe(stream);
 
-  drawCover(doc, 'Reporte de Datos', `${fromLabel}  —  ${toLabel}`);
+  drawCover(doc, title, `${fromLabel}  —  ${toLabel}`);
 
   for (const cat of cats) {
     let data;
@@ -433,6 +494,6 @@ async function generateRangeReportPDF(fromISO, toISO, categories) {
 }
 
 module.exports = {
-  generateDailyPDF, generateRangeReportPDF, CATEGORIES,
+  generateDailyPDF, generateRangeReportPDF, CATEGORIES, CATEGORY_LABELS, CATEGORY_SLUGS,
   getFinancialSummary, getSalesByDay, getSalesByProduct, getEmployeePerformance, getCustomerReport,
 };
