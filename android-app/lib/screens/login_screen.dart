@@ -85,7 +85,7 @@ class _LoginScreenState extends State<LoginScreen>
           autocorrect: false,
           decoration: InputDecoration(
             labelText: 'URL del servidor',
-            hintText: 'https://tu-dominio.duckdns.org',
+            hintText: 'https://tu-dominio.com',
             filled: true,
             fillColor: const Color(0xFFF6F6F6),
             border: OutlineInputBorder(

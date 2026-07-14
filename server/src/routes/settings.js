@@ -27,7 +27,23 @@ const ALLOWED_SETTINGS_KEYS = [
   'nequi_phone', 'nequi_name',
   'empresa_nombre', 'empresa_descripcion', 'horario_atencion',
   'theme_primary', 'theme_accent', 'theme_name',
+  'server_domain', 'extra_domains',
 ];
+
+// Dominio suelto (sin protocolo), opcionalmente con :puerto. Usado tanto para
+// server_domain (uno) como cada entrada separada por coma de extra_domains.
+const DOMAIN_RE = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+(:[0-9]{1,5})?$/i;
+
+function validateDomainSetting(key, strVal) {
+  if (key !== 'server_domain' && key !== 'extra_domains') return null;
+  if (!strVal) return null; // vacio = quitar/deshabilitar, valido
+  const entries = strVal.split(',').map(d => d.trim().replace(/^https?:\/\//i, '').replace(/\/+$/, '')).filter(Boolean);
+  if (key === 'server_domain' && entries.length > 1) return 'server_domain acepta un solo dominio';
+  for (const d of entries) {
+    if (!DOMAIN_RE.test(d)) return `dominio inválido: "${d}" (formato esperado: midominio.com, sin protocolo ni rutas)`;
+  }
+  return null;
+}
 
 // PUT /api/settings — update setting (admin only)
 router.put('/', adminAuth, (req, res) => {
@@ -37,6 +53,8 @@ router.put('/', adminAuth, (req, res) => {
     return res.status(400).json({ error: `key inválido. Permitidos: ${ALLOWED_SETTINGS_KEYS.join(', ')}` });
   const strVal = String(value).trim();
   if (strVal.length > 500) return res.status(400).json({ error: 'value máximo 500 caracteres' });
+  const domainErr = validateDomainSetting(key, strVal);
+  if (domainErr) return res.status(400).json({ error: domainErr });
   getDB().prepare(`
     INSERT INTO settings (key, value, updated_at) VALUES (?, ?, datetime('now','localtime'))
     ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at

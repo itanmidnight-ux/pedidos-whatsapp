@@ -64,18 +64,39 @@ app.use(helmet({
 }));
 
 // ── CORS restrictivo ─────────────────────────────────────────
-const allowedOrigins = [
-  process.env.SERVER_DOMAIN  ? `https://${process.env.SERVER_DOMAIN}` : null,
-  'https://tu-dominio.duckdns.org',
-  'https://midominio.ts.net',
-  'http://localhost:3000',
-  'http://127.0.0.1:3000',
-].filter(Boolean);
+// Ningun dominio real va hardcodeado aqui -- cada instalacion configura el
+// suyo desde la pestaña Configuracion del dashboard (settings.server_domain /
+// settings.extra_domains, tabla `settings`) o via env SERVER_DOMAIN como
+// respaldo. Cache corto para no golpear la DB en cada request.
+const LOCAL_DEV_ORIGINS = ['http://localhost:3000', 'http://127.0.0.1:3000'];
+let originsCache = { at: 0, list: [] };
+const ORIGINS_CACHE_MS = 5000;
+
+function normalizeDomain(raw) {
+  const d = String(raw || '').trim().replace(/^https?:\/\//i, '').replace(/\/+$/, '');
+  return /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+(:[0-9]{1,5})?$/i.test(d) ? d : null;
+}
+
+function getAllowedOrigins(now) {
+  if (now - originsCache.at < ORIGINS_CACHE_MS) return originsCache.list;
+  const domains = new Set();
+  if (process.env.SERVER_DOMAIN) domains.add(normalizeDomain(process.env.SERVER_DOMAIN));
+  try {
+    const { getDB } = require('./db/database');
+    const rows = getDB().prepare(`SELECT value FROM settings WHERE key IN ('server_domain','extra_domains')`).all();
+    for (const r of rows) {
+      String(r.value || '').split(',').forEach(d => domains.add(normalizeDomain(d)));
+    }
+  } catch (_e) { /* DB aun no lista (arranque) -- usa solo env/localhost por ahora */ }
+  const list = [...LOCAL_DEV_ORIGINS, ...[...domains].filter(Boolean).map(d => `https://${d}`)];
+  originsCache = { at: now, list };
+  return list;
+}
 
 app.use(cors({
   origin: (origin, cb) => {
     if (!origin) return cb(null, true);
-    if (allowedOrigins.includes(origin)) return cb(null, true);
+    if (getAllowedOrigins(Date.now()).includes(origin)) return cb(null, true);
     cb(new Error('Origen no permitido por CORS'));
   },
   credentials: true,

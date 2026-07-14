@@ -121533,7 +121533,7 @@ A.aUW.prototype={
 $0(){},
 $S:0}
 A.aV2.prototype={
-$1(a){var s=null,r=A.aI(20),q=this.b,p=t.p,o=A.aO(A.b([A.b6(B.a_O,q,s,s),B.aF,B.atO],p),B.m,B.i,B.l,0),n=this.c,m=A.fr(!1,B.aV,!1,s,!0,B.q,s,A.fL(),n,s,s,s,s,s,2,A.j3(s,new A.cD(4,A.aI(12),B.r),s,s,s,s,s,s,!0,s,s,s,s,s,s,B.fV,!0,s,s,s,s,new A.cD(4,A.aI(12),new A.aQ(q,1,B.w,-1)),s,s,s,s,s,s,s,s,s,"https://tu-dominio.duckdns.org",s,s,s,s,s,s,s,s,"URL del servidor",!0,!0,!1,s,s,s,s,s,s,s,s,s,s,s,s,s,s),B.v,!0,s,!0,s,!1,s,B.aW,s,s,s,s,B.Pz,s,s,s,1,s,s,!1,"\u2022",s,s,s,s,s,!1,s,s,!1,s,!0,s,B.aI,s,s,s,s,s,s,s,s,s,s,s,s,!0,B.ae,s,B.bd,s,s,s,s),l=this.a
+$1(a){var s=null,r=A.aI(20),q=this.b,p=t.p,o=A.aO(A.b([A.b6(B.a_O,q,s,s),B.aF,B.atO],p),B.m,B.i,B.l,0),n=this.c,m=A.fr(!1,B.aV,!1,s,!0,B.q,s,A.fL(),n,s,s,s,s,s,2,A.j3(s,new A.cD(4,A.aI(12),B.r),s,s,s,s,s,s,!0,s,s,s,s,s,s,B.fV,!0,s,s,s,s,new A.cD(4,A.aI(12),new A.aQ(q,1,B.w,-1)),s,s,s,s,s,s,s,s,s,"https://tu-dominio.com",s,s,s,s,s,s,s,s,"URL del servidor",!0,!0,!1,s,s,s,s,s,s,s,s,s,s,s,s,s,s),B.v,!0,s,!0,s,!1,s,B.aW,s,s,s,s,B.Pz,s,s,s,1,s,s,!1,"\u2022",s,s,s,s,s,!1,s,s,!1,s,!0,s,B.aI,s,s,s,s,s,s,s,s,s,s,s,s,!0,B.ae,s,B.bd,s,s,s,s),l=this.a
 return A.ig(A.b([A.eR(B.cs,new A.aV0(l),s),A.hT(B.Q_,new A.aV1(l,n),A.iW(q,s,s,s,s,s))],p),m,new A.cc(r,B.r),o)},
 $S:28}
 A.aV0.prototype={
@@ -135376,7 +135376,7 @@ $.bij=null
 $.b4_=null
 $.bzR=function(){var s=t.N
 return A.af(["pending","Pendientes","claimed","Reclamados","en_camino","En camino"],s,s)}()
-$.by="https://midominio.ts.net"
+$.by=""
 $.fA=""
 $.TY=""
 $.hN=""

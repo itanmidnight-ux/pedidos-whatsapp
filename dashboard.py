@@ -3552,6 +3552,33 @@ class ConfigModule:
 
         self.box.pack_start(make_btn('💾 Guardar y reiniciar servicio', 'btn-primary', on_click=lambda *_: self._save_config()), False, False, 8)
 
+        # ─── Dominios adicionales (CORS, sin reinicio) ───────────────
+        dom_title = Gtk.Label(label='DOMINIOS ADICIONALES (ACCESO REMOTO)', xalign=0)
+        dom_title.get_style_context().add_class('section-title')
+        self.box.pack_start(dom_title, False, False, 8)
+
+        dom_hint = Gtk.Label(
+            label='Cualquier dominio, subdominio HTTPS, DuckDNS o Tailscale que deba poder '
+                  'conectarse al servidor (app web, otro panel, etc). Varios separados por '
+                  'coma. Se aplica en segundos, sin reiniciar el servicio.',
+            xalign=0)
+        dom_hint.get_style_context().add_class('label-muted')
+        dom_hint.set_line_wrap(True)
+        self.box.pack_start(dom_hint, False, False, 0)
+
+        dom_grid = Gtk.Grid(column_spacing=14, row_spacing=10)
+        self.box.pack_start(dom_grid, False, False, 0)
+
+        settings_pre = (http_get('/api/settings') or {}).get('settings', {})
+        self.entry_extra_domains = self._field(
+            dom_grid, 0, 'Dominios adicionales (ej: midominio.com, otro.duckdns.org)',
+            settings_pre.get('extra_domains', ''))
+        self.entry_extra_domains.set_width_chars(50)
+
+        self.box.pack_start(
+            make_btn('💾 Guardar dominios adicionales', 'btn-primary', on_click=lambda *_: self._save_domains()),
+            False, False, 8)
+
         # ─── Información del negocio ─────────────────────────────────
         biz_title = Gtk.Label(label='INFORMACIÓN DEL NEGOCIO', xalign=0)
         biz_title.get_style_context().add_class('section-title')
@@ -3629,14 +3656,27 @@ class ConfigModule:
         return entry
 
     def _save_config(self, _btn=None):
+        domain = self.entry_domain.get_text().strip()
         env_set('PORT', self.entry_port.get_text().strip() or '3000')
         env_set('BOT_PHONE', re.sub(r'\D', '', self.entry_phone.get_text()))
-        env_set('SERVER_DOMAIN', self.entry_domain.get_text().strip())
+        env_set('SERVER_DOMAIN', domain)
         env_set('HOST', self.entry_host.get_text().strip() or '127.0.0.1')
         env_set('BOT_ENABLED', self.entry_bot_enabled.get_text().strip().lower() in ('true', '1', 'yes'))
+        # Tambien a la DB (settings.server_domain): asi el CORS lo toma en
+        # segundos por cache, sin depender de que el reinicio ya haya pasado.
+        http_put('/api/settings', {'key': 'server_domain', 'value': domain})
         sh(f'systemctl restart {SERVICE}')
         self.status_label.set_text('✓ Guardado. Servicio reiniciando…')
         GLib.timeout_add(2000, lambda: (self.parent.refresh_all(), False)[1])
+
+    def _save_domains(self, _btn=None):
+        value = self.entry_extra_domains.get_text().strip()
+        result = http_put('/api/settings', {'key': 'extra_domains', 'value': value})
+        if result and result.get('ok'):
+            self.status_label.set_text('✓ Dominios adicionales guardados. Activos en unos segundos.')
+        else:
+            err = (result or {}).get('error', 'error desconocido')
+            self.status_label.set_text(f'✗ No se guardó: {err}')
 
     def _save_business_info(self, _btn=None):
         pairs = [
