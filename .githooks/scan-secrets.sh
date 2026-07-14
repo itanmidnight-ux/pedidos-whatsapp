@@ -10,8 +10,12 @@
 set -euo pipefail
 
 # Placeholders que SI son validos (los que dejamos nosotros mismos en el
-# codigo como ejemplo) -- no deben disparar el bloqueo.
-ALLOWLIST_RE='tu-dominio\.com|tu-dominio\.duckdns\.org|midominio\.ts\.net|mi-negocio\.duckdns\.org|ejemplo\.com|example\.com'
+# codigo o en tests como ejemplo/dato ficticio) -- no deben disparar el
+# bloqueo. Incluye tambien "www.duckdns.org": es el endpoint FIJO y publico
+# de la API de DuckDNS (igual para cualquier usuario del servicio, no es un
+# subdominio privado de nadie) -- distinto de un "<subdominio>.duckdns.org"
+# real, que si queda bloqueado.
+ALLOWLIST_RE='tu-dominio\.com|tu-dominio\.duckdns\.org|midominio\.ts\.net|midominio\.com|otrodominio\.com|mi-negocio\.duckdns\.org|ejemplo\.com|example\.com|www\.duckdns\.org|uno\.duckdns\.org|dos\.ts\.net|cors-test-domain\.com|no-deberia-pasar\.com|prueba-panel\.example\.com'
 
 PATTERNS=(
     '[a-z0-9-]+\.ts\.net'                         # hostname real de Tailscale

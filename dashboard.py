@@ -22,6 +22,7 @@ from gi.repository import Gtk, Gdk, GLib, GdkPixbuf
 import cairo
 import subprocess, sqlite3, os, re, sys, datetime, secrets, json, base64, threading, math
 import urllib.request, urllib.error
+import shutil, platform
 
 # Mapa interactivo (arrastrar/zoom) en Ubicaciones via WebKit2 + Leaflet local.
 # Opcional a proposito: en un servidor donde deploy-linux.sh todavia no
@@ -38,6 +39,8 @@ except Exception:
 
 # ─── Configuración de rutas y servicios ─────────────────────────────────────────
 SERVICE         = os.environ.get('DEPLOY_SERVICE', 'pedidos-bot')
+CF_SVC          = os.environ.get('DEPLOY_CF_SVC', 'pedidos-bot-tunnel')
+SERVICE_USER    = os.environ.get('DEPLOY_SERVICE_USER', 'pedidos-bot')
 PROJ            = os.environ.get('DEPLOY_PROJ', os.path.dirname(os.path.abspath(__file__)))
 ENV_FILE        = os.path.join(PROJ, 'server', '.env')
 LOG_DIR         = os.environ.get('DEPLOY_LOG_DIR', '/var/log/pedidos-bot')
@@ -463,6 +466,27 @@ def load_conf(key):
     except Exception:
         pass
     return ''
+
+
+def save_conf(key, value):
+    """Escribe una clave en .deploy-config (mismo archivo y formato KEY=VALUE
+    que usa deploy-linux.sh -- idempotente, ambos pueden leerse/escribirse
+    sin pisarse). Solo preferencias (ej. ACCESS_METHOD), nunca secretos."""
+    conf_path = os.path.join(PROJ, '.deploy-config')
+    lines = []
+    if os.path.exists(conf_path):
+        with open(conf_path) as f:
+            lines = f.readlines()
+    found = False
+    for i, line in enumerate(lines):
+        if line.startswith(key + '='):
+            lines[i] = f'{key}={value}\n'
+            found = True
+            break
+    if not found:
+        lines.append(f'{key}={value}\n')
+    with open(conf_path, 'w') as f:
+        f.writelines(lines)
 
 
 def env_get(key):
@@ -3519,6 +3543,434 @@ class BrandModule:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# MÓDULO: DOMINIO / ACCESO REMOTO
+# ══════════════════════════════════════════════════════════════════════════════
+
+class DomainModule:
+    """Asistente de primer uso para conectar el servidor a un dominio publico.
+
+    Estado por defecto del proyecto (instalacion nueva): sin dominio, solo
+    accesible en red local. Este modulo pide los datos correctos segun el
+    metodo elegido y deja todo funcionando exactamente como ya lo hace el
+    resto del dashboard (settings.server_domain / extra_domains en la DB,
+    mismo mecanismo que usa app.js para CORS -- ver ConfigModule). Cada
+    metodo produce una conexion de tunel UNICA por dispositivo (nunca un
+    valor compartido/hardcodeado): DuckDNS usa el token de la cuenta propia
+    del usuario, Cloudflare Tunnel genera una URL aleatoria nueva por
+    instalacion, y Tailscale Funnel exige login por dispositivo -- ninguno
+    de los tres puede coincidir entre dos instalaciones distintas.
+    """
+
+    METHOD_LABELS = {
+        'ninguno':    'Ninguno (solo red local)',
+        'propio':     'Dominio propio (ya tengo DNS + proxy funcionando)',
+        'duckdns':    'DuckDNS (subdominio gratis)',
+        'cloudflare': 'Cloudflare Tunnel (recomendado, sin abrir puertos)',
+        'tailscale':  'Tailscale Funnel (requiere cuenta Tailscale)',
+    }
+    METHOD_ORDER = ['ninguno', 'propio', 'duckdns', 'cloudflare', 'tailscale']
+
+    def __init__(self, parent):
+        self.parent = parent
+        self.box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
+        self._busy = False
+        self._initial_synced = False
+
+        header = SectionHeader('Dominio y acceso remoto',
+                               'Conecta el servidor a internet -- se usa una sola vez al '
+                               'principio; si ya lo configuraste, esto solo muestra el estado')
+        self.box.pack_start(header, False, False, 0)
+
+        # ─── Estado actual ──────────────────────────────────────────
+        cards = Gtk.Box(spacing=12)
+        self.box.pack_start(cards, False, False, 0)
+        self.card_method = StatCard('Método activo', sub='Acceso remoto')
+        self.card_domain = StatCard('Dominio', sub='CORS / URL pública')
+        for c in (self.card_method, self.card_domain):
+            cards.pack_start(c, True, True, 0)
+
+        # ─── Selector de método ─────────────────────────────────────
+        sel_title = Gtk.Label(label='MÉTODO DE CONEXIÓN', xalign=0)
+        sel_title.get_style_context().add_class('section-title')
+        self.box.pack_start(sel_title, False, False, 8)
+
+        self.combo = Gtk.ComboBoxText()
+        for key in self.METHOD_ORDER:
+            self.combo.append(key, self.METHOD_LABELS[key])
+        self.combo.set_active_id('ninguno')
+        self.combo.connect('changed', lambda *_: self._show_method_fields())
+        self.box.pack_start(self.combo, False, False, 0)
+
+        # Caja de campos por método -- una por opción, se muestra/oculta
+        # segun el combo (mas simple y confiable en GTK3 que un Gtk.Stack
+        # anidado dentro de otro Gtk.Stack para este caso).
+        self.field_boxes = {}
+
+        # ninguno: sin campos, solo texto explicativo
+        b = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        lbl = Gtk.Label(label='Estado por defecto del proyecto: el servidor solo responde '
+                              'en la red local (127.0.0.1). Nadie desde afuera puede conectarse.',
+                        xalign=0)
+        lbl.get_style_context().add_class('label-muted')
+        lbl.set_line_wrap(True)
+        b.pack_start(lbl, False, False, 0)
+        b.pack_start(make_btn('💾 Aplicar "sin dominio"', 'btn-flat', on_click=lambda *_: self._set_none()),
+                     False, False, 4)
+        self.field_boxes['ninguno'] = b
+
+        # propio: un campo de texto
+        b = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        grid = Gtk.Grid(column_spacing=14, row_spacing=10)
+        self.entry_propio = self._field(grid, 0, 'Dominio (ya debe apuntar a este servidor, ej: midominio.com)', '')
+        b.pack_start(grid, False, False, 0)
+        b.pack_start(make_btn('💾 Guardar dominio propio', 'btn-primary', on_click=lambda *_: self._set_propio()),
+                     False, False, 4)
+        self.field_boxes['propio'] = b
+
+        # duckdns: subdominio + token
+        b = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        grid = Gtk.Grid(column_spacing=14, row_spacing=10)
+        self.entry_duck_sub = self._field(grid, 0, 'Subdominio DuckDNS (sin .duckdns.org)', '')
+        self.entry_duck_token = self._field(grid, 1, 'Token DuckDNS (de tu cuenta en duckdns.org)', '')
+        self.entry_duck_token.set_visibility(False)
+        b.pack_start(grid, False, False, 0)
+        hint = Gtk.Label(label='El token es de TU cuenta DuckDNS -- nunca es el mismo entre '
+                                'dos instalaciones distintas.', xalign=0)
+        hint.get_style_context().add_class('label-muted')
+        hint.set_line_wrap(True)
+        b.pack_start(hint, False, False, 0)
+        b.pack_start(make_btn('⚙ Configurar DuckDNS', 'btn-primary', on_click=lambda *_: self._set_duckdns()),
+                     False, False, 4)
+        self.field_boxes['duckdns'] = b
+
+        # cloudflare: sin campos
+        b = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        lbl = Gtk.Label(label='Instala cloudflared y abre un túnel HTTPS de salida (no hay que '
+                              'abrir puertos en el router). Genera una URL aleatoria nueva, '
+                              'única para este dispositivo.', xalign=0)
+        lbl.get_style_context().add_class('label-muted')
+        lbl.set_line_wrap(True)
+        b.pack_start(lbl, False, False, 0)
+        b.pack_start(make_btn('⚙ Instalar y activar túnel', 'btn-primary', on_click=lambda *_: self._set_cloudflare()),
+                     False, False, 4)
+        self.field_boxes['cloudflare'] = b
+
+        # tailscale: dos pasos (login interactivo + activar funnel)
+        b = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        lbl = Gtk.Label(label='Paso 1: abre una terminal para iniciar sesión con TU cuenta '
+                              'Tailscale (identidad única por dispositivo). Paso 2: activa el '
+                              'acceso público una vez que la sesión quedó iniciada.', xalign=0)
+        lbl.get_style_context().add_class('label-muted')
+        lbl.set_line_wrap(True)
+        b.pack_start(lbl, False, False, 0)
+        row = Gtk.Box(spacing=8)
+        row.pack_start(make_btn('1. Instalar / iniciar sesión', 'btn-flat', on_click=lambda *_: self._tailscale_login()),
+                        False, False, 0)
+        row.pack_start(make_btn('2. Activar Funnel', 'btn-primary', on_click=lambda *_: self._set_tailscale()),
+                        False, False, 0)
+        b.pack_start(row, False, False, 4)
+        self.field_boxes['tailscale'] = b
+
+        for k, fb in self.field_boxes.items():
+            self.box.pack_start(fb, False, False, 0)
+
+        # ─── Estado / progreso ──────────────────────────────────────
+        self.status_label = Gtk.Label(label='')
+        self.status_label.get_style_context().add_class('label-muted')
+        self.status_label.set_line_wrap(True)
+        self.status_label.set_xalign(0)
+        self.box.pack_start(self.status_label, False, False, 8)
+
+        self._show_method_fields()
+
+    # ── helpers de UI ─────────────────────────────────────────────
+    def _field(self, grid, row, label_text, value):
+        lbl = Gtk.Label(label=label_text, xalign=0)
+        lbl.get_style_context().add_class('label-muted')
+        entry = Gtk.Entry()
+        entry.set_text(value or '')
+        entry.set_width_chars(38)
+        grid.attach(lbl, 0, row, 1, 1)
+        grid.attach(entry, 1, row, 1, 1)
+        return entry
+
+    def _show_method_fields(self):
+        active = self.combo.get_active_id() or 'ninguno'
+        for k, fb in self.field_boxes.items():
+            fb.set_visible(k == active)
+
+    def _set_busy(self, busy, msg=''):
+        self._busy = busy
+        self.combo.set_sensitive(not busy)
+        for fb in self.field_boxes.values():
+            fb.set_sensitive(not busy)
+        if msg:
+            self.status_label.set_text(msg)
+
+    def _port(self):
+        return env_get('PORT') or '3000'
+
+    def _run_cmd(self, cmd, timeout=30):
+        try:
+            r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
+            return r.returncode == 0, r.stdout.strip(), r.stderr.strip()
+        except Exception as e:
+            return False, '', str(e)
+
+    # ── método: ninguno ──────────────────────────────────────────
+    def _set_none(self):
+        http_put('/api/settings', {'key': 'server_domain', 'value': ''})
+        http_put('/api/settings', {'key': 'extra_domains', 'value': ''})
+        save_conf('ACCESS_METHOD', 'local')
+        self.status_label.set_text('✓ Sin dominio -- solo accesible en red local.')
+        self.refresh()
+
+    # ── método: dominio propio ───────────────────────────────────
+    def _set_propio(self):
+        domain = self.entry_propio.get_text().strip()
+        if not domain:
+            self.status_label.set_text('✗ Escribe un dominio primero.')
+            return
+        result = http_put('/api/settings', {'key': 'server_domain', 'value': domain})
+        if not (result and result.get('ok')):
+            err = (result or {}).get('error', 'no se pudo guardar')
+            self.status_label.set_text(f'✗ {err}')
+            return
+        save_conf('ACCESS_METHOD', 'propio')
+        self.status_label.set_text(f'✓ Dominio propio guardado: {domain}. Activo en unos segundos.')
+        self.refresh()
+
+    # ── método: DuckDNS ───────────────────────────────────────────
+    def _set_duckdns(self):
+        sub = re.sub(r'[^a-z0-9-]', '', self.entry_duck_sub.get_text().strip().lower())
+        token = self.entry_duck_token.get_text().strip()
+        if not sub or not token:
+            self.status_label.set_text('✗ Completa subdominio y token.')
+            return
+        self._set_busy(True, 'Configurando DuckDNS…')
+
+        def work():
+            ok, out, err = self._run_cmd(
+                f'curl -fsS "https://www.duckdns.org/update?domains={sub}&token={token}&ip=" 2>&1', timeout=15)
+            if not ok or 'OK' not in out:
+                return {'ok': False, 'error': f'DuckDNS respondió: {out or err}'}
+            unit = f"""[Unit]
+Description=DuckDNS update - pedidos-bot (via dashboard)
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/curl -fsS "https://www.duckdns.org/update?domains={sub}&token={token}&ip="
+"""
+            timer = """[Unit]
+Description=DuckDNS update timer - pedidos-bot
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=10min
+[Install]
+WantedBy=timers.target
+"""
+            try:
+                with open('/etc/systemd/system/duckdns-pedidos-bot.service', 'w') as f:
+                    f.write(unit)
+                os.chmod('/etc/systemd/system/duckdns-pedidos-bot.service', 0o600)
+                with open('/etc/systemd/system/duckdns-pedidos-bot.timer', 'w') as f:
+                    f.write(timer)
+            except Exception as e:
+                return {'ok': False, 'error': f'no se pudo escribir el timer systemd: {e}'}
+            self._run_cmd('systemctl daemon-reload')
+            self._run_cmd('systemctl enable --now duckdns-pedidos-bot.timer')
+            domain = f'{sub}.duckdns.org'
+            result = http_put('/api/settings', {'key': 'server_domain', 'value': domain})
+            if not (result and result.get('ok')):
+                return {'ok': False, 'error': (result or {}).get('error', 'DuckDNS activo pero no se pudo guardar el dominio')}
+            save_conf('ACCESS_METHOD', 'duckdns')
+            return {'ok': True, 'domain': domain}
+
+        def done(res):
+            self._set_busy(False)
+            if res and res.get('ok'):
+                self.status_label.set_text(f"✓ DuckDNS activo: {res['domain']}. Actualización automática cada 10 min.")
+            else:
+                self.status_label.set_text(f"✗ {(res or {}).get('error', 'error desconocido')}")
+            self.refresh()
+
+        run_in_background(work, done)
+
+    # ── método: Cloudflare Tunnel ─────────────────────────────────
+    def _set_cloudflare(self):
+        self._set_busy(True, 'Instalando y activando túnel Cloudflare…')
+
+        def work():
+            if not shutil.which('cloudflared'):
+                arch = platform.machine()
+                arch = {'x86_64': 'amd64', 'aarch64': 'arm64'}.get(arch, arch)
+                url = f'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-{arch}'
+                ok, _, err = self._run_cmd(f'curl -fsSL "{url}" -o /tmp/cloudflared', timeout=60)
+                if not ok:
+                    return {'ok': False, 'error': f'descarga de cloudflared falló: {err}'}
+                self._run_cmd('chmod +x /tmp/cloudflared')
+                ok, _, err = self._run_cmd('mv /tmp/cloudflared /usr/local/bin/cloudflared')
+                if not ok:
+                    return {'ok': False, 'error': f'no se pudo instalar cloudflared: {err}'}
+
+            port = self._port()
+            os.makedirs(LOG_DIR, exist_ok=True)
+            unit = f"""[Unit]
+Description=Concentrados Monserrath - Tunel Cloudflare (via dashboard)
+After=network-online.target {SERVICE}.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={SERVICE_USER}
+ExecStart=/usr/local/bin/cloudflared tunnel --url http://127.0.0.1:{port} --no-autoupdate
+Restart=on-failure
+RestartSec=10
+StandardOutput=append:{LOG_DIR}/tunnel.log
+StandardError=append:{LOG_DIR}/tunnel.log
+
+[Install]
+WantedBy=multi-user.target
+"""
+            try:
+                with open(f'/etc/systemd/system/{CF_SVC}.service', 'w') as f:
+                    f.write(unit)
+                open(f'{LOG_DIR}/tunnel.log', 'a').close()
+            except Exception as e:
+                return {'ok': False, 'error': f'no se pudo escribir el servicio systemd: {e}'}
+            self._run_cmd('systemctl daemon-reload')
+            self._run_cmd(f'systemctl enable {CF_SVC}')
+            ok, _, err = self._run_cmd(f'systemctl restart {CF_SVC}')
+            if not ok:
+                return {'ok': False, 'error': f'no se pudo iniciar el túnel: {err}'}
+
+            import time
+            tunnel_url = ''
+            for _ in range(15):
+                time.sleep(2)
+                out = self._run_cmd(f'grep -oE "https://[a-z0-9-]+\\.trycloudflare\\.com" {LOG_DIR}/tunnel.log')[1]
+                if out:
+                    tunnel_url = out.strip().splitlines()[-1]
+                    break
+            if not tunnel_url:
+                return {'ok': False, 'error': f'túnel activo pero la URL no apareció aún -- revisa {LOG_DIR}/tunnel.log'}
+            domain = tunnel_url.replace('https://', '')
+            result = http_put('/api/settings', {'key': 'server_domain', 'value': domain})
+            if not (result and result.get('ok')):
+                return {'ok': False, 'error': (result or {}).get('error', 'túnel activo pero no se pudo guardar el dominio')}
+            save_conf('ACCESS_METHOD', 'cloudflare')
+            save_conf('TUNNEL_URL', tunnel_url)
+            return {'ok': True, 'domain': domain}
+
+        def done(res):
+            self._set_busy(False)
+            if res and res.get('ok'):
+                self.status_label.set_text(f"✓ Túnel Cloudflare activo: {res['domain']}")
+            else:
+                self.status_label.set_text(f"✗ {(res or {}).get('error', 'error desconocido')}")
+            self.refresh()
+
+        run_in_background(work, done)
+
+    # ── método: Tailscale Funnel ──────────────────────────────────
+    def _tailscale_login(self):
+        self._set_busy(True, 'Instalando Tailscale (si falta) y abriendo terminal de login…')
+
+        def work():
+            if not shutil.which('tailscale'):
+                ok, _, err = self._run_cmd('curl -fsSL https://tailscale.com/install.sh | sh', timeout=120)
+                if not ok:
+                    return {'ok': False, 'error': f'instalación de tailscale falló: {err}'}
+            term = shutil.which('x-terminal-emulator') or shutil.which('xterm') or shutil.which('gnome-terminal')
+            if not term:
+                return {'ok': False, 'error': 'no se encontró una terminal gráfica -- corre "sudo tailscale up" manualmente'}
+            login_cmd = ('tailscale up; echo; '
+                         'echo "Login completo -- cerra esta ventana y volve al panel."; '
+                         'read -n1 -r -p "Presiona una tecla para cerrar..."')
+            if 'gnome-terminal' in term:
+                subprocess.Popen([term, '--', 'bash', '-c', login_cmd])
+            else:
+                subprocess.Popen([term, '-e', 'bash', '-c', login_cmd])
+            return {'ok': True}
+
+        def done(res):
+            self._set_busy(False)
+            if res and res.get('ok'):
+                self.status_label.set_text('Terminal abierta -- completa el login de Tailscale ahí y '
+                                            'después presiona "2. Activar Funnel".')
+            else:
+                self.status_label.set_text(f"✗ {(res or {}).get('error', 'error desconocido')}")
+
+        run_in_background(work, done)
+
+    def _set_tailscale(self):
+        self._set_busy(True, 'Activando Tailscale Funnel…')
+
+        def work():
+            if not shutil.which('tailscale'):
+                return {'ok': False, 'error': 'tailscale no está instalado -- usa el paso 1 primero'}
+            status = self._run_cmd('tailscale status')[1]
+            if not status or re.search(r'logged out|stopped', status, re.I):
+                return {'ok': False, 'error': 'todavía no iniciaste sesión -- usa el paso 1 y completa el login'}
+            port = self._port()
+            ok, _, err = self._run_cmd(f'tailscale funnel --bg {port}', timeout=20)
+            if not ok:
+                return {'ok': False, 'error': f'no se pudo activar Funnel: {err}'}
+            out = self._run_cmd('tailscale funnel status')[1]
+            matches = re.findall(r'https://[a-z0-9.-]+\.ts\.net', out or '')
+            if not matches:
+                return {'ok': False, 'error': 'Funnel activo pero la URL no aparece aún -- revisa: tailscale funnel status'}
+            tunnel_url = matches[0]
+            domain = tunnel_url.replace('https://', '')
+            result = http_put('/api/settings', {'key': 'server_domain', 'value': domain})
+            if not (result and result.get('ok')):
+                return {'ok': False, 'error': (result or {}).get('error', 'Funnel activo pero no se pudo guardar el dominio')}
+            save_conf('ACCESS_METHOD', 'tailscale-funnel')
+            save_conf('TUNNEL_URL', tunnel_url)
+            return {'ok': True, 'domain': domain}
+
+        def done(res):
+            self._set_busy(False)
+            if res and res.get('ok'):
+                self.status_label.set_text(f"✓ Tailscale Funnel activo: {res['domain']}")
+            else:
+                self.status_label.set_text(f"✗ {(res or {}).get('error', 'error desconocido')}")
+            self.refresh()
+
+        run_in_background(work, done)
+
+    def refresh(self):
+        method = load_conf('ACCESS_METHOD') or 'local'
+        method_labels = {
+            'local': 'Ninguno (red local)', 'propio': 'Dominio propio',
+            'duckdns': 'DuckDNS', 'cloudflare': 'Cloudflare Tunnel',
+            'tailscale-funnel': 'Tailscale Funnel', 'tunnel': 'Cloudflare Tunnel',
+            'nginx': 'Nginx + certbot',
+        }
+        self.card_method.set_value(method_labels.get(method, method))
+        settings = (http_get('/api/settings') or {}).get('settings', {})
+        domain = settings.get('server_domain', '')
+        self.card_domain.set_value(domain or '—')
+        # Preseleccionar el combo segun el metodo activo, para que el
+        # usuario vea de entrada en que estado quedo, no siempre "ninguno".
+        combo_id = {
+            'local': 'ninguno', 'propio': 'propio', 'duckdns': 'duckdns',
+            'cloudflare': 'cloudflare', 'tunnel': 'cloudflare',
+            'tailscale-funnel': 'tailscale',
+        }.get(method, 'ninguno')
+        # Solo se auto-selecciona UNA vez (la primera vez que se muestra el
+        # módulo, para reflejar el estado ya configurado). El auto-refresh
+        # de 10s llama a este mismo refresh() de fondo -- si volviera a
+        # forzar el combo en cada tick, le pisaría al usuario la opción que
+        # está eligiendo (o los datos que está tipeando) antes de que
+        # alcance a tocar "Guardar".
+        if not self._initial_synced and not self._busy:
+            self.combo.set_active_id(combo_id)
+            self._initial_synced = True
+        if domain and self.entry_propio.get_text() == '':
+            self.entry_propio.set_text(domain)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # MÓDULO: CONFIGURACIÓN
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -4159,6 +4611,7 @@ class DashboardWindow(Gtk.ApplicationWindow):
         cfg_label.set_xalign(0)
         self.sidebar.pack_start(cfg_label, False, False, 0)
 
+        self._add_module('domain', 'Dominio', DomainModule)
         self._add_module('brand',  'Marca', BrandModule)
         self._add_module('payments', 'Métodos de pago', PaymentsModule)
         self._add_module('config', 'Configuración', ConfigModule)
