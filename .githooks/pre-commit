@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+git diff --cached -U0 -- . ':(exclude).githooks/scan-secrets.sh' | "$HOOK_DIR/scan-secrets.sh"

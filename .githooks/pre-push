@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Segunda barrera (por si un commit se hizo con --no-verify u otro clon sin
+# el hook de pre-commit instalado): re-escanea todo lo que va a subir antes
+# de que llegue al remoto.
+set -euo pipefail
+HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ZERO="0000000000000000000000000000000000000000"
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+    [ "$local_sha" = "$ZERO" ] && continue  # se esta borrando el ref remoto
+    if [ "$remote_sha" = "$ZERO" ]; then
+        range="$local_sha"  # rama nueva: escanea todo su contenido vs arbol vacio
+        diff_cmd=(git diff -U0 "4b825dc642cb6eb9a060e54bf8d69288fbee4904" "$range")
+    else
+        diff_cmd=(git diff -U0 "$remote_sha" "$local_sha")
+    fi
+    "${diff_cmd[@]}" -- . ':(exclude).githooks/scan-secrets.sh' | "$HOOK_DIR/scan-secrets.sh" || {
+        echo "Push bloqueado en $local_ref."
+        exit 1
+    }
+done
