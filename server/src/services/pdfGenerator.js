@@ -198,27 +198,29 @@ async function generateDailyPDF() {
     timeZone: TZ, weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
   });
 
-  const orders = db.prepare(`
+  const { rows: orders } = await db.query(`
     SELECT o.*, c.phone, c.name AS customer_name,
            u.display_name AS delivered_by_name
     FROM orders o
     LEFT JOIN customers c ON o.customer_id = c.id
     LEFT JOIN users     u ON o.claimed_by  = u.id
-    WHERE date(o.delivered_at, 'localtime') = ?
+    WHERE (o.delivered_at::timestamptz AT TIME ZONE '${TZ}')::date = $1::date
       AND o.status IN ('delivered','entregado')
     ORDER BY o.delivered_at ASC
-  `).all(todayISO);
+  `, [todayISO]);
 
-  const itemsStmt = db.prepare('SELECT * FROM order_items WHERE order_id=?');
-  orders.forEach(o => { o.items = itemsStmt.all(o.id); });
+  for (const o of orders) {
+    const { rows: items } = await db.query('SELECT * FROM order_items WHERE order_id=$1', [o.id]);
+    o.items = items;
+  }
 
-  const messages = db.prepare(`
+  const { rows: messages } = await db.query(`
     SELECT m.*, COALESCE(c.name, m.customer_name) AS display_name
     FROM messages m
     LEFT JOIN customers c ON c.phone = m.phone
-    WHERE date(m.created_at, 'localtime') = ? AND m.deleted_at IS NULL
+    WHERE (m.created_at::timestamptz AT TIME ZONE '${TZ}')::date = $1::date AND m.deleted_at IS NULL
     ORDER BY m.phone, m.created_at ASC
-  `).all(todayISO);
+  `, [todayISO]);
 
   const { byPhone, phones } = buildCustomerMap(orders, messages);
 
@@ -259,9 +261,7 @@ async function generateDailyPDF() {
   });
 
   if (orders.length) {
-    const placeholders = orders.map(() => '?').join(',');
-    db.prepare(`UPDATE orders SET pdf_exported=1 WHERE id IN (${placeholders})`)
-      .run(...orders.map(o => o.id));
+    await db.query('UPDATE orders SET pdf_exported=1 WHERE id = ANY($1)', [orders.map(o => o.id)]);
   }
 
   logger.info({ filepath, orders: orders.length, cuentas: phones.length }, '[PDF] generado');
@@ -290,73 +290,83 @@ const CATEGORY_SLUGS = {
   clientes: 'clientes',
 };
 
-function getFinancialSummary(db, fromISO, toISO) {
-  const row = db.prepare(`
+async function getFinancialSummary(db, fromISO, toISO) {
+  const { rows: rowRows } = await db.query(`
     SELECT COUNT(*) AS total,
            COUNT(*) FILTER (WHERE status IN ('entregado','delivered')) AS entregados,
            COUNT(*) FILTER (WHERE status = 'cancelled') AS cancelados,
            COUNT(*) FILTER (WHERE is_fiado = 1) AS fiados
-    FROM orders WHERE date(requested_at,'localtime') BETWEEN ? AND ?
-  `).get(fromISO, toISO);
-  const ingresos = db.prepare(`
+    FROM orders WHERE (requested_at::timestamptz AT TIME ZONE '${TZ}')::date BETWEEN $1::date AND $2::date
+  `, [fromISO, toISO]);
+  const row = rowRows[0];
+  const { rows: ingresosRows } = await db.query(`
     SELECT COALESCE(SUM(oi.product_price*oi.quantity),0) AS t
     FROM orders o JOIN order_items oi ON oi.order_id=o.id
-    WHERE o.status IN ('entregado','delivered') AND date(o.requested_at,'localtime') BETWEEN ? AND ?
-  `).get(fromISO, toISO).t;
-  const avg = db.prepare(`
+    WHERE o.status IN ('entregado','delivered') AND (o.requested_at::timestamptz AT TIME ZONE '${TZ}')::date BETWEEN $1::date AND $2::date
+  `, [fromISO, toISO]);
+  const { rows: avgRows } = await db.query(`
     SELECT COALESCE(AVG(t),0) AS a FROM (
       SELECT SUM(oi.product_price*oi.quantity) t FROM orders o
       JOIN order_items oi ON oi.order_id=o.id
-      WHERE o.status IN ('entregado','delivered') AND date(o.requested_at,'localtime') BETWEEN ? AND ?
-      GROUP BY o.id)
-  `).get(fromISO, toISO).a;
-  return { ...row, ingresos, ticket_promedio: avg };
+      WHERE o.status IN ('entregado','delivered') AND (o.requested_at::timestamptz AT TIME ZONE '${TZ}')::date BETWEEN $1::date AND $2::date
+      GROUP BY o.id) t2
+  `, [fromISO, toISO]);
+  return {
+    total: Number(row.total), entregados: Number(row.entregados),
+    cancelados: Number(row.cancelados), fiados: Number(row.fiados),
+    ingresos: Number(ingresosRows[0].t), ticket_promedio: Number(avgRows[0].a),
+  };
 }
 
-function getSalesByDay(db, fromISO, toISO) {
-  return db.prepare(`
-    SELECT date(o.delivered_at,'localtime') AS dia,
+async function getSalesByDay(db, fromISO, toISO) {
+  const { rows } = await db.query(`
+    SELECT (o.delivered_at::timestamptz AT TIME ZONE '${TZ}')::date AS dia,
            COUNT(*) AS pedidos,
            SUM(oi.product_price*oi.quantity) AS ingresos
     FROM orders o JOIN order_items oi ON oi.order_id=o.id
-    WHERE o.status IN ('entregado','delivered') AND date(o.delivered_at,'localtime') BETWEEN ? AND ?
+    WHERE o.status IN ('entregado','delivered') AND (o.delivered_at::timestamptz AT TIME ZONE '${TZ}')::date BETWEEN $1::date AND $2::date
     GROUP BY dia ORDER BY dia ASC
-  `).all(fromISO, toISO);
+  `, [fromISO, toISO]);
+  return rows.map(r => ({ dia: r.dia.toISOString().slice(0, 10), pedidos: Number(r.pedidos), ingresos: Number(r.ingresos) }));
 }
 
-function getSalesByProduct(db, fromISO, toISO) {
-  return db.prepare(`
+async function getSalesByProduct(db, fromISO, toISO) {
+  const { rows } = await db.query(`
     SELECT oi.product_name AS producto,
            SUM(oi.quantity) AS unidades,
            SUM(oi.product_price*oi.quantity) AS ingresos
     FROM orders o JOIN order_items oi ON oi.order_id=o.id
-    WHERE o.status IN ('entregado','delivered') AND date(o.requested_at,'localtime') BETWEEN ? AND ?
+    WHERE o.status IN ('entregado','delivered') AND (o.requested_at::timestamptz AT TIME ZONE '${TZ}')::date BETWEEN $1::date AND $2::date
     GROUP BY oi.product_name ORDER BY ingresos DESC
-  `).all(fromISO, toISO);
+  `, [fromISO, toISO]);
+  return rows.map(r => ({ producto: r.producto, unidades: Number(r.unidades), ingresos: Number(r.ingresos) }));
 }
 
-function getEmployeePerformance(db, fromISO, toISO) {
-  return db.prepare(`
+async function getEmployeePerformance(db, fromISO, toISO) {
+  const { rows } = await db.query(`
     SELECT u.username, COALESCE(u.display_name, u.username) AS nombre,
            COUNT(*) AS entregados,
-           ROUND(AVG((julianday(o.delivered_at) - julianday(o.requested_at)) * 24 * 60)) AS minutos_prom
+           ROUND(AVG(EXTRACT(EPOCH FROM (o.delivered_at::timestamptz - o.requested_at::timestamptz)) / 60)) AS minutos_prom
     FROM orders o JOIN users u ON u.id = o.claimed_by
-    WHERE o.status IN ('entregado','delivered') AND date(o.requested_at,'localtime') BETWEEN ? AND ?
-    GROUP BY u.id ORDER BY entregados DESC
-  `).all(fromISO, toISO);
+    WHERE o.status IN ('entregado','delivered') AND (o.requested_at::timestamptz AT TIME ZONE '${TZ}')::date BETWEEN $1::date AND $2::date
+    GROUP BY u.id, u.username, u.display_name ORDER BY entregados DESC
+  `, [fromISO, toISO]);
+  return rows.map(r => ({ ...r, entregados: Number(r.entregados), minutos_prom: r.minutos_prom !== null ? Number(r.minutos_prom) : null }));
 }
 
-function getCustomerReport(db, fromISO, toISO) {
-  const nuevos = db.prepare(`
-    SELECT COUNT(*) AS c FROM customers WHERE date(created_at,'localtime') BETWEEN ? AND ?
-  `).get(fromISO, toISO).c;
-  const clientes = db.prepare(`
+async function getCustomerReport(db, fromISO, toISO) {
+  const { rows: nuevosRows } = await db.query(`
+    SELECT COUNT(*) AS c FROM customers WHERE (created_at::timestamptz AT TIME ZONE '${TZ}')::date BETWEEN $1::date AND $2::date
+  `, [fromISO, toISO]);
+  const nuevos = Number(nuevosRows[0].c);
+  const { rows: clientesRaw } = await db.query(`
     SELECT c.name, c.phone, COUNT(*) AS pedidos,
            COALESCE(SUM(CASE WHEN o.status IN ('entregado','delivered') THEN o.product_price ELSE 0 END),0) AS gastado
     FROM orders o JOIN customers c ON c.id = o.customer_id
-    WHERE date(o.requested_at,'localtime') BETWEEN ? AND ?
-    GROUP BY o.customer_id ORDER BY gastado DESC
-  `).all(fromISO, toISO);
+    WHERE (o.requested_at::timestamptz AT TIME ZONE '${TZ}')::date BETWEEN $1::date AND $2::date
+    GROUP BY o.customer_id, c.name, c.phone ORDER BY gastado DESC
+  `, [fromISO, toISO]);
+  const clientes = clientesRaw.map(c => ({ ...c, pedidos: Number(c.pedidos), gastado: Number(c.gastado) }));
   const recurrentes = clientes.filter(c => c.pedidos > 1).length;
   return { nuevos, recurrentes, clientes };
 }
@@ -474,11 +484,11 @@ async function generateRangeReportPDF(fromISO, toISO, categories) {
 
   for (const cat of cats) {
     let data;
-    if (cat === 'resumen') data = getFinancialSummary(db, fromISO, toISO);
-    else if (cat === 'ventas_dia') data = getSalesByDay(db, fromISO, toISO);
-    else if (cat === 'ventas_producto') data = getSalesByProduct(db, fromISO, toISO);
-    else if (cat === 'empleados') data = getEmployeePerformance(db, fromISO, toISO);
-    else if (cat === 'clientes') data = getCustomerReport(db, fromISO, toISO);
+    if (cat === 'resumen') data = await getFinancialSummary(db, fromISO, toISO);
+    else if (cat === 'ventas_dia') data = await getSalesByDay(db, fromISO, toISO);
+    else if (cat === 'ventas_producto') data = await getSalesByProduct(db, fromISO, toISO);
+    else if (cat === 'empleados') data = await getEmployeePerformance(db, fromISO, toISO);
+    else if (cat === 'clientes') data = await getCustomerReport(db, fromISO, toISO);
     renderCategorySection(doc, cat, data);
   }
 

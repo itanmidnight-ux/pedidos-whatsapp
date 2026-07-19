@@ -1,24 +1,14 @@
 'use strict';
-const path = require('path');
-const fs = require('fs');
-const os = require('os');
-
-const DB_PATH = path.join(os.tmpdir(), `pedidos-test-theming-${Date.now()}.db`);
-process.env.DB_PATH = DB_PATH;
-process.env.JWT_SECRET = 'test-secret';
-process.env.API_KEY = 'test-api-key';
+const { setupTestEnv, teardownTestSchema } = require('./helpers/testDb');
+setupTestEnv('settings-theming');
 process.env.SEED_PASSWORD_JESUS = 'admin-test-pw';
-process.env.NODE_ENV = 'test';
 
 const request = require('supertest');
-const { initDB, closeDB } = require('../src/db/database');
+const { initDB } = require('../src/db/database');
 const app = require('../src/app');
 
 beforeAll(async () => { await initDB(); });
-afterAll(() => {
-  closeDB();
-  for (const suffix of ['', '-wal', '-shm']) { try { fs.unlinkSync(DB_PATH + suffix); } catch (_) {} }
-});
+afterAll(async () => { await teardownTestSchema(); });
 
 async function loginAdmin() {
   const res = await request(app).post('/api/auth/token')
@@ -31,8 +21,8 @@ describe('Settings de theming', () => {
     const token = await loginAdmin();
     const res = await request(app).get('/api/settings').set('Authorization', `Bearer ${token}`);
     expect(res.status).toBe(200);
-    expect(res.body.settings.theme_primary).toBe('#2D5016');
-    expect(res.body.settings.theme_accent).toBe('#D4800A');
+    expect(res.body.settings.theme_primary).toBe('#2e7d32');
+    expect(res.body.settings.theme_accent).toBe('#f9a825');
   });
 
   test('PUT /api/settings actualiza theme_primary', async () => {

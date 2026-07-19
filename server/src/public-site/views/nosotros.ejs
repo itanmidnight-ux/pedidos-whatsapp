@@ -1,0 +1,27 @@
+<%- include('partials/header', { title, BRAND }) %>
+
+<main class="container">
+  <div class="card">
+    <h1>Sobre <%= BRAND.name %></h1>
+    <p><%= BRAND.name %> es un supermercado de barrio en <%= BRAND.city %> que lleva víveres, aseo del hogar,
+       carnes, lácteos y mucho más a las familias de la ciudad, con precios justos y atención cercana.</p>
+    <p>Nacimos para simplificar la compra del mercado: catálogo claro, pedidos fáciles por WhatsApp o por la app,
+       y entrega puntual en tu barrio.</p>
+  </div>
+  <div class="card">
+    <h2>Nuestro compromiso</h2>
+    <ul>
+      <li>Productos frescos y de calidad, seleccionados cada semana.</li>
+      <li>Precios claros, sin sorpresas al pagar.</li>
+      <li>Atención directa por WhatsApp con personas reales, no bots que no resuelven.</li>
+      <li>Entregas puntuales dentro de <%= BRAND.city %>.</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h2>Horario y ubicación</h2>
+    <p>📍 <%= BRAND.address %></p>
+    <p>🕗 <%= BRAND.hours %></p>
+  </div>
+</main>
+
+<%- include('partials/footer', { BRAND }) %>

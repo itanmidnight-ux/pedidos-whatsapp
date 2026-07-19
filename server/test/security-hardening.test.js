@@ -3,12 +3,9 @@ const path = require('path');
 const os = require('os');
 const fs = require('fs');
 
-const DB_PATH = path.join(os.tmpdir(), `security-hardening-${Date.now()}-${Math.random().toString(36).slice(2)}.db`);
-process.env.DB_PATH = DB_PATH;
-process.env.JWT_SECRET = 'test-secret';
-process.env.API_KEY = 'test-api-key';
+const { setupTestEnv, teardownTestSchema } = require('./helpers/testDb');
+setupTestEnv('security-hardening');
 process.env.SEED_PASSWORD_JESUS = 'admin-test-pw';
-process.env.NODE_ENV = 'test';
 // dotenv (cargado por app.js) no sobreescribe vars ya seteadas -- fijamos
 // esta ANTES del primer require de app.js para no escribir reportes en el
 // REPORTS_DIR real de produccion (sin permisos para este usuario/test).
@@ -16,7 +13,7 @@ process.env.REPORTS_DIR = path.join(os.tmpdir(), `reports-test-${Date.now()}`);
 
 const request = require('supertest');
 const ExcelJS = require('exceljs');
-const { initDB, closeDB, getDB } = require('../src/db/database');
+const { initDB, getDB } = require('../src/db/database');
 const app = require('../src/app');
 const { getIP } = require('../src/utils/ip');
 const { flushIpActivity } = require('../src/middleware/ipActivity');
@@ -24,10 +21,7 @@ const { raiseAlert } = require('../src/utils/securityAlert');
 const { scanSuspiciousIPs } = require('../src/services/securityMonitor');
 
 beforeAll(async () => { await initDB(); });
-afterAll(() => {
-  closeDB();
-  for (const s of ['', '-wal', '-shm']) { try { fs.unlinkSync(DB_PATH + s); } catch (_) {} }
-});
+afterAll(async () => { await teardownTestSchema(); });
 
 async function loginAdmin() {
   const res = await request(app).post('/api/auth/token').send({ username: 'jesus', password: 'admin-test-pw' });
@@ -129,15 +123,13 @@ describe('Logs no filtran credenciales', () => {
 describe('anti formula-injection en export Excel', () => {
   test('nombre de cliente que empieza con "=" no queda como fórmula ejecutable', async () => {
     const db = getDB();
-    const customer = db.prepare(`INSERT INTO customers (phone, name) VALUES (?, ?)`).run('573009998877', "=cmd|'/c calc'!A1");
-    db.prepare(`INSERT INTO orders (customer_id, product_name, product_price, status, requested_at)
-                VALUES (?, 'Producto test', 20000, 'entregado', datetime('now','localtime'))`).run(customer.lastInsertRowid);
+    const { rows: custRows } = await db.query(`INSERT INTO customers (phone, name) VALUES ($1, $2) RETURNING id`, ['573009998877', "=cmd|'/c calc'!A1"]);
+    await db.query(`INSERT INTO orders (customer_id, product_name, product_price, status, requested_at)
+                VALUES ($1, 'Producto test', 20000, 'entregado', now_iso())`, [custRows[0].id]);
     const { generateRangeReportXLSX } = require('../src/services/excelGenerator');
     // toISOString() da la fecha en UTC -- de noche en Colombia (UTC-5) ya es
-    // "manana" en UTC, y el filtro de rango (que compara contra
-    // datetime('now','localtime') de SQLite, en hora local) quedaba
-    // desalineado. en-CA formatea como YYYY-MM-DD directo, en la zona horaria
-    // real del negocio.
+    // "manana" en UTC, y el filtro de rango quedaba desalineado. en-CA
+    // formatea como YYYY-MM-DD directo, en la zona horaria real del negocio.
     const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Bogota' });
     const filepath = await generateRangeReportXLSX(today, today, ['clientes']);
     const wb = new ExcelJS.Workbook();
@@ -163,8 +155,8 @@ describe('tracking de actividad por IP', () => {
     await request(app).get('/health').set('X-Forwarded-For', '203.0.113.199');
     await request(app).get('/health').set('X-Forwarded-For', '203.0.113.199');
     await request(app).get('/api/orders').set('X-Forwarded-For', '203.0.113.199');
-    flushIpActivity();
-    const rows = getDB().prepare('SELECT * FROM ip_activity WHERE ip = ?').all('203.0.113.199');
+    await flushIpActivity();
+    const { rows } = await getDB().query('SELECT * FROM ip_activity WHERE ip = $1', ['203.0.113.199']);
     expect(rows.length).toBe(1);
     expect(rows[0].requests).toBe(3);
     expect(rows[0].count_401).toBe(1);
@@ -173,62 +165,62 @@ describe('tracking de actividad por IP', () => {
   test('un 401 generico (token expirado en ruta protegida) NO cuenta como login fallido', async () => {
     // GET /api/orders sin token -- 401 generico, no es un intento de login.
     await request(app).get('/api/orders').set('X-Forwarded-For', '203.0.113.222');
-    flushIpActivity();
-    const row = getDB().prepare('SELECT * FROM ip_activity WHERE ip = ?').get('203.0.113.222');
-    expect(row.count_401).toBe(1);
-    expect(row.count_auth_fail).toBe(0);
+    await flushIpActivity();
+    const { rows } = await getDB().query('SELECT * FROM ip_activity WHERE ip = $1', ['203.0.113.222']);
+    expect(rows[0].count_401).toBe(1);
+    expect(rows[0].count_auth_fail).toBe(0);
   });
 
   test('un login fallido real en /api/auth/token SI cuenta como login fallido', async () => {
     await request(app).post('/api/auth/token').set('X-Forwarded-For', '203.0.113.223')
       .send({ username: 'no-existe', password: 'x' });
-    flushIpActivity();
-    const row = getDB().prepare('SELECT * FROM ip_activity WHERE ip = ?').get('203.0.113.223');
-    expect(row.count_auth_fail).toBe(1);
+    await flushIpActivity();
+    const { rows } = await getDB().query('SELECT * FROM ip_activity WHERE ip = $1', ['203.0.113.223']);
+    expect(rows[0].count_auth_fail).toBe(1);
   });
 });
 
 describe('raiseAlert', () => {
-  test('inserta en security_alerts y encola WhatsApp al admin', () => {
+  test('inserta en security_alerts y encola WhatsApp al admin', async () => {
     const db = getDB();
-    db.prepare(`UPDATE users SET phone = '573001112233' WHERE role = 'admin'`).run();
-    raiseAlert('brute_force', 'Cuenta 573009998877 bloqueada por fuerza bruta');
-    const alert = db.prepare('SELECT * FROM security_alerts ORDER BY id DESC LIMIT 1').get();
-    expect(alert.kind).toBe('brute_force');
-    const outbound = db.prepare(`SELECT * FROM messages WHERE phone = '573001112233' AND direction='outbound' ORDER BY id DESC LIMIT 1`).get();
-    expect(outbound.content).toContain('fuerza bruta');
+    await db.query(`UPDATE users SET phone = '573001112233' WHERE role = 'admin'`);
+    await raiseAlert('brute_force', 'Cuenta 573009998877 bloqueada por fuerza bruta');
+    const { rows: alertRows } = await db.query('SELECT * FROM security_alerts ORDER BY id DESC LIMIT 1');
+    expect(alertRows[0].kind).toBe('brute_force');
+    const { rows: outboundRows } = await db.query(`SELECT * FROM messages WHERE phone = '573001112233' AND direction='outbound' ORDER BY id DESC LIMIT 1`);
+    expect(outboundRows[0].content).toContain('fuerza bruta');
   });
 });
 
 describe('scanSuspiciousIPs', () => {
-  test('marca alerta cuando una IP supera el umbral de LOGINS fallidos reales', () => {
+  test('marca alerta cuando una IP supera el umbral de LOGINS fallidos reales', async () => {
     const db = getDB();
     const minute = new Date().toISOString().slice(0, 16);
-    db.prepare(`INSERT INTO ip_activity (ip, minute, requests, count_401, count_403, count_404, count_auth_fail) VALUES ('198.51.100.77', ?, 20, 6, 0, 0, 6)`).run(minute);
-    scanSuspiciousIPs();
-    const alert = db.prepare(`SELECT * FROM security_alerts WHERE kind='ip_flagged' ORDER BY id DESC LIMIT 1`).get();
-    expect(alert.message).toContain('198.51.100.77');
+    await db.query(`INSERT INTO ip_activity (ip, minute, requests, count_401, count_403, count_404, count_auth_fail) VALUES ('198.51.100.77', $1, 20, 6, 0, 0, 6)`, [minute]);
+    await scanSuspiciousIPs();
+    const { rows } = await db.query(`SELECT * FROM security_alerts WHERE kind='ip_flagged' ORDER BY id DESC LIMIT 1`);
+    expect(rows[0].message).toContain('198.51.100.77');
   });
 
-  test('NO marca alerta por 401/403 genericos sin logins fallidos reales (evita falsos positivos)', () => {
+  test('NO marca alerta por 401/403 genericos sin logins fallidos reales (evita falsos positivos)', async () => {
     const db = getDB();
     const minute = new Date().toISOString().slice(0, 16);
     // Mismo volumen de 401/403 que antes disparaba alerta -- ahora, sin
     // count_auth_fail, es trafico normal (tokens expirando, recursos
     // opcionales sin encontrar), no debe generar ninguna alerta nueva.
-    db.prepare(`INSERT INTO ip_activity (ip, minute, requests, count_401, count_403, count_404, count_auth_fail) VALUES ('198.51.100.88', ?, 20, 6, 0, 0, 0)`).run(minute);
-    const before = db.prepare(`SELECT COUNT(*) c FROM security_alerts WHERE kind='ip_flagged' AND message LIKE '%198.51.100.88%'`).get().c;
-    scanSuspiciousIPs();
-    const after = db.prepare(`SELECT COUNT(*) c FROM security_alerts WHERE kind='ip_flagged' AND message LIKE '%198.51.100.88%'`).get().c;
-    expect(after).toBe(before);
+    await db.query(`INSERT INTO ip_activity (ip, minute, requests, count_401, count_403, count_404, count_auth_fail) VALUES ('198.51.100.88', $1, 20, 6, 0, 0, 0)`, [minute]);
+    const { rows: beforeRows } = await db.query(`SELECT COUNT(*) c FROM security_alerts WHERE kind='ip_flagged' AND message LIKE '%198.51.100.88%'`);
+    await scanSuspiciousIPs();
+    const { rows: afterRows } = await db.query(`SELECT COUNT(*) c FROM security_alerts WHERE kind='ip_flagged' AND message LIKE '%198.51.100.88%'`);
+    expect(Number(afterRows[0].c)).toBe(Number(beforeRows[0].c));
   });
 
-  test('nunca marca localhost (webhook interno del bot) como sospechoso', () => {
+  test('nunca marca localhost (webhook interno del bot) como sospechoso', async () => {
     const db = getDB();
     const minute = new Date().toISOString().slice(0, 16);
-    db.prepare(`INSERT INTO ip_activity (ip, minute, requests, count_401, count_403, count_404, count_auth_fail) VALUES ('127.0.0.1', ?, 1000, 50, 50, 50, 50)`).run(minute);
-    scanSuspiciousIPs();
-    const alert = db.prepare(`SELECT COUNT(*) c FROM security_alerts WHERE kind='ip_flagged' AND message LIKE '%127.0.0.1%'`).get().c;
-    expect(alert).toBe(0);
+    await db.query(`INSERT INTO ip_activity (ip, minute, requests, count_401, count_403, count_404, count_auth_fail) VALUES ('127.0.0.1', $1, 1000, 50, 50, 50, 50)`, [minute]);
+    await scanSuspiciousIPs();
+    const { rows } = await db.query(`SELECT COUNT(*) c FROM security_alerts WHERE kind='ip_flagged' AND message LIKE '%127.0.0.1%'`);
+    expect(Number(rows[0].c)).toBe(0);
   });
 });

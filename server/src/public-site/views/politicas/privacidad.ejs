@@ -1,0 +1,31 @@
+<%- include('../partials/header', { title, BRAND }) %>
+
+<main class="container">
+  <div class="card">
+    <h1>Política de Privacidad</h1>
+    <p><em>Plantilla general — debe ser revisada por un abogado antes de publicarse como versión definitiva.</em></p>
+
+    <h2>1. Datos que recopilamos</h2>
+    <p>Para procesar tus pedidos recopilamos: nombre, número de celular, correo electrónico y dirección de
+       entrega. Esta información se usa únicamente para gestionar tus compras y comunicarnos contigo sobre
+       ellas.</p>
+
+    <h2>2. Uso de la información</h2>
+    <p>No vendemos ni compartimos tus datos personales con terceros para fines publicitarios. Tu información
+       solo es usada internamente por el equipo de <%= BRAND.name %> para atender tus pedidos.</p>
+
+    <h2>3. Almacenamiento y seguridad</h2>
+    <p>Tus datos se almacenan en nuestros servidores con medidas de seguridad técnicas (cifrado, control de
+       acceso) para evitar accesos no autorizados.</p>
+
+    <h2>4. Tus derechos</h2>
+    <p>De acuerdo con la Ley 1581 de 2012 de Colombia (Protección de Datos Personales), puedes solicitar en
+       cualquier momento conocer, actualizar, rectificar o eliminar tus datos personales escribiendo a
+       <a href="mailto:<%= BRAND.email %>"><%= BRAND.email %></a>.</p>
+
+    <h2>5. Cookies</h2>
+    <p>Este sitio no utiliza cookies de rastreo publicitario de terceros.</p>
+  </div>
+</main>
+
+<%- include('../partials/footer', { BRAND }) %>

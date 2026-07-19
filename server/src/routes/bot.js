@@ -6,16 +6,19 @@ const { getDB } = require('../db/database');
 const logger = require('../utils/logger');
 
 // GET /api/bot/status — estado del bot + cola pendiente (admin)
-router.get('/status', adminAuth, (req, res) => {
-  const pending = getDB().prepare(
-    `SELECT COUNT(*) AS c FROM messages WHERE direction='outbound' AND sent=0`
-  ).get().c;
+router.get('/status', adminAuth, async (req, res, next) => {
   try {
-    const { getStatus } = require('../services/waBot');
-    res.json({ ...getStatus(), pendingQueue: pending });
-  } catch (e) {
-    res.json({ ready: false, hasQR: false, status: 'error', pendingQueue: pending, error: e.message });
-  }
+    const { rows } = await getDB().query(
+      `SELECT COUNT(*) AS c FROM messages WHERE direction='outbound' AND sent=0`
+    );
+    const pending = Number(rows[0].c);
+    try {
+      const { getStatus } = require('../services/waBot');
+      res.json({ ...(await getStatus()), pendingQueue: pending });
+    } catch (e) {
+      res.json({ ready: false, hasQR: false, status: 'error', pendingQueue: pending, error: e.message });
+    }
+  } catch (e) { next(e); }
 });
 
 // GET /api/bot/qr — QR code como imagen PNG (admin)
@@ -77,10 +80,10 @@ router.post('/logout', adminAuth, async (req, res) => {
   try {
     const { logoutBot } = require('../services/waBot');
     await logoutBot();
-    getDB().prepare(
+    await getDB().query(
       `UPDATE bot_config SET phone_encrypted = NULL, status = 'disconnected', paused = 0,
-       updated_at = (datetime('now','localtime')) WHERE id = 1`
-    ).run();
+       updated_at = to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') WHERE id = 1`
+    );
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message });

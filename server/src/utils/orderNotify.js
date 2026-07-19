@@ -11,16 +11,22 @@ const STATUS_TEXT = {
   cancelled: order => `❌ Tu pedido #${order.id} fue cancelado.${order.cancel_reason ? ` Motivo: ${order.cancel_reason}` : ''}`,
 };
 
-function notifyOrderStatus(order) {
+// Se llama sin await desde orders.js (efecto secundario, no bloquea la
+// respuesta al cliente) -- por eso atrapa sus propios errores en vez de
+// dejar una promesa rechazada sin manejar.
+async function notifyOrderStatus(order) {
   const build = STATUS_TEXT[order.status];
   if (!build || !order.phone) return;
-
-  const db = getDB();
-  db.prepare(`
-    INSERT INTO messages (phone, content, direction, sent, type)
-    VALUES (?, ?, 'outbound', 0, 'order_status')
-  `).run(order.phone, build(order));
-  logger.info({ orderId: order.id, status: order.status }, '[orderNotify] notificacion encolada');
+  try {
+    const db = getDB();
+    await db.query(`
+      INSERT INTO messages (phone, content, direction, sent, type)
+      VALUES ($1, $2, 'outbound', 0, 'order_status')
+    `, [order.phone, build(order)]);
+    logger.info({ orderId: order.id, status: order.status }, '[orderNotify] notificacion encolada');
+  } catch (e) {
+    logger.error({ err: e.message, orderId: order.id }, '[orderNotify] fallo al encolar notificacion');
+  }
 }
 
 module.exports = { notifyOrderStatus };

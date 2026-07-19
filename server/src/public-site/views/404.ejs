@@ -1,0 +1,11 @@
+<%- include('partials/header', { title, BRAND }) %>
+
+<main class="container">
+  <div class="empty-state">
+    <h1><%= title === 'Error' ? 'Algo salió mal' : '404' %></h1>
+    <p><%= title === 'Error' ? 'Ocurrió un error inesperado. Intenta de nuevo en un momento.' : 'No encontramos esta página.' %></p>
+    <p><a href="/">Volver al inicio</a></p>
+  </div>
+</main>
+
+<%- include('partials/footer', { BRAND }) %>

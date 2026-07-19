@@ -1,0 +1,19 @@
+<%- include('partials/header', { title, BRAND }) %>
+
+<main class="container">
+  <div class="card">
+    <h1>Contáctanos</h1>
+    <p>¿Tienes dudas sobre un pedido, un producto o quieres hacer una sugerencia? Escríbenos por cualquiera de estos medios:</p>
+    <ul>
+      <li>📞 Teléfono / WhatsApp: <a href="https://wa.me/<%= BRAND.whatsapp %>" target="_blank" rel="noopener">
+        <%= BRAND.phone %></a></li>
+      <li>✉️ Correo: <a href="mailto:<%= BRAND.email %>"><%= BRAND.email %></a></li>
+      <li>📍 <%= BRAND.address %></li>
+      <li>🕗 <%= BRAND.hours %></li>
+    </ul>
+    <p>Para pedidos, la forma más rápida es escribirnos directo por WhatsApp o entrar a
+       <a href="/acceso">tu cuenta</a>.</p>
+  </div>
+</main>
+
+<%- include('partials/footer', { BRAND }) %>

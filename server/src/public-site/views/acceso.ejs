@@ -1,0 +1,32 @@
+<%- include('partials/header', { title, BRAND }) %>
+
+<main class="container">
+  <div class="card" style="text-align:center;">
+    <h1>Accede a tu cuenta</h1>
+    <p>Elige cómo prefieres comprar en <%= BRAND.name %>: desde la app móvil o desde el navegador.</p>
+  </div>
+
+  <div class="access-options">
+    <div class="access-card">
+      <div class="emoji">📱</div>
+      <h2>Descarga la app</h2>
+      <p>Pedidos más rápidos desde tu celular, con notificaciones de tus compras.</p>
+      <div class="platforms">
+        <span>🤖 Android — próximamente</span>
+        <span>🍎 iOS — próximamente</span>
+      </div>
+    </div>
+    <div class="access-card">
+      <div class="emoji">💻</div>
+      <h2>Ingresar por la web</h2>
+      <p>Usa tu cuenta directamente desde el navegador, sin instalar nada.</p>
+      <a class="btn" href="<%= APP_PUBLIC_URL %>">Iniciar sesión en la web</a>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:1.5rem;">
+    <p>¿Aún no tienes cuenta? Puedes registrarte directamente desde la web con tu celular y correo.</p>
+  </div>
+</main>
+
+<%- include('partials/footer', { BRAND }) %>

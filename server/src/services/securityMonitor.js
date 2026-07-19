@@ -1,6 +1,7 @@
 'use strict';
 const { getDB } = require('../db/database');
 const { raiseAlert } = require('../utils/securityAlert');
+const logger = require('../utils/logger');
 
 // Umbrales de "IP sospechosa" en ventana de 5 minutos -- mismo criterio
 // aplicado en la pestaña Conexiones del dashboard.
@@ -15,18 +16,19 @@ const lastAlertedAt = new Map(); // ip -> timestamp
 // llamando a su webhook (waBot.js -> este mismo servidor).
 const LOOPBACK_IPS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 
-function scanSuspiciousIPs() {
-  const rows = getDB().prepare(`
+async function scanSuspiciousIPs() {
+  const { rows } = await getDB().query(`
     SELECT ip,
            SUM(requests)  AS requests,
            SUM(count_auth_fail) AS auth_fail_real,
            SUM(count_404) AS scans
     FROM ip_activity
-    WHERE minute >= ?
+    WHERE minute >= $1
     GROUP BY ip
-  `).all(new Date(Date.now() - 5 * 60_000).toISOString().slice(0, 16));
+  `, [new Date(Date.now() - 5 * 60_000).toISOString().slice(0, 16)]);
 
-  for (const row of rows) {
+  for (const rawRow of rows) {
+    const row = { ip: rawRow.ip, requests: Number(rawRow.requests), auth_fail_real: Number(rawRow.auth_fail_real), scans: Number(rawRow.scans) };
     if (LOOPBACK_IPS.has(row.ip)) continue;
     // count_auth_fail solo cuenta login fallido real (/api/auth/token,
     // /api/auth/register) -- un 401/403 generico (token expirado antes de
@@ -48,7 +50,7 @@ function scanSuspiciousIPs() {
 }
 
 function startSecurityMonitor() {
-  setInterval(scanSuspiciousIPs, 60_000).unref();
+  setInterval(() => { scanSuspiciousIPs().catch(e => logger.error({ err: e.message }, '[securityMonitor] scan fallo')); }, 60_000).unref();
 }
 
 module.exports = { startSecurityMonitor, scanSuspiciousIPs };

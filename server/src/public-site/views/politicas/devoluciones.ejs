@@ -1,0 +1,27 @@
+<%- include('../partials/header', { title, BRAND }) %>
+
+<main class="container">
+  <div class="card">
+    <h1>Política de Devoluciones y Cambios</h1>
+    <p><em>Plantilla general — debe ser revisada por un abogado antes de publicarse como versión definitiva.</em></p>
+
+    <h2>1. Productos perecederos</h2>
+    <p>Frutas, verduras, carnes, lácteos y panadería solo pueden cambiarse o devolverse si el producto llegó en
+       mal estado, dañado o vencido. Debes reportarlo el mismo día de la entrega, con foto del producto.</p>
+
+    <h2>2. Productos no perecederos</h2>
+    <p>Abarrotes, aseo y cuidado personal pueden devolverse dentro de los 3 días siguientes a la entrega,
+       siempre que el empaque esté sin abrir y en las mismas condiciones en que se entregó, conforme al derecho
+       de retracto del Estatuto del Consumidor (Ley 1480 de 2011) cuando aplique.</p>
+
+    <h2>3. Cómo solicitar un cambio o devolución</h2>
+    <p>Escríbenos por WhatsApp o al correo <a href="mailto:<%= BRAND.email %>"><%= BRAND.email %></a> indicando
+       tu número de pedido y el motivo. Coordinaremos la recolección o el cambio según el caso.</p>
+
+    <h2>4. Reembolsos</h2>
+    <p>Si el pago se hizo por transferencia, el reembolso se realiza al mismo medio de pago en un plazo de hasta
+       5 días hábiles después de confirmada la devolución.</p>
+  </div>
+</main>
+
+<%- include('../partials/footer', { BRAND }) %>

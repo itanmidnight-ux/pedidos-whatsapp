@@ -66,47 +66,49 @@ function signToken(user) {
 // El identificador acepta username (admin/worker, sin cambios) O correo
 // (clientes que se auto-registran -- ver /register). Un solo campo en la
 // app, el backend resuelve cual es sin necesitar que el usuario elija.
-router.post('/token', (req, res) => {
-  const { username, password, pin, device_info } = req.body;
-  if (!username || typeof username !== 'string' || !username.trim())
-    return res.status(400).json({ error: 'Usuario o correo requerido' });
+router.post('/token', async (req, res, next) => {
+  try {
+    const { username, password, pin, device_info } = req.body;
+    if (!username || typeof username !== 'string' || !username.trim())
+      return res.status(400).json({ error: 'Usuario o correo requerido' });
 
-  const credential = password !== undefined
-    ? String(password)
-    : pin !== undefined ? String(pin) : '';
-  if (!credential.length)
-    return res.status(400).json({ error: 'Contraseña requerida' });
+    const credential = password !== undefined
+      ? String(password)
+      : pin !== undefined ? String(pin) : '';
+    if (!credential.length)
+      return res.status(400).json({ error: 'Contraseña requerida' });
 
-  const identifier = username.trim().toLowerCase();
-  const ip      = getIP(req);
-  // Bloqueo por CUENTA, no por IP -- ver comentario en la declaracion de `attempts`.
-  const lockKey = identifier;
+    const identifier = username.trim().toLowerCase();
+    // Bloqueo por CUENTA, no por IP -- ver comentario en la declaracion de `attempts`.
+    const lockKey = identifier;
 
-  const secs = checkLock(lockKey);
-  if (secs !== null) {
-    return res.status(429).json({
-      error:     `Cuenta temporalmente bloqueada. Intenta en ${secs} segundos.`,
-      retry_in:  secs,
-    });
-  }
+    const secs = checkLock(lockKey);
+    if (secs !== null) {
+      return res.status(429).json({
+        error:     `Cuenta temporalmente bloqueada. Intenta en ${secs} segundos.`,
+        retry_in:  secs,
+      });
+    }
 
-  // El username de un cliente es su celular normalizado (57 + 10 digitos,
-  // ver /register) -- si escribe el celular tal cual lo registro (sin el
-  // 57 antepuesto) hay que igual encontrar la cuenta.
-  const phoneVariant = normalizeAndValidatePhone(identifier) || identifier;
+    // El username de un cliente es su celular normalizado (57 + 10 digitos,
+    // ver /register) -- si escribe el celular tal cual lo registro (sin el
+    // 57 antepuesto) hay que igual encontrar la cuenta.
+    const phoneVariant = normalizeAndValidatePhone(identifier) || identifier;
 
-  const db   = getDB();
-  const user = db.prepare(
-    'SELECT * FROM users WHERE (username = ? OR username = ? OR email = ?) AND active = 1'
-  ).get(identifier, phoneVariant, identifier);
+    const db   = getDB();
+    const { rows } = await db.query(
+      'SELECT * FROM users WHERE (username = $1 OR username = $2 OR email = $3) AND active = 1',
+      [identifier, phoneVariant, identifier]
+    );
+    const user = rows[0];
 
-  if (!user) {
-    recordFail(lockKey);
-    return res.status(401).json({ error: 'Credenciales incorrectas' });
-  }
+    if (!user) {
+      recordFail(lockKey);
+      return res.status(401).json({ error: 'Credenciales incorrectas' });
+    }
 
-  bcrypt.compare(credential, user.pin || user.password_hash, (err, match) => {
-    if (err || !match) {
+    const match = await bcrypt.compare(credential, user.pin || user.password_hash);
+    if (!match) {
       recordFail(lockKey);
       const a = attempts.get(lockKey);
       const remaining = Math.max(0, MAX_ATTEMPTS - (a?.count || 0));
@@ -118,65 +120,69 @@ router.post('/token', (req, res) => {
     clearAttempts(lockKey);
     // Hora de entrada -- solo staff (admin/worker); clientes no marcan turno
     if (['admin', 'worker'].includes(user.role)) {
-      db.prepare(`INSERT INTO login_events (user_id, logged_in_at, device_info) VALUES (?, strftime('%Y-%m-%dT%H:%M:%fZ','now'), ?)`)
-        .run(user.id, device_info ? sanitizeText(device_info, 200) : null);
+      await db.query(`INSERT INTO login_events (user_id, logged_in_at, device_info) VALUES ($1, now_iso(), $2)`,
+        [user.id, device_info ? sanitizeText(device_info, 200) : null]);
     }
     res.json(signToken(user));
-  });
+  } catch (e) { next(e); }
 });
 
 // ── POST /api/auth/logout — Marca la hora de salida ───────────
 // JWT es sin estado -- "logout" real solo existe si el cliente lo marca.
 // Se actualiza la fila de login_events mas reciente sin salida registrada
 // para saber cuando un trabajador se desconecto (control de asistencia).
-router.post('/logout', require('../middleware/auth').clientAuth, (req, res) => {
-  const db = getDB();
-  // jti viene del token decodificado por el middleware (ver jwtAuth) --
-  // si el token es viejo (pre-deploy, sin jti), no hay nada que revocar
-  // individualmente; expira solo en su ciclo normal de 30 dias.
-  if (req.user.jti) {
-    db.prepare('INSERT OR IGNORE INTO revoked_tokens (jti, user_id) VALUES (?, ?)')
-      .run(req.user.jti, req.user.id);
-  }
-  // SQLite estandar no soporta ORDER BY/LIMIT en UPDATE -- se resuelve con
-  // subquery para agarrar solo la fila abierta mas reciente de ese usuario.
-  db.prepare(`
-    UPDATE login_events SET logged_out_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
-    WHERE id = (
-      SELECT id FROM login_events
-      WHERE user_id = ? AND logged_out_at IS NULL
-      ORDER BY id DESC LIMIT 1
-    )
-  `).run(req.user.id);
-  res.json({ ok: true });
+router.post('/logout', require('../middleware/auth').clientAuth, async (req, res, next) => {
+  try {
+    const db = getDB();
+    // jti viene del token decodificado por el middleware (ver jwtAuth) --
+    // si el token es viejo (pre-deploy, sin jti), no hay nada que revocar
+    // individualmente; expira solo en su ciclo normal de 30 dias.
+    if (req.user.jti) {
+      await db.query('INSERT INTO revoked_tokens (jti, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+        [req.user.jti, req.user.id]);
+      require('../middleware/auth').mirrorRevocation(req.user.jti);
+    }
+    // Postgres tampoco soporta ORDER BY/LIMIT en UPDATE -- se resuelve con
+    // subquery para agarrar solo la fila abierta mas reciente de ese usuario.
+    await db.query(`
+      UPDATE login_events SET logged_out_at = now_iso()
+      WHERE id = (
+        SELECT id FROM login_events
+        WHERE user_id = $1 AND logged_out_at IS NULL
+        ORDER BY id DESC LIMIT 1
+      )
+    `, [req.user.id]);
+    res.json({ ok: true });
+  } catch (e) { next(e); }
 });
 
 // ── POST /api/auth/refresh — Renovar token ────────────────────
-router.post('/refresh', (req, res) => {
-  const auth = req.headers.authorization || '';
-  const old  = auth.startsWith('Bearer ') ? auth.slice(7) : '';
-  if (!old) return res.status(401).json({ error: 'Token requerido' });
-
-  let payload;
+router.post('/refresh', async (req, res, next) => {
   try {
-    // Allow expired tokens (up to 7 extra days) so refresh still works
-    payload = jwt.verify(old, process.env.JWT_SECRET, { ignoreExpiration: true });
-  } catch {
-    return res.status(401).json({ error: 'Token inválido' });
-  }
+    const auth = req.headers.authorization || '';
+    const old  = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+    if (!old) return res.status(401).json({ error: 'Token requerido' });
 
-  // Reject if expired more than 7 days ago
-  if (payload.exp && (Date.now() / 1000 - payload.exp) > 7 * 86400) {
-    return res.status(401).json({ error: 'Sesión expirada. Inicia sesión nuevamente.' });
-  }
+    let payload;
+    try {
+      // Allow expired tokens (up to 7 extra days) so refresh still works
+      payload = jwt.verify(old, process.env.JWT_SECRET, { ignoreExpiration: true });
+    } catch {
+      return res.status(401).json({ error: 'Token inválido' });
+    }
 
-  const db   = getDB();
-  const user = db.prepare(
-    'SELECT * FROM users WHERE id = ? AND active = 1'
-  ).get(payload.id);
-  if (!user) return res.status(401).json({ error: 'Usuario no encontrado' });
+    // Reject if expired more than 7 days ago
+    if (payload.exp && (Date.now() / 1000 - payload.exp) > 7 * 86400) {
+      return res.status(401).json({ error: 'Sesión expirada. Inicia sesión nuevamente.' });
+    }
 
-  res.json(signToken(user));
+    const db   = getDB();
+    const { rows } = await db.query('SELECT * FROM users WHERE id = $1 AND active = 1', [payload.id]);
+    const user = rows[0];
+    if (!user) return res.status(401).json({ error: 'Usuario no encontrado' });
+
+    res.json(signToken(user));
+  } catch (e) { next(e); }
 });
 
 const { sanitizeText } = require('../utils/sanitize');
@@ -215,10 +221,10 @@ router.post('/register', async (req, res) => {
   // pueda usar el mismo valor como telefono real al armar el pedido).
   const name = normalizedPhone;
 
-  if (db.prepare('SELECT id FROM users WHERE username = ?').get(name))
-    return res.status(409).json({ error: 'Ese número de celular ya está registrado' });
-  if (db.prepare('SELECT id FROM users WHERE email = ?').get(String(email).trim().toLowerCase()))
-    return res.status(409).json({ error: 'El correo electrónico ya está registrado' });
+  const { rows: byUsername } = await db.query('SELECT id FROM users WHERE username = $1', [name]);
+  if (byUsername[0]) return res.status(409).json({ error: 'Ese número de celular ya está registrado' });
+  const { rows: byEmail } = await db.query('SELECT id FROM users WHERE email = $1', [String(email).trim().toLowerCase()]);
+  if (byEmail[0]) return res.status(409).json({ error: 'El correo electrónico ya está registrado' });
 
   const ip      = getIP(req);
   const lockKey = `register:${ip}`;
@@ -232,18 +238,19 @@ router.post('/register', async (req, res) => {
     // manual de un admin por cada registro no era practico. El correo
     // unico (indice UNIQUE en la base) es la validacion real: evita que
     // se repitan cuentas para la misma persona.
-    db.prepare(
+    await db.query(
       `INSERT INTO users (username, password_hash, pin, display_name, role, active, email, address, nickname, bio, phone)
-       VALUES (?,?,?,?,?,1,?,?,?,?,?)`
-    ).run(
-      name, hash, hash,
-      sanitizeText(display_name, 100),
-      'client',
-      String(email).trim().toLowerCase().slice(0, 200),
-      sanitizeText(address, 300),
-      nickname ? sanitizeText(nickname, 50) : null,
-      bio      ? sanitizeText(bio, 500)      : null,
-      normalizedPhone,
+       VALUES ($1,$2,$3,$4,$5,1,$6,$7,$8,$9,$10)`,
+      [
+        name, hash, hash,
+        sanitizeText(display_name, 100),
+        'client',
+        String(email).trim().toLowerCase().slice(0, 200),
+        sanitizeText(address, 300),
+        nickname ? sanitizeText(nickname, 50) : null,
+        bio      ? sanitizeText(bio, 500)      : null,
+        normalizedPhone,
+      ]
     );
     clearAttempts(lockKey);
     res.status(201).json({
@@ -254,7 +261,8 @@ router.post('/register', async (req, res) => {
     recordFail(lockKey);
     // UNIQUE (username, email o phone) -- puede pasar por carrera entre
     // el chequeo de arriba y el insert real, aunque sea poco probable.
-    if (String(e.message || '').includes('UNIQUE constraint failed')) {
+    // codigo 23505 = unique_violation (estandar SQLSTATE de Postgres).
+    if (e.code === '23505') {
       return res.status(409).json({ error: 'Ese celular o correo ya está registrado' });
     }
     res.status(500).json({ error: 'Error al crear cuenta' });

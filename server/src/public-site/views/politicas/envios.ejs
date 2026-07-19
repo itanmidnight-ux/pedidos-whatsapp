@@ -1,0 +1,26 @@
+<%- include('../partials/header', { title, BRAND }) %>
+
+<main class="container">
+  <div class="card">
+    <h1>Política de Envíos</h1>
+    <p><em>Plantilla general — ajusta las zonas y tarifas reales antes de publicar.</em></p>
+
+    <h2>1. Cobertura</h2>
+    <p>Hacemos entregas dentro de <%= BRAND.city %> y alrededores. Escríbenos para confirmar si tu dirección
+       está dentro de la zona de cobertura.</p>
+
+    <h2>2. Tiempos de entrega</h2>
+    <p>Los pedidos confirmados antes de la 1:00pm se entregan el mismo día. Los confirmados después, se
+       entregan al día siguiente, dentro del horario de atención: <%= BRAND.hours %>.</p>
+
+    <h2>3. Costo de envío</h2>
+    <p>El costo de envío depende de la zona y se muestra antes de confirmar el pedido. Pedidos sobre un monto
+       mínimo (a definir) pueden tener envío gratis.</p>
+
+    <h2>4. Recepción del pedido</h2>
+    <p>Es responsabilidad del cliente estar disponible en la dirección registrada durante el horario acordado.
+       Si nadie recibe el pedido, se reprograma la entrega y puede aplicar un costo adicional.</p>
+  </div>
+</main>
+
+<%- include('../partials/footer', { BRAND }) %>

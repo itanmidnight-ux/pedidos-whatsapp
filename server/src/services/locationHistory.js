@@ -41,17 +41,19 @@ function appendLocationHistory(userId, entry) {
 // este cambio), lo vuelca a JSON para no perder el recorrido y despues deja
 // una sola fila (la mas reciente) por usuario. Idempotente -- en boots
 // siguientes ya no hay nada que archivar.
-function archiveLegacyRows(db) {
-  const dupUsers = db.prepare(`
+async function archiveLegacyRows(pool) {
+  const { rows: dups } = await pool.query(`
     SELECT user_id FROM staff_locations GROUP BY user_id HAVING COUNT(*) > 1
-  `).all().map(r => r.user_id);
+  `);
+  const dupUsers = dups.map(r => r.user_id);
   if (dupUsers.length === 0) return;
 
   for (const userId of dupUsers) {
-    const user = db.prepare('SELECT username, display_name, role FROM users WHERE id=?').get(userId);
-    const rows = db.prepare(
-      'SELECT lat, lng, accuracy, recorded_at FROM staff_locations WHERE user_id=? ORDER BY id ASC'
-    ).all(userId);
+    const { rows: userRows } = await pool.query('SELECT username, display_name, role FROM users WHERE id=$1', [userId]);
+    const user = userRows[0];
+    const { rows } = await pool.query(
+      'SELECT lat, lng, accuracy, recorded_at FROM staff_locations WHERE user_id=$1 ORDER BY id ASC', [userId]
+    );
     const history = readLocationHistory(userId);
     for (const r of rows) {
       history.push({
@@ -64,11 +66,11 @@ function archiveLegacyRows(db) {
     const trimmed = history.length > MAX_ENTRIES ? history.slice(history.length - MAX_ENTRIES) : history;
     fs.writeFileSync(historyFile(userId), JSON.stringify(trimmed), 'utf8');
 
-    db.prepare(`
-      DELETE FROM staff_locations WHERE user_id=? AND id NOT IN (
-        SELECT id FROM staff_locations WHERE user_id=? ORDER BY id DESC LIMIT 1
+    await pool.query(`
+      DELETE FROM staff_locations WHERE user_id=$1 AND id NOT IN (
+        SELECT id FROM staff_locations WHERE user_id=$1 ORDER BY id DESC LIMIT 1
       )
-    `).run(userId, userId);
+    `, [userId]);
   }
   logger.info({ users: dupUsers.length }, '[locations] historico legado archivado a JSON');
 }

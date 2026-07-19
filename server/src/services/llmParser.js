@@ -470,7 +470,7 @@ async function _buildManager(products) {
   }
 
   // ── Respuestas ──
-  mgr.addAnswer('es', 'greeting',     '¡Hola! Bienvenido a Concentrados Monserrath. ¿En qué le podemos ayudar?');
+  mgr.addAnswer('es', 'greeting',     '¡Hola! Bienvenido a Supermercado GO. ¿En qué le podemos ayudar?');
   mgr.addAnswer('es', 'farewell',     '¡Hasta luego! Gracias por contactarnos.');
   mgr.addAnswer('es', 'product.list', 'Con gusto le informamos sobre nuestros productos disponibles.');
 
@@ -478,11 +478,11 @@ async function _buildManager(products) {
   return mgr;
 }
 
-function _getManager() {
+async function _getManager() {
   const db       = getDB();
-  const products = db.prepare('SELECT id, name, aliases FROM products WHERE available=1').all();
+  const { rows: products } = await db.query('SELECT id, name, aliases FROM products WHERE available=1');
   const hash     = _hashProducts(products);
-  if (_manager && hash === _productHash) return Promise.resolve(_manager);
+  if (_manager && hash === _productHash) return _manager;
   if (!_trainingPromise || hash !== _productHash) {
     _productHash     = hash;
     _trainingPromise = _buildManager(products).then(mgr => { _manager = mgr; return mgr; })
@@ -496,7 +496,7 @@ setImmediate(() => _getManager().catch(() => {}));
 // ── parseOrderMessage ──────────────────────────────────────────
 async function parseOrderMessage(waMessage) {
   const db       = getDB();
-  const products = db.prepare('SELECT * FROM products WHERE available=1').all();
+  const { rows: products } = await db.query('SELECT * FROM products WHERE available=1');
   const is_fiado = FIADO_WORDS.some(w => waMessage.toLowerCase().includes(w));
   const addr     = extractAddress(waMessage);
   const fuzzy    = fuzzyProductMatch(waMessage, products);

@@ -1,13 +1,13 @@
-const Database  = require('better-sqlite3');
-const bcrypt    = require('bcrypt');
-const crypto    = require('crypto');
-const path      = require('path');
-const fs        = require('fs');
-const logger    = require('../utils/logger');
+'use strict';
+const { Pool, Client } = require('pg');
+const bcrypt   = require('bcrypt');
+const crypto   = require('crypto');
+const path     = require('path');
+const fs       = require('fs');
+const logger   = require('../utils/logger');
 const { runMigrations } = require('./migrations');
 const { archiveLegacyRows } = require('../services/locationHistory');
 
-const DB_PATH    = process.env.DB_PATH || path.join(__dirname, '../../pedidos.db');
 const SALT_ROUNDS = 10;
 
 const SEED_USERS = [
@@ -29,55 +29,124 @@ function seedPassword(username) {
   return generated;
 }
 
-let db;
+function connectionConfig() {
+  // PG_SCHEMA: usado SOLO por los tests (ver test/helpers/testDb.js) -- cada
+  // archivo de test corre en su propio schema Postgres, aislamiento
+  // equivalente al "1 archivo SQLite por test" de la era anterior, sin
+  // pisarse entre si ni necesitar una base de datos separada por test.
+  const options = process.env.PG_SCHEMA ? { options: `-c search_path=${process.env.PG_SCHEMA}` } : {};
+  if (process.env.DATABASE_URL) return { connectionString: process.env.DATABASE_URL, ...options };
+  return {
+    host:     process.env.PG_HOST     || '127.0.0.1',
+    port:     Number(process.env.PG_PORT || 5432),
+    database: process.env.PG_DATABASE || 'supermercado',
+    user:     process.env.PG_USER     || 'pedidosbot',
+    password: process.env.PG_PASSWORD,
+    ...options,
+  };
+}
+
+let pool;
 
 async function initDB() {
-  db = new Database(DB_PATH);
-  db.pragma('journal_mode = WAL');
-  db.pragma('foreign_keys = ON');
+  // El schema de test debe existir ANTES de abrir el pool con
+  // search_path=ese-schema (si no, cada conexion cae de vuelta a "public"
+  // porque Postgres ignora search_path apuntando a un schema inexistente).
+  // Va por una conexion aparte, corta, sin search_path fijado.
+  if (process.env.PG_SCHEMA) {
+    const bootstrapCfg = connectionConfig();
+    delete bootstrapCfg.options;
+    const bootstrapPool = new Pool({ ...bootstrapCfg, max: 1 });
+    await bootstrapPool.query(`CREATE SCHEMA IF NOT EXISTS "${process.env.PG_SCHEMA}"`);
+    await bootstrapPool.end();
+  }
+
+  pool = new Pool({
+    ...connectionConfig(),
+    // Tope de conexiones por instancia del server -- con varias instancias
+    // (Fase 2, horizontal scaling) cada una abre su propio pool, por eso el
+    // tope es conservador y no "todas las conexiones que Postgres aguante".
+    max: Number(process.env.PG_POOL_MAX || 10),
+    idleTimeoutMillis: 30_000,
+    connectionTimeoutMillis: 5_000,
+  });
+  pool.on('error', (err) => logger.error({ err: err.message }, '[db] error inesperado en el pool de Postgres'));
 
   const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
-  db.exec(schema);
-  runMigrations(db);
-  archiveLegacyRows(db);
+  await pool.query(schema);
+  await runMigrations(pool);
+  await archiveLegacyRows(pool);
 
   // Seed users — insert if missing, update display_name + role if changed
   for (const u of SEED_USERS) {
-    const existing = db.prepare('SELECT id FROM users WHERE username = ?').get(u.username);
-    if (!existing) {
+    const { rows } = await pool.query('SELECT id FROM users WHERE username = $1', [u.username]);
+    if (rows.length === 0) {
       const password = seedPassword(u.username);
       const hash = await bcrypt.hash(password, SALT_ROUNDS);
       const pin  = await bcrypt.hash(password, SALT_ROUNDS);
-      db.prepare(
-        'INSERT OR IGNORE INTO users (username, password_hash, pin, display_name, role) VALUES (?,?,?,?,?)'
-      ).run(u.username, hash, pin, u.display_name, u.role);
+      await pool.query(
+        'INSERT INTO users (username, password_hash, pin, display_name, role) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (username) DO NOTHING',
+        [u.username, hash, pin, u.display_name, u.role]
+      );
     } else {
-      db.prepare('UPDATE users SET role=?, display_name=? WHERE username=?')
-        .run(u.role, u.display_name, u.username);
+      await pool.query('UPDATE users SET role=$1, display_name=$2 WHERE username=$3', [u.role, u.display_name, u.username]);
     }
   }
 
   // Default settings
-  db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES ('nequi_phone', '3001234567')`).run();
-  db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES ('nequi_name', 'Concentrados Monserrath')`).run();
-  db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES ('empresa_nombre', 'Concentrados Monserrath')`).run();
-  db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES ('empresa_descripcion', 'Distribuidora de concentrados y alimentos para animales')`).run();
-  db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES ('horario_atencion', 'Lunes a Sábado 8:00am - 6:00pm')`).run();
-  db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES ('theme_primary', '#2D5016')`).run();
-  db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES ('theme_accent', '#D4800A')`).run();
-  db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES ('theme_name', 'Concentrados Monserrath')`).run();
-  db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES ('theme_logo_url', '')`).run();
+  const defaults = [
+    ['nequi_phone', '3001234567'],
+    ['nequi_name', 'Supermercado GO'],
+    ['empresa_nombre', 'Supermercado GO'],
+    ['empresa_descripcion', 'Supermercado de barrio en Cúcuta — víveres, aseo y más'],
+    ['horario_atencion', 'Lunes a Sábado 8:00am - 8:00pm, Domingos 8:00am - 2:00pm'],
+    ['theme_primary', '#2e7d32'],
+    ['theme_accent', '#f9a825'],
+    ['theme_name', 'Supermercado GO'],
+    ['theme_logo_url', ''],
+  ];
+  for (const [key, value] of defaults) {
+    await pool.query('INSERT INTO settings (key, value) VALUES ($1,$2) ON CONFLICT (key) DO NOTHING', [key, value]);
+  }
 
-  logger.info({ path: DB_PATH }, 'DB inicializada');
+  logger.info({ host: connectionConfig().host || 'DATABASE_URL' }, 'DB (PostgreSQL) inicializada');
 }
 
 function getDB() {
-  if (!db) throw new Error('DB no inicializada. Llama initDB() primero.');
-  return db;
+  if (!pool) throw new Error('DB no inicializada. Llama initDB() primero.');
+  return pool;
 }
 
-function closeDB() {
-  if (db) { db.close(); db = null; }
+// Reemplaza el db.transaction(fn) sincrono de better-sqlite3 -- pg necesita
+// una sola conexion dedicada (no el pool compartido) para que BEGIN/COMMIT
+// envuelvan las mismas queries. fn recibe un "client" con el mismo .query()
+// que el pool; siempre se hace ROLLBACK + release si algo falla.
+async function withTransaction(fn) {
+  const client = await getDB().connect();
+  try {
+    await client.query('BEGIN');
+    const result = await fn(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw e;
+  } finally {
+    client.release();
+  }
 }
 
-module.exports = { initDB, getDB, closeDB };
+async function closeDB() {
+  if (pool) { await pool.end(); pool = null; }
+}
+
+// Cliente dedicado para LISTEN/NOTIFY (waBot.js) -- necesita su propia
+// conexion persistente, nunca una del pool (el pool puede reciclar/cerrar
+// conexiones en cualquier momento, lo que cortaria la suscripcion sin
+// avisar). El caller es responsable de connect()/end() y de reintentar si
+// se cae.
+function createListenClient() {
+  return new Client(connectionConfig());
+}
+
+module.exports = { initDB, getDB, closeDB, withTransaction, createListenClient };

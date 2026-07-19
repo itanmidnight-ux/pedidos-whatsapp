@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Panel Admin — Supermercado GO</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+<header class="admin-bar">
+  <a class="brand" href="/productos">🔒 Panel Admin — Supermercado GO</a>
+  <nav>
+    <a href="/productos">Productos</a>
+    <a href="/productos/nuevo">+ Nuevo producto</a>
+    <form method="post" action="/logout" style="display:inline;">
+      <input type="hidden" name="_csrf" value="<%= csrf %>">
+      <button type="submit" class="link-btn">Cerrar sesión</button>
+    </form>
+  </nav>
+</header>
+<main class="container">

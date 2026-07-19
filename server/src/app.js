@@ -77,13 +77,13 @@ function normalizeDomain(raw) {
   return /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+(:[0-9]{1,5})?$/i.test(d) ? d : null;
 }
 
-function getAllowedOrigins(now) {
+async function getAllowedOrigins(now) {
   if (now - originsCache.at < ORIGINS_CACHE_MS) return originsCache.list;
   const domains = new Set();
   if (process.env.SERVER_DOMAIN) domains.add(normalizeDomain(process.env.SERVER_DOMAIN));
   try {
     const { getDB } = require('./db/database');
-    const rows = getDB().prepare(`SELECT value FROM settings WHERE key IN ('server_domain','extra_domains')`).all();
+    const { rows } = await getDB().query(`SELECT value FROM settings WHERE key IN ('server_domain','extra_domains')`);
     for (const r of rows) {
       String(r.value || '').split(',').forEach(d => domains.add(normalizeDomain(d)));
     }
@@ -94,10 +94,13 @@ function getAllowedOrigins(now) {
 }
 
 app.use(cors({
-  origin: (origin, cb) => {
+  origin: async (origin, cb) => {
     if (!origin) return cb(null, true);
-    if (getAllowedOrigins(Date.now()).includes(origin)) return cb(null, true);
-    cb(new Error('Origen no permitido por CORS'));
+    try {
+      const allowed = await getAllowedOrigins(Date.now());
+      if (allowed.includes(origin)) return cb(null, true);
+      cb(new Error('Origen no permitido por CORS'));
+    } catch (e) { cb(e); }
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
@@ -109,13 +112,24 @@ app.use(express.urlencoded({ extended: true, limit: '2mb' }));
 
 // ── Rate limiting (desactivado en tests: no aporta nada y solo hace
 // que los tests se pisen entre sí a través del contador compartido) ──
+// Store: Redis si REDIS_URL esta configurada (necesario para que el limite
+// sea real con mas de una instancia del server); si no, memoria del proceso
+// como hasta ahora. Ver utils/hybridRateLimitStore.js.
 if (process.env.NODE_ENV !== 'test') {
-  app.use('/api/', rateLimit({ windowMs: 60_000, max: 120, standardHeaders: true, legacyHeaders: false }));
+  const HybridRateLimitStore = require('./utils/hybridRateLimitStore');
+  app.use('/api/', rateLimit({
+    windowMs: 60_000, max: 120, standardHeaders: true, legacyHeaders: false,
+    store: new HybridRateLimitStore('rl:api:', 60_000),
+  }));
   app.use('/api/auth', rateLimit({
     windowMs: 15 * 60_000, max: 10, standardHeaders: true, legacyHeaders: false,
     message: { error: 'Demasiados intentos. Espera 15 minutos.' },
+    store: new HybridRateLimitStore('rl:auth:', 15 * 60_000),
   }));
-  app.use('/api/webhook', rateLimit({ windowMs: 60_000, max: 60, standardHeaders: true, legacyHeaders: false }));
+  app.use('/api/webhook', rateLimit({
+    windowMs: 60_000, max: 60, standardHeaders: true, legacyHeaders: false,
+    store: new HybridRateLimitStore('rl:webhook:', 60_000),
+  }));
 }
 
 app.use('/api', pinoHttp({ logger }));
@@ -136,6 +150,7 @@ app.use('/api/analytics', require('./routes/analytics'));
 app.use('/api/reports',  require('./routes/reports'));
 app.use('/api/staff-locations', require('./routes/staffLocations'));
 app.use('/api/payments', require('./routes/payments'));
+app.use('/api/public',   require('./routes/publicCatalog'));
 
 app.get('/health',  (req, res) => res.json({ status: 'ok', time: new Date().toISOString() }));
 app.get('/preview', (req, res) => res.sendFile(path.join(__dirname, 'preview.html')));

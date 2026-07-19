@@ -1,33 +1,27 @@
 'use strict';
-const path = require('path');
-const fs = require('fs');
-const os = require('os');
-
-const DB_PATH = path.join(os.tmpdir(), `pedidos-test-analytics-${Date.now()}.db`);
-process.env.DB_PATH = DB_PATH;
-process.env.JWT_SECRET = 'test-secret';
-process.env.API_KEY = 'test-api-key';
+const { setupTestEnv, teardownTestSchema } = require('./helpers/testDb');
+setupTestEnv('analytics');
 process.env.SEED_PASSWORD_JESUS = 'admin-test-pw';
-process.env.NODE_ENV = 'test';
 
 const request = require('supertest');
-const { initDB, closeDB, getDB } = require('../src/db/database');
+const { initDB, getDB } = require('../src/db/database');
 const app = require('../src/app');
 
 beforeAll(async () => {
   await initDB();
   const db = getDB();
-  db.prepare(`INSERT INTO customers (phone, name) VALUES ('573000000001','Cliente Uno')`).run();
-  const cust = db.prepare(`SELECT id FROM customers WHERE phone='573000000001'`).get();
-  db.prepare(`INSERT INTO orders (customer_id, product_name, status, delivered_at, requested_at)
-    VALUES (?, 'Concentrado 40kg', 'entregado', datetime('now'), datetime('now'))`).run(cust.id);
-  const order = db.prepare(`SELECT id FROM orders WHERE customer_id=?`).get(cust.id);
-  db.prepare(`INSERT INTO order_items (order_id, product_name, product_price, quantity) VALUES (?, 'Concentrado 40kg', 85000, 1)`).run(order.id);
-  db.prepare(`INSERT INTO products (name, price, stock, low_stock_threshold) VALUES ('Concentrado 40kg', 85000, 3, 5)`).run();
+  await db.query(`INSERT INTO customers (phone, name) VALUES ('573000000001','Cliente Uno')`);
+  const { rows: custRows } = await db.query(`SELECT id FROM customers WHERE phone='573000000001'`);
+  const custId = custRows[0].id;
+  await db.query(`INSERT INTO orders (customer_id, product_name, status, delivered_at, requested_at)
+    VALUES ($1, 'Concentrado 40kg', 'entregado', now_iso(), now_iso())`, [custId]);
+  const { rows: orderRows } = await db.query(`SELECT id FROM orders WHERE customer_id=$1`, [custId]);
+  const orderId = orderRows[0].id;
+  await db.query(`INSERT INTO order_items (order_id, product_name, product_price, quantity) VALUES ($1, 'Concentrado 40kg', 85000, 1)`, [orderId]);
+  await db.query(`INSERT INTO products (name, price, stock, low_stock_threshold) VALUES ('Concentrado 40kg', 85000, 3, 5)`);
 });
-afterAll(() => {
-  closeDB();
-  for (const suffix of ['', '-wal', '-shm']) { try { fs.unlinkSync(DB_PATH + suffix); } catch (_) {} }
+afterAll(async () => {
+  await teardownTestSchema();
 });
 
 async function loginAdmin() {

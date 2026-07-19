@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # ================================================================================
-#  dashboard.py — Panel nativo de escritorio GTK3 para Concentrados Monserrath
+#  dashboard.py — Panel nativo de escritorio GTK3 para Supermercado GO
 #  Versión 3.0 — Reescritura completa del panel de administración del servidor.
 #
 #  9 módulos: Monitoreo · Ventas · Pedidos Activos · Bot WhatsApp · Empleados
@@ -11,7 +11,7 @@
 #   - Estilo claro empresarial con acentos de marca (olivo/ámbar), crossfade
 #     nativo al cambiar de módulo
 #   - Gráficos Cairo dibujados a mano (barras, líneas, dona, sparklines)
-#   - Acceso híbrido: SQLite directo (stats) + systemd (control servicio)
+#   - Acceso híbrido: Postgres directo (stats) + systemd (control servicio)
 #                      + API HTTP (estado del bot WhatsApp, QR)
 #
 #  Se lanza desde deploy-linux.sh (--menu) o directamente: python3 dashboard.py
@@ -20,9 +20,10 @@ import gi
 gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk, Gdk, GLib, GdkPixbuf
 import cairo
-import subprocess, sqlite3, os, re, sys, datetime, secrets, json, base64, threading, math
+import subprocess, os, re, sys, datetime, secrets, json, base64, threading, math
 import urllib.request, urllib.error
 import shutil, platform
+import psycopg2
 
 # Mapa interactivo (arrastrar/zoom) en Ubicaciones via WebKit2 + Leaflet local.
 # Opcional a proposito: en un servidor donde deploy-linux.sh todavia no
@@ -527,17 +528,38 @@ def env_set(key, value):
         print(f'[dashboard] env_set error: {e}', file=sys.stderr)
 
 
-def db_path():
-    p = env_get('DB_PATH')
-    return p if p else os.path.join(PROJ, 'server', 'pedidos.db')
+def pg_connect():
+    """Conexion a Postgres -- mismas env vars que server/src/db/database.js
+    (leidas del mismo server/.env via env_get). Sin DATABASE_URL cae a
+    PG_HOST/PG_PORT/PG_DATABASE/PG_USER/PG_PASSWORD con los mismos defaults
+    que el server Node."""
+    database_url = env_get('DATABASE_URL')
+    if database_url:
+        return psycopg2.connect(database_url, connect_timeout=3)
+    return psycopg2.connect(
+        host=env_get('PG_HOST') or '127.0.0.1',
+        port=env_get('PG_PORT') or '5432',
+        dbname=env_get('PG_DATABASE') or 'supermercado',
+        user=env_get('PG_USER') or 'pedidosbot',
+        password=env_get('PG_PASSWORD') or '',
+        connect_timeout=3,
+    )
+
+
+def appdata_dir():
+    """Directorio de datos persistentes del servicio (systemd Environment=APPDATA=...),
+    mismo valor que usa server/src/services/locationHistory.js para 'locations/'."""
+    env = sh(f"systemctl show {SERVICE} -p Environment --value")
+    m = re.search(r'APPDATA=(\S+)', env)
+    return m.group(1) if m else os.path.expanduser('~')
 
 
 def read_location_history(user_id):
     """Historial de ubicaciones de un trabajador -- vive en JSON liviano
-    junto a la DB (server/src/services/locationHistory.js), no en
+    aparte de la DB (server/src/services/locationHistory.js), no en
     staff_locations (esa tabla solo guarda la posición ACTUAL). Devuelve
     lista de dicts mas reciente primero, o [] si no hay archivo/error."""
-    path = os.path.join(os.path.dirname(db_path()), 'locations', f'{user_id}.json')
+    path = os.path.join(appdata_dir(), 'pedidos-bot', 'locations', f'{user_id}.json')
     try:
         with open(path, encoding='utf-8') as f:
             history = json.load(f)
@@ -547,13 +569,14 @@ def read_location_history(user_id):
 
 
 def query(sql, params=()):
-    """Query SQLite read-only (mode=ro) — devuelve lista de tuplas o [] si falla."""
-    p = db_path()
-    if not os.path.exists(p):
-        return []
+    """Query Postgres de solo lectura -- devuelve lista de tuplas o [] si falla
+    (servidor caido, credenciales invalidas, etc. -- el dashboard nunca debe
+    trabarse por esto, solo mostrar '—' donde falte el dato)."""
     try:
-        con = sqlite3.connect(f'file:{p}?mode=ro', uri=True, timeout=2)
-        cur = con.execute(sql, params)
+        con = pg_connect()
+        con.set_session(readonly=True, autocommit=True)
+        cur = con.cursor()
+        cur.execute(sql, params)
         rows = cur.fetchall()
         con.close()
         return rows
@@ -562,13 +585,11 @@ def query(sql, params=()):
 
 
 def db_write(sql, params=()):
-    """Escribe en SQLite con timeout — devuelve True/False."""
-    p = db_path()
-    if not os.path.exists(p):
-        return False
+    """Escribe en Postgres -- devuelve True/False."""
     try:
-        con = sqlite3.connect(p, timeout=3)
-        con.execute(sql, params)
+        con = pg_connect()
+        cur = con.cursor()
+        cur.execute(sql, params)
         con.commit()
         con.close()
         return True
@@ -577,13 +598,13 @@ def db_write(sql, params=()):
 
 
 def setting_get(key, default=''):
-    rows = query("SELECT value FROM settings WHERE key=?", (key,))
+    rows = query("SELECT value FROM settings WHERE key=%s", (key,))
     return rows[0][0] if rows else default
 
 
 def setting_set(key, value):
     return db_write(
-        "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, datetime('now','localtime')) "
+        "INSERT INTO settings (key, value, updated_at) VALUES (%s, %s, now_iso()) "
         "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
         (key, value))
 
@@ -1461,14 +1482,20 @@ class MonitorModule:
             self.card_mem.set_value('—')
 
         # Pedidos
-        orders_today = query("SELECT COUNT(*) FROM orders WHERE date(requested_at)=date('now')")
+        orders_today = query("""
+            SELECT COUNT(*) FROM orders
+            WHERE (requested_at::timestamptz AT TIME ZONE 'America/Bogota')::date = (now() AT TIME ZONE 'America/Bogota')::date
+        """)
         orders_total = query("SELECT COUNT(*) FROM orders")
         today = orders_today[0][0] if orders_today else 0
         total = orders_total[0][0] if orders_total else 0
         self.card_orders.set_value(f'{today} / {total}')
 
         # Mensajes
-        msgs_today = query("SELECT COUNT(*) FROM messages WHERE date(created_at)=date('now')")
+        msgs_today = query("""
+            SELECT COUNT(*) FROM messages
+            WHERE (created_at::timestamptz AT TIME ZONE 'America/Bogota')::date = (now() AT TIME ZONE 'America/Bogota')::date
+        """)
         msgs_total = query("SELECT COUNT(*) FROM messages")
         today_m = msgs_today[0][0] if msgs_today else 0
         total_m = msgs_total[0][0] if msgs_total else 0
@@ -1501,8 +1528,8 @@ class MonitorModule:
 
     def _refresh_chart(self, chart, table, date_col):
         rows = query(f"""
-            SELECT date({date_col}) d, COUNT(*) c FROM {table}
-            WHERE {date_col} >= date('now', '-6 days')
+            SELECT to_char({date_col}::timestamptz AT TIME ZONE 'America/Bogota', 'YYYY-MM-DD') d, COUNT(*) c FROM {table}
+            WHERE {date_col}::timestamptz >= now() - INTERVAL '6 days'
             GROUP BY d ORDER BY d
         """)
         by_date = {r[0]: r[1] for r in rows}
@@ -1606,7 +1633,8 @@ class SalesModule:
         sales_today = query("""
             SELECT COALESCE(SUM(oi.product_price*oi.quantity),0) FROM orders o
             JOIN order_items oi ON oi.order_id=o.id
-            WHERE o.status IN ('entregado','delivered') AND date(o.delivered_at,'localtime')=date('now','localtime')
+            WHERE o.status IN ('entregado','delivered')
+              AND (o.delivered_at::timestamptz AT TIME ZONE 'America/Bogota')::date = (now() AT TIME ZONE 'America/Bogota')::date
         """)
         self.card_today.set_value(fmt_money(sales_today[0][0] if sales_today else 0))
 
@@ -1636,9 +1664,11 @@ class SalesModule:
 
         # Gráfico de ingresos 7 días
         rows = query("""
-            SELECT date(o.delivered_at,'localtime') d, SUM(oi.product_price*oi.quantity) t
+            SELECT to_char(o.delivered_at::timestamptz AT TIME ZONE 'America/Bogota', 'YYYY-MM-DD') d,
+                   SUM(oi.product_price*oi.quantity) t
             FROM orders o JOIN order_items oi ON oi.order_id=o.id
-            WHERE o.status IN ('entregado','delivered') AND date(o.delivered_at,'localtime') >= date('now','-6 days','localtime')
+            WHERE o.status IN ('entregado','delivered')
+              AND (o.delivered_at::timestamptz AT TIME ZONE 'America/Bogota')::date >= ((now() AT TIME ZONE 'America/Bogota')::date - INTERVAL '6 days')
             GROUP BY d ORDER BY d
         """)
         by_date = {r[0]: r[1] for r in rows}
@@ -1684,9 +1714,11 @@ class SalesModule:
 
         # Ventas por día — últimos 14 días
         day_rows = query("""
-            SELECT date(o.delivered_at,'localtime') d, COUNT(DISTINCT o.id) n, SUM(oi.product_price*oi.quantity) t
+            SELECT to_char(o.delivered_at::timestamptz AT TIME ZONE 'America/Bogota', 'YYYY-MM-DD') d,
+                   COUNT(DISTINCT o.id) n, SUM(oi.product_price*oi.quantity) t
             FROM orders o JOIN order_items oi ON oi.order_id=o.id
-            WHERE o.status IN ('entregado','delivered') AND date(o.delivered_at,'localtime') >= date('now','-13 days','localtime')
+            WHERE o.status IN ('entregado','delivered')
+              AND (o.delivered_at::timestamptz AT TIME ZONE 'America/Bogota')::date >= ((now() AT TIME ZONE 'America/Bogota')::date - INTERVAL '13 days')
             GROUP BY d ORDER BY d DESC
         """)
         by_day = {r[0]: (r[1], r[2]) for r in day_rows}
@@ -1753,12 +1785,13 @@ class SalesModule:
         box.set_border_width(14)
 
         orders = query("""
-            SELECT o.id, COALESCE(c.name, o.customer_id, '—'), oi.product_name, oi.quantity,
+            SELECT o.id, COALESCE(c.name, o.customer_id::text, '—'), oi.product_name, oi.quantity,
                    oi.product_price*oi.quantity, o.delivered_at
             FROM orders o
             JOIN order_items oi ON oi.order_id = o.id
             LEFT JOIN customers c ON c.id = o.customer_id
-            WHERE o.status IN ('entregado','delivered') AND date(o.delivered_at,'localtime') = ?
+            WHERE o.status IN ('entregado','delivered')
+              AND (o.delivered_at::timestamptz AT TIME ZONE 'America/Bogota')::date = %s::date
             ORDER BY o.delivered_at
         """, (iso_date,))
 
@@ -1849,7 +1882,7 @@ class OrdersModule:
               COUNT(*) FILTER (WHERE status='claimed') AS claimed,
               COUNT(*) FILTER (WHERE status='en_camino') AS en_camino,
               COUNT(*) FILTER (WHERE status IN ('entregado','delivered')
-                               AND date(delivered_at,'localtime')=date('now','localtime')) AS today
+                               AND (delivered_at::timestamptz AT TIME ZONE 'America/Bogota')::date = (now() AT TIME ZONE 'America/Bogota')::date) AS today
             FROM orders
         """)
         if stats:
@@ -2463,7 +2496,7 @@ class PaymentsModule:
         box.pack_start(phone_entry, False, False, 0)
         box.pack_start(Gtk.Label(label='Nombre en la cuenta Nequi:'), False, False, 0)
         name_entry = Gtk.Entry()
-        name_entry.set_placeholder_text('Ej: Concentrados Monserrath')
+        name_entry.set_placeholder_text('Ej: Supermercado GO')
         box.pack_start(name_entry, False, False, 0)
         if is_change:
             warn = Gtk.Label(label='Esto reemplaza la cuenta Nequi conectada actualmente.')
@@ -2608,11 +2641,11 @@ class EmployeesModule:
         employees = query("""
             SELECT u.id, u.username, COALESCE(u.display_name, u.username),
                    COUNT(*) AS delivered_count,
-                   ROUND(AVG((julianday(o.delivered_at) - julianday(o.requested_at)) * 24 * 60)) AS avg_minutes
+                   ROUND(AVG(EXTRACT(EPOCH FROM (o.delivered_at::timestamptz - o.requested_at::timestamptz)) / 60)) AS avg_minutes
             FROM orders o
             JOIN users u ON u.id = o.claimed_by
             WHERE o.status IN ('entregado','delivered')
-            GROUP BY u.id
+            GROUP BY u.id, u.username, u.display_name
             ORDER BY delivered_count DESC
         """)
 
@@ -2660,11 +2693,11 @@ class EmployeesModule:
 
         # Tiempos por día (7 días)
         time_rows = query("""
-            SELECT date(o.delivered_at,'localtime') d,
-                   ROUND(AVG((julianday(o.delivered_at) - julianday(o.requested_at)) * 24 * 60)) AS mins
+            SELECT to_char(o.delivered_at::timestamptz AT TIME ZONE 'America/Bogota', 'YYYY-MM-DD') d,
+                   ROUND(AVG(EXTRACT(EPOCH FROM (o.delivered_at::timestamptz - o.requested_at::timestamptz)) / 60)) AS mins
             FROM orders o
             WHERE o.status IN ('entregado','delivered')
-              AND date(o.delivered_at,'localtime') >= date('now','-6 days','localtime')
+              AND (o.delivered_at::timestamptz AT TIME ZONE 'America/Bogota')::date >= ((now() AT TIME ZONE 'America/Bogota')::date - INTERVAL '6 days')
             GROUP BY d ORDER BY d
         """)
         by_date = {r[0]: r[1] for r in time_rows}
@@ -2676,10 +2709,10 @@ class EmployeesModule:
 
         # Entregas por día (7 días)
         deliv_rows = query("""
-            SELECT date(delivered_at,'localtime') d, COUNT(*) c
+            SELECT to_char(delivered_at::timestamptz AT TIME ZONE 'America/Bogota', 'YYYY-MM-DD') d, COUNT(*) c
             FROM orders
             WHERE status IN ('entregado','delivered')
-              AND date(delivered_at,'localtime') >= date('now','-6 days','localtime')
+              AND (delivered_at::timestamptz AT TIME ZONE 'America/Bogota')::date >= ((now() AT TIME ZONE 'America/Bogota')::date - INTERVAL '6 days')
             GROUP BY d ORDER BY d
         """)
         by_date_d = {r[0]: r[1] for r in deliv_rows}
@@ -2706,7 +2739,7 @@ class EmployeesModule:
 
         logins = query("""
             SELECT logged_in_at FROM login_events
-            WHERE user_id = ? ORDER BY logged_in_at DESC LIMIT 60
+            WHERE user_id = %s ORDER BY logged_in_at DESC LIMIT 60
         """, (user_id,))
 
         store = Gtk.ListStore(str, str)
@@ -2915,7 +2948,7 @@ class LocationsModule:
 
         last_login = query("""
             SELECT logged_in_at, logged_out_at, device_info FROM login_events
-            WHERE user_id = ? ORDER BY id DESC LIMIT 1
+            WHERE user_id = %s ORDER BY id DESC LIMIT 1
         """, (user_id,))
         if last_login:
             logged_in_at, logged_out_at, device_info = last_login[0]
@@ -3059,7 +3092,7 @@ class ConnectionsModule:
                    SUM(count_404) AS scans,
                    MAX(last_path) AS last_path
             FROM ip_activity
-            WHERE minute >= strftime('%Y-%m-%dT%H:%M', datetime('now','localtime','-5 minutes'))
+            WHERE minute >= to_char((now() AT TIME ZONE 'UTC') - INTERVAL '5 minutes', 'YYYY-MM-DD"T"HH24:MI')
             GROUP BY ip
             ORDER BY requests DESC
         """)
@@ -3084,7 +3117,7 @@ class ConnectionsModule:
             except Exception:
                 when_str = created_at or '—'
             self.alerts_store.append([when_str, kind, message])
-        db_write("UPDATE security_alerts SET read_at = datetime('now','localtime') WHERE read_at IS NULL")
+        db_write("UPDATE security_alerts SET read_at = now_iso() WHERE read_at IS NULL")
 
     def _on_row_activated(self, tree, path, column):
         row = tree.get_model()[path]
@@ -3103,7 +3136,7 @@ class ConnectionsModule:
 
         history = query("""
             SELECT minute, requests, count_auth_fail, count_401, count_403, count_404, last_path
-            FROM ip_activity WHERE ip = ? ORDER BY minute DESC LIMIT 60
+            FROM ip_activity WHERE ip = %s ORDER BY minute DESC LIMIT 60
         """, (ip,))
         store = Gtk.ListStore(str, str, str, str)
         tree = Gtk.TreeView(model=store)
@@ -3128,20 +3161,21 @@ class ConnectionsModule:
         action = 'block' if block else 'unblock'
         sh(f"sudo /usr/local/bin/pedidos-block-ip.sh {ip} {action}")
         if block:
-            db_write("INSERT OR REPLACE INTO blocked_ips (ip, reason, blocked_at) VALUES (?, ?, datetime('now','localtime'))",
+            db_write("""INSERT INTO blocked_ips (ip, reason, blocked_at) VALUES (%s, %s, now_iso())
+                        ON CONFLICT (ip) DO UPDATE SET reason=excluded.reason, blocked_at=excluded.blocked_at""",
                       (ip, 'Bloqueada manualmente desde el dashboard'))
             self._raise_alert('ip_blocked', f'IP {ip} bloqueada manualmente desde el dashboard')
         else:
-            db_write("DELETE FROM blocked_ips WHERE ip = ?", (ip,))
+            db_write("DELETE FROM blocked_ips WHERE ip = %s", (ip,))
 
     def _raise_alert(self, kind, message):
         """Espejo Python de server/src/utils/securityAlert.js -- misma tabla,
         mismo mecanismo de cola de WhatsApp (tabla messages, direction=outbound),
         para que el bot ya existente la recoja sin cambios."""
-        db_write("INSERT INTO security_alerts (kind, message) VALUES (?, ?)", (kind, message))
+        db_write("INSERT INTO security_alerts (kind, message) VALUES (%s, %s)", (kind, message))
         admin = query("SELECT phone FROM users WHERE role='admin' AND phone IS NOT NULL LIMIT 1")
         if admin:
-            db_write("INSERT INTO messages (phone, content, direction, sent, type) VALUES (?, ?, 'outbound', 0, 'security_alert')",
+            db_write("INSERT INTO messages (phone, content, direction, sent, type) VALUES (%s, %s, 'outbound', 0, 'security_alert')",
                       (admin[0][0], f'🔒 Alerta de seguridad: {message}'))
 
 
@@ -3351,7 +3385,7 @@ class BrandModule:
         name_box.pack_start(Gtk.Label(label='Nombre de marca:'), False, False, 0)
         self.entry_name = Gtk.Entry()
         self.entry_name.set_width_chars(30)
-        self.entry_name.set_placeholder_text('Ej: Concentrados Monserrath')
+        self.entry_name.set_placeholder_text('Ej: Supermercado GO')
         name_box.pack_start(self.entry_name, False, False, 0)
 
         # ─── Presets ────────────────────────────────────────────────
@@ -3537,7 +3571,7 @@ class BrandModule:
         if not self.entry_accent.get_text():
             self.entry_accent.set_text(setting_get('theme_accent', ACCENT_DEFAULT))
         if not self.entry_name.get_text():
-            self.entry_name.set_text(setting_get('theme_name', 'Concentrados Monserrath'))
+            self.entry_name.set_text(setting_get('theme_name', 'Supermercado GO'))
         self.preview.queue_draw()
 
 
@@ -3815,7 +3849,7 @@ WantedBy=timers.target
             port = self._port()
             os.makedirs(LOG_DIR, exist_ok=True)
             unit = f"""[Unit]
-Description=Concentrados Monserrath - Tunel Cloudflare (via dashboard)
+Description=Supermercado GO - Tunel Cloudflare (via dashboard)
 After=network-online.target {SERVICE}.service
 Wants=network-online.target
 
@@ -4084,7 +4118,7 @@ class ConfigModule:
         for i, (key, label) in enumerate([
             ('service_user', 'Usuario del servicio'),
             ('node_version', 'Versión de Node.js'),
-            ('db_path',      'Ruta de la base de datos'),
+            ('db_path',      'Base de datos (Postgres)'),
             ('appdata',      'Directorio APPDATA'),
             ('log_dir',      'Directorio de logs'),
         ]):
@@ -4186,7 +4220,8 @@ class ConfigModule:
         self.info_labels['service_user'].set_text(user or '—')
         node_ver = sh('node --version 2>/dev/null') or sh('/opt/nodejs/bin/node --version 2>/dev/null')
         self.info_labels['node_version'].set_text(node_ver or '—')
-        self.info_labels['db_path'].set_text(db_path())
+        pg_target = f"{env_get('PG_USER') or 'pedidosbot'}@{env_get('PG_HOST') or '127.0.0.1'}:{env_get('PG_PORT') or '5432'}/{env_get('PG_DATABASE') or 'supermercado'}"
+        self.info_labels['db_path'].set_text(env_get('DATABASE_URL') or pg_target)
         appdata = self.parent._appdata_dir()
         self.info_labels['appdata'].set_text(appdata or '—')
         self.info_labels['log_dir'].set_text(LOG_DIR)
@@ -4432,7 +4467,7 @@ class DashboardWindow(Gtk.ApplicationWindow):
     que intercambia entre los 9 módulos disponibles."""
 
     def __init__(self, app):
-        super().__init__(application=app, title='Concentrados Monserrath — Panel del Servidor')
+        super().__init__(application=app, title='Supermercado GO — Panel del Servidor')
         self.set_default_size(1200, 800)
         self.set_size_request(900, 600)
 
@@ -4450,7 +4485,7 @@ class DashboardWindow(Gtk.ApplicationWindow):
         # nada). Se implementan a mano, llamando directo a iconify()/
         # maximize()/close(): funcionan siempre, sin depender de eso.
         header = Gtk.HeaderBar()
-        header.set_title('Concentrados Monserrath')
+        header.set_title('Supermercado GO')
         header.set_subtitle('Panel de administración del servidor')
         header.set_show_close_button(False)
         header.props.spacing = 8

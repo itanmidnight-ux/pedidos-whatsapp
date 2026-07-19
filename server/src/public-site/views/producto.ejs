@@ -1,0 +1,28 @@
+<%- include('partials/header', { title, BRAND }) %>
+
+<main class="container">
+  <p><a href="/catalogo?categoria=<%= encodeURIComponent(product.category || '') %>">&larr; Volver a <%= product.category || 'catálogo' %></a></p>
+  <div class="product-detail">
+    <div class="thumb-big" style="background: <%= product.meta.color %>;">
+      <% if (product.images && product.images.length) { %>
+        <img src="/img/producto/<%= product.images[0] %>" alt="<%= product.name %>">
+      <% } else { %>
+        <span><%= product.meta.emoji %></span>
+      <% } %>
+    </div>
+    <div>
+      <p class="cat"><%= product.category || 'Otros' %></p>
+      <h1><%= product.name %><% if (!product.in_stock) { %><span class="badge-agotado">Agotado</span><% } %></h1>
+      <p class="price">$<%= Number(product.price).toLocaleString('es-CO') %></p>
+      <% if (product.description) { %><p class="desc"><%= product.description %></p><% } %>
+      <% if (product.sku) { %><p class="sku">SKU: <%= product.sku %></p><% } %>
+      <p style="margin-top:1.5rem;">
+        <a class="btn" href="/acceso" style="display:inline-block;background:var(--brand);color:#fff;padding:.7rem 1.4rem;border-radius:8px;font-weight:700;">
+          Ingresa o descarga la app para pedir
+        </a>
+      </p>
+    </div>
+  </div>
+</main>
+
+<%- include('partials/footer', { BRAND }) %>

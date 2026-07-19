@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ================================================================
-#  deploy-linux.sh — Concentrados Monserrath v2.0
+#  deploy-linux.sh — Supermercado GO v2.1
 #  Instalacion, despliegue y gestion del servidor en Linux
 #
 #  Uso:
@@ -31,10 +31,16 @@ PROJ="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SERVER_DIR="$PROJ/server"
 ENV_FILE="$SERVER_DIR/.env"
 DEPLOY_CONF="$PROJ/.deploy-config"      # solo preferencias, nunca secretos
+BRAND_NAME="Supermercado GO"
 SERVICE_USER="pedidos-bot"
 NODE_SVC="pedidos-bot"
 CF_SVC="pedidos-bot-tunnel"
+SITE_SVC="pedidos-bot-site"
+ADMIN_SVC="pedidos-bot-admin"
 DEFAULT_PORT=3000
+PUBLIC_SITE_PORT=3001   # sitio publico (fase C) -- unico puerto ademas del de la app que se ofrece en el tunel
+ADMIN_PANEL_PORT=3002   # panel admin (fase C) -- SOLO 127.0.0.1, nunca se ofrece en el tunel/firewall
+CF_TUNNEL_NAME="supermercado-go"
 NODE_MAJOR=20
 APPDATA_BOT="/var/lib/pedidos-bot"
 LOG_DIR="/var/log/pedidos-bot"
@@ -145,7 +151,7 @@ emptyscale=,white
 fullscale=,green
 '
 
-TITLE="Concentrados Monserrath — Panel de Servidor"
+TITLE="$BRAND_NAME — Panel de Servidor"
 
 splash() {
     # zenity con --timeout devuelve exit 5 cuando el tiempo expira -- eso es
@@ -153,9 +159,9 @@ splash() {
     # sin ningun output visible. "|| true" en ambas ramas evita el problema.
     if $HAS_ZENITY; then
         gui --info --title="$TITLE" --width=420 --timeout=2 \
-            --text="<b>CONCENTRADOS MONSERRATH v2.0</b>\n\nPanel de despliegue y gestion del servidor" &>/dev/null || true
+            --text="<b>${BRAND_NAME^^} v2.1</b>\n\nPanel de despliegue y gestion del servidor" &>/dev/null || true
     elif $HAS_WHIPTAIL; then
-        whiptail --title "$TITLE" --infobox "\n   +==============================================+\n   |                                                |\n   |     CONCENTRADOS MONSERRATH  -  v2.0          |\n   |     Panel de despliegue y gestion del server  |\n   |                                                |\n   +==============================================+\n" 12 62 || true
+        whiptail --title "$TITLE" --infobox "\n   +==============================================+\n   |                                                |\n   |     ${BRAND_NAME^^}  -  v2.1          |\n   |     Panel de despliegue y gestion del server  |\n   |                                                |\n   +==============================================+\n" 12 62 || true
         sleep 2
     fi
 }
@@ -241,15 +247,15 @@ load_conf() { grep "^${1}=" "$DEPLOY_CONF" 2>/dev/null | head -1 | cut -d= -f2- 
 # ================================================================
 install_node() {
     step "Node.js $NODE_MAJOR LTS"
-    # Match EXACTO de major version, no ">=". better-sqlite3 (modulo nativo,
-    # compila contra los headers de V8) rompe en tiempo de compilacion con
-    # versiones de Node mas nuevas que las que soporta esa release del
-    # paquete -- un Node 24 "mas nuevo" no sirve, hace falta el mismo major
-    # que usa el resto del proyecto.
+    # Match EXACTO de major version, no ">=". bcrypt (modulo nativo, compila
+    # contra los headers de V8) rompe en tiempo de compilacion con versiones
+    # de Node mas nuevas que las que soporta esa release del paquete -- un
+    # Node 24 "mas nuevo" no sirve, hace falta el mismo major que usa el
+    # resto del proyecto.
     if has_cmd node; then
         local v; v=$(node --version 2>/dev/null | grep -oE '^v[0-9]+' | tr -d v)
         if [ "${v:-0}" -eq "$NODE_MAJOR" ]; then ok "Node.js $(node --version) ya instalado"; return 0; fi
-        warn "Node.js instalado es v$v, se requiere exactamente v$NODE_MAJOR (modulos nativos como better-sqlite3 no compilan con otras majors)"
+        warn "Node.js instalado es v$v, se requiere exactamente v$NODE_MAJOR (modulos nativos como bcrypt no compilan con otras majors)"
     fi
 
     # Instalacion standalone en /opt (no se toca el Node del sistema si
@@ -328,16 +334,6 @@ install_npm_deps() {
     else
         ok "Dependencias npm OK (cache)"
     fi
-    # better-sqlite3 es un modulo nativo (ABI ligado a la version exacta de
-    # Node) -- si el binario ya en disco fue compilado para otro Node (ej.
-    # el sistema tenia una version distinta antes), recompilar para evitar
-    # el clasico "NODE_MODULE_VERSION X vs Y" al arrancar el servicio.
-    if ! node -e "require('better-sqlite3')" &>/dev/null; then
-        warn "better-sqlite3 no coincide con este Node — recompilando..."
-        npm rebuild better-sqlite3 2>&1 | tail -5
-        node -e "require('better-sqlite3')" &>/dev/null && ok "better-sqlite3 recompilado OK" \
-            || warn "better-sqlite3 sigue fallando — revisa manualmente (build-essential/python3 instalados?)"
-    fi
     restore_repo_ownership
 }
 
@@ -347,6 +343,116 @@ install_npm_deps() {
 restore_repo_ownership() {
     [ "$REAL_USER" != "root" ] && chown -R "$REAL_USER" "$PROJ" 2>/dev/null || true
     [ -f "$ENV_FILE" ] && chown "$SERVICE_USER" "$ENV_FILE" 2>/dev/null || true
+}
+
+# ================================================================
+#  PASO 3B — PostgreSQL / Redis / Docker (infra de escala)
+# ================================================================
+# Se instalan y quedan listos para produccion de verdad (miles de usuarios):
+# Postgres con rol/DB dedicados, Redis con password solo en 127.0.0.1, y
+# Docker Engine disponible para escalado horizontal futuro. El server SIGUE
+# usando SQLite como base principal por ahora -- Postgres queda provisionado
+# para la migracion real de consultas (fase siguiente, no en este paso).
+# Redis SI se usa ya mismo (rate-limit y cache de sesion, ver
+# server/src/utils/redisClient.js) -- si falla o no esta, el server cae
+# solo a memoria, nunca se rompe por esto.
+install_postgresql() {
+    step "PostgreSQL (base de datos de escala)"
+    if has_cmd psql; then
+        ok "PostgreSQL ya instalado"
+    else
+        case "$PKG_MGR" in
+            apt)    pkg_install postgresql postgresql-contrib ;;
+            dnf)    pkg_install postgresql-server postgresql-contrib
+                    as_root postgresql-setup --initdb 2>/dev/null || true ;;
+            pacman) pkg_install postgresql
+                    runuser -u postgres -- initdb -D /var/lib/postgres/data 2>/dev/null || true ;;
+            *) warn "Gestor de paquetes desconocido — instala PostgreSQL manualmente."; return 1 ;;
+        esac
+    fi
+    as_root systemctl enable --now postgresql &>/dev/null || as_root systemctl enable --now postgresql.service &>/dev/null || true
+
+    for _ in $(seq 1 15); do runuser -u postgres -- pg_isready &>/dev/null && break; sleep 1; done
+
+    local pg_pass; pg_pass="$(env_get PG_PASSWORD)"
+    if [ -z "$pg_pass" ]; then
+        pg_pass="$(gen_secret)"
+        runuser -u postgres -- psql -v ON_ERROR_STOP=0 -c "CREATE ROLE pedidosbot LOGIN PASSWORD '${pg_pass}';" &>/dev/null || true
+        runuser -u postgres -- psql -v ON_ERROR_STOP=0 -c "CREATE DATABASE supermercado OWNER pedidosbot;" &>/dev/null || true
+        env_set PG_HOST "127.0.0.1"
+        env_set PG_PORT "5432"
+        env_set PG_DATABASE "supermercado"
+        env_set PG_USER "pedidosbot"
+        env_set PG_PASSWORD "$pg_pass"
+        ok "PostgreSQL: rol 'pedidosbot' + base 'supermercado' listos (credenciales en .env, PG_*)"
+    else
+        ok "PostgreSQL: credenciales ya configuradas en .env (PG_*)"
+    fi
+    info "El server sigue usando SQLite como base principal por ahora — Postgres queda provisionado para la migracion de consultas (fase siguiente)."
+}
+
+install_redis() {
+    step "Redis (cache / rate-limit compartido)"
+    if has_cmd redis-server || has_cmd redis-cli; then
+        ok "Redis ya instalado"
+    else
+        case "$PKG_MGR" in
+            apt)    pkg_install redis-server ;;
+            dnf)    pkg_install redis ;;
+            pacman) pkg_install redis ;;
+            *) warn "Gestor de paquetes desconocido — instala Redis manualmente."; return 1 ;;
+        esac
+    fi
+
+    local redis_pass; redis_pass="$(env_get REDIS_PASSWORD)"
+    [ -n "$redis_pass" ] || redis_pass="$(gen_secret)"
+
+    local conf="/etc/redis/redis.conf"
+    [ -f "$conf" ] || conf="/etc/redis.conf"
+    if [ -f "$conf" ]; then
+        as_root sed -i 's/^bind .*/bind 127.0.0.1 -::1/' "$conf" 2>/dev/null || true
+        if as_root grep -q '^requirepass' "$conf" 2>/dev/null; then
+            as_root sed -i "s/^requirepass .*/requirepass ${redis_pass}/" "$conf"
+        else
+            echo "requirepass ${redis_pass}" | as_root tee -a "$conf" >/dev/null
+        fi
+    else
+        warn "No se encontro redis.conf — revisa manualmente que Redis solo escuche en 127.0.0.1 y tenga password."
+    fi
+
+    as_root systemctl enable --now redis-server &>/dev/null || as_root systemctl enable --now redis &>/dev/null || true
+    as_root systemctl restart redis-server &>/dev/null || as_root systemctl restart redis &>/dev/null || true
+
+    env_set REDIS_PASSWORD "$redis_pass"
+    env_set REDIS_URL "redis://:${redis_pass}@127.0.0.1:6379"
+    ok "Redis listo (solo 127.0.0.1, con password) — REDIS_URL en .env"
+}
+
+install_docker() {
+    step "Docker Engine (para escalado horizontal futuro)"
+    if has_cmd docker; then
+        ok "Docker ya instalado"
+        return 0
+    fi
+    case "$PKG_MGR" in
+        apt)
+            pkg_install ca-certificates curl gnupg
+            as_root install -m 0755 -d /etc/apt/keyrings
+            curl -fsSL https://download.docker.com/linux/ubuntu/gpg | as_root gpg --dearmor -o /etc/apt/keyrings/docker.gpg 2>/dev/null || true
+            as_root chmod a+r /etc/apt/keyrings/docker.gpg
+            local codename; codename="$(. /etc/os-release && echo "$VERSION_CODENAME")"
+            echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $codename stable" \
+                | as_root tee /etc/apt/sources.list.d/docker.list >/dev/null
+            as_root apt-get update -qq
+            pkg_install docker-ce docker-ce-cli containerd.io docker-compose-plugin
+            ;;
+        dnf)    pkg_install docker docker-compose-plugin ;;
+        pacman) pkg_install docker docker-compose ;;
+        *) warn "Gestor de paquetes desconocido — instala Docker manualmente."; return 1 ;;
+    esac
+    as_root systemctl enable --now docker &>/dev/null || true
+    as_root usermod -aG docker "$SERVICE_USER" 2>/dev/null || true
+    ok "Docker instalado y habilitado (grupo 'docker' agregado a $SERVICE_USER para uso futuro)"
 }
 
 # ================================================================
@@ -366,10 +472,12 @@ configure_env() {
             echo "JWT_SECRET=$(gen_secret)"
             echo "BOT_ENABLED=true"
             echo "BOT_PHONE="
-            # Estado persistente (DB, PDFs) vive en APPDATA_BOT, nunca dentro
-            # del arbol de codigo -- asi el directorio del server puede quedar
-            # 100% solo-lectura para el servicio systemd (ProtectHome=read-only).
-            echo "DB_PATH=$APPDATA_BOT/pedidos.db"
+            # Estado persistente (PDFs, media) vive en APPDATA_BOT, nunca
+            # dentro del arbol de codigo -- asi el directorio del server
+            # puede quedar 100% solo-lectura para el servicio systemd
+            # (ProtectHome=read-only). La DB (Postgres) NO vive aca -- ver
+            # install_postgresql(), que escribe PG_HOST/PG_PORT/PG_DATABASE/
+            # PG_USER/PG_PASSWORD mas abajo en este mismo archivo.
             echo "REPORTS_DIR=$APPDATA_BOT/reports"
         } > "$ENV_FILE"
         chmod 600 "$ENV_FILE"
@@ -382,7 +490,6 @@ configure_env() {
     [ -n "$(env_get JWT_SECRET)" ] || env_set JWT_SECRET "$(gen_secret)"
     [ -n "$(env_get WEBHOOK_SECRET)" ]        || env_set WEBHOOK_SECRET "$(gen_secret)"
     [ -n "$(env_get BACKUP_ENCRYPTION_KEY)" ] || env_set BACKUP_ENCRYPTION_KEY "$(gen_secret)"
-    [ -n "$(env_get DB_PATH)" ]      || env_set DB_PATH "$APPDATA_BOT/pedidos.db"
     [ -n "$(env_get REPORTS_DIR)" ]  || env_set REPORTS_DIR "$APPDATA_BOT/reports"
     port=$(env_get PORT); port="${port:-$DEFAULT_PORT}"
     save_conf PORT "$port"
@@ -398,8 +505,8 @@ install_systemd_service() {
     local unit="/etc/systemd/system/${NODE_SVC}.service"
     as_root tee "$unit" > /dev/null <<EOF
 [Unit]
-Description=Concentrados Monserrath - Servidor de pedidos WhatsApp
-After=network-online.target
+Description=$BRAND_NAME - Servidor de pedidos WhatsApp
+After=network-online.target postgresql.service
 Wants=network-online.target
 StartLimitIntervalSec=60
 StartLimitBurst=5
@@ -442,6 +549,121 @@ EOF
     as_root systemctl enable "$NODE_SVC" &>/dev/null
     as_root systemctl restart "$NODE_SVC"
     ok "Servicio '$NODE_SVC' instalado y habilitado (auto-inicio + hardening systemd)"
+}
+
+# ================================================================
+#  PASO 5B — systemd: sitio publico (fase C, puerto separado)
+# ================================================================
+# Mismo hardening que el servicio principal. HOST=127.0.0.1 siempre --
+# Cloudflare (named tunnel) es quien lo expone hacia afuera, nunca escucha
+# directo en la red. Comparte el mismo .env (PUBLIC_SITE_PORT, PG_HOST/PG_PORT/PG_DATABASE/...),
+# lee la base de datos en modo solo-lectura (ver server/src/public-site/db.js).
+install_public_site_service() {
+    step "Servicio systemd ($SITE_SVC — sitio publico)"
+    local node_bin; node_bin="$(command -v node)"
+    local unit="/etc/systemd/system/${SITE_SVC}.service"
+    as_root tee "$unit" > /dev/null <<EOF
+[Unit]
+Description=$BRAND_NAME - Sitio publico
+After=network-online.target ${NODE_SVC}.service
+Wants=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=$SERVICE_USER
+WorkingDirectory=$SERVER_DIR
+EnvironmentFile=$ENV_FILE
+Environment=APPDATA=$(dirname "$APPDATA_BOT")
+ExecStart=$node_bin $SERVER_DIR/src/public-site/index.js
+Restart=on-failure
+RestartSec=5
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+ReadWritePaths=$APPDATA_BOT $LOG_DIR
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+StandardOutput=append:$LOG_DIR/site.log
+StandardError=append:$LOG_DIR/site.log
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    as_root systemctl daemon-reload
+    as_root systemctl enable "$SITE_SVC" &>/dev/null
+    as_root systemctl restart "$SITE_SVC"
+    ok "Servicio '$SITE_SVC' instalado y habilitado (puerto $PUBLIC_SITE_PORT, solo 127.0.0.1)"
+}
+
+# ================================================================
+#  PASO 5C — systemd: panel admin (fase C, SOLO 127.0.0.1, sin tunel)
+# ================================================================
+# A diferencia de los otros dos servicios, este JAMAS debe aparecer en
+# setup_cloudflared_named_tunnel ni en harden_firewall/firewall_set_public
+# -- su unico camino de acceso remoto planeado es una VPN (Tailscale) que
+# se configura aparte, mas adelante. El propio proceso Node tambien hace
+# bind hardcodeado a 127.0.0.1 (ver server/src/admin-panel/index.js) --
+# doble capa, no depende solo de que este systemd no lo exponga.
+install_admin_panel_service() {
+    step "Servicio systemd ($ADMIN_SVC — panel admin, solo localhost)"
+    local node_bin; node_bin="$(command -v node)"
+    local unit="/etc/systemd/system/${ADMIN_SVC}.service"
+    as_root tee "$unit" > /dev/null <<EOF
+[Unit]
+Description=$BRAND_NAME - Panel admin (solo localhost)
+After=network-online.target ${NODE_SVC}.service
+Wants=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=$SERVICE_USER
+WorkingDirectory=$SERVER_DIR
+EnvironmentFile=$ENV_FILE
+Environment=APPDATA=$(dirname "$APPDATA_BOT")
+ExecStart=$node_bin $SERVER_DIR/src/admin-panel/index.js
+Restart=on-failure
+RestartSec=5
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+ReadWritePaths=$APPDATA_BOT $LOG_DIR
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+StandardOutput=append:$LOG_DIR/admin.log
+StandardError=append:$LOG_DIR/admin.log
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    as_root systemctl daemon-reload
+    as_root systemctl enable "$ADMIN_SVC" &>/dev/null
+    as_root systemctl restart "$ADMIN_SVC"
+    ok "Servicio '$ADMIN_SVC' instalado — SOLO accesible en 127.0.0.1:$ADMIN_PANEL_PORT (nunca por internet)"
+    warn "Acceso remoto al panel admin: usa un tunel SSH (ssh -L $ADMIN_PANEL_PORT:localhost:$ADMIN_PANEL_PORT usuario@servidor) o configura la VPN (Tailscale) mas adelante — nunca lo expongas por Cloudflare/firewall."
 }
 
 wait_server_healthy() {
@@ -659,26 +881,27 @@ from gi.repository import Gtk, Gdk, GdkPixbuf
 import cairo
 gi.require_version('WebKit2', '4.1')
 from gi.repository import WebKit2
+import psycopg2
 " &>/dev/null
 }
 
 install_dashboard_deps() {
-    step "Dependencias del panel de análisis (GTK3 + WebKit2 para el mapa interactivo)"
+    step "Dependencias del panel de análisis (GTK3 + WebKit2 + psycopg2 para Postgres)"
     if dashboard_deps_ok; then
-        ok "Ya instaladas (python3-gi, GTK3, WebKit2 con typelib)"
+        ok "Ya instaladas (python3-gi, GTK3, WebKit2 con typelib, psycopg2)"
         return 0
     fi
     warn "Faltan dependencias del panel — instalando..."
     case "$PKG_MGR" in
-        apt)    pkg_install python3-gi python3-gi-cairo gir1.2-gtk-3.0 gir1.2-webkit2-4.1 ;;
-        dnf)    pkg_install python3-gobject gtk3 webkit2gtk4.1 ;;
-        pacman) pkg_install python-gobject python-cairo gtk3 webkit2gtk-4.1 ;;
-        *)      warn "Gestor de paquetes desconocido -- instala manualmente python3-gi/GTK3/WebKit2 (gir1.2-webkit2-4.1 en Debian/Kali)"; return 1 ;;
+        apt)    pkg_install python3-gi python3-gi-cairo gir1.2-gtk-3.0 gir1.2-webkit2-4.1 python3-psycopg2 ;;
+        dnf)    pkg_install python3-gobject gtk3 webkit2gtk4.1 python3-psycopg2 ;;
+        pacman) pkg_install python-gobject python-cairo gtk3 webkit2gtk-4.1 python-psycopg2 ;;
+        *)      warn "Gestor de paquetes desconocido -- instala manualmente python3-gi/GTK3/WebKit2/psycopg2 (gir1.2-webkit2-4.1 + python3-psycopg2 en Debian/Kali)"; return 1 ;;
     esac
     if dashboard_deps_ok; then
-        ok "Panel de análisis listo (mapa interactivo disponible)"
+        ok "Panel de análisis listo (mapa interactivo + conexion Postgres disponibles)"
     else
-        warn "No se pudo confirmar la instalación -- el panel seguirá funcionando, el mapa de Ubicaciones cae al modo estático sin WebKit2"
+        warn "No se pudo confirmar la instalación -- el panel seguirá funcionando, el mapa de Ubicaciones cae al modo estático sin WebKit2, y las estadisticas fallaran sin psycopg2"
     fi
 }
 
@@ -741,7 +964,7 @@ setup_cloudflared_tunnel() {
     local unit="/etc/systemd/system/${CF_SVC}.service"
     as_root tee "$unit" > /dev/null <<EOF
 [Unit]
-Description=Concentrados Monserrath - Tunel Cloudflare
+Description=$BRAND_NAME - Tunel Cloudflare
 After=network-online.target ${NODE_SVC}.service
 Wants=network-online.target
 
@@ -775,6 +998,95 @@ EOF
     else
         warn "URL aun no aparece — revisa: $LOG_DIR/tunnel.log"
     fi
+}
+
+# ── Named tunnel: dominio propio (requiere cuenta Cloudflare + dominio ya
+# agregado ahi). A diferencia del quick tunnel de arriba (*.trycloudflare.com,
+# anonimo, sin control de acceso), este queda atado a tu cuenta y permite
+# varios hostnames -> varios puertos locales en el mismo tunel. El puerto
+# del panel admin (ADMIN_PANEL_PORT) NUNCA aparece aqui: por diseño, el
+# wizard solo pregunta por el hostname de la app y el del sitio publico.
+setup_cloudflared_named_tunnel() {
+    local app_port="$1" site_port="$2"
+    has_cmd cloudflared || { warn "cloudflared no disponible."; return 1; }
+
+    local cf_dir="/etc/cloudflared"
+    as_root mkdir -p "$cf_dir"
+
+    if ! as_root cloudflared tunnel list 2>/dev/null | grep -qE "(^| )${CF_TUNNEL_NAME}( |\$)"; then
+        echo ""
+        echo -e "${CYAN}  +======================================================+${NC}"
+        echo -e "${CYAN}  |  CLOUDFLARE — inicia sesion en tu cuenta              |${NC}"
+        echo -e "${CYAN}  +======================================================+${NC}"
+        info "Se mostrara una URL — entra con la cuenta de Cloudflare donde esta tu dominio."
+        as_root cloudflared tunnel login || { warn "Login de Cloudflare no se completo."; return 1; }
+        as_root cloudflared tunnel create "$CF_TUNNEL_NAME" || { warn "No se pudo crear el tunel."; return 1; }
+    else
+        ok "Tunel '$CF_TUNNEL_NAME' ya existe — reusando."
+    fi
+
+    local cred_file; cred_file=$(find /root/.cloudflared -maxdepth 1 -name "*.json" 2>/dev/null | head -1)
+    [ -z "$cred_file" ] && { warn "No se encontro el archivo de credenciales del tunel en /root/.cloudflared."; return 1; }
+    as_root cp "$cred_file" "$cf_dir/creds.json"
+    local tunnel_id; tunnel_id=$(basename "$cred_file" .json)
+
+    local app_host site_host
+    app_host=$(ui_input "Hostname para la APP/dashboard actual (ej: app.tudominio.com)" "$(load_conf CF_APP_HOST)")
+    site_host=$(ui_input "Hostname para el SITIO PUBLICO nuevo (ej: www.tudominio.com — opcional, Enter para omitir)" "$(load_conf CF_SITE_HOST)")
+    [ -z "$app_host" ] && { warn "Hostname de app requerido — cancela y vuelve a intentar."; return 1; }
+
+    {
+        echo "tunnel: $tunnel_id"
+        echo "credentials-file: $cf_dir/creds.json"
+        echo ""
+        echo "ingress:"
+        echo "  - hostname: $app_host"
+        echo "    service: http://127.0.0.1:$app_port"
+        if [ -n "$site_host" ]; then
+            echo "  - hostname: $site_host"
+            echo "    service: http://127.0.0.1:$site_port"
+        fi
+        echo "  - service: http_status:404"
+    } | as_root tee "$cf_dir/config.yml" > /dev/null
+
+    as_root cloudflared tunnel route dns "$CF_TUNNEL_NAME" "$app_host" &>/dev/null \
+        || warn "route dns fallo para $app_host — verifica el DNS manualmente en el dashboard de Cloudflare."
+    if [ -n "$site_host" ]; then
+        as_root cloudflared tunnel route dns "$CF_TUNNEL_NAME" "$site_host" &>/dev/null \
+            || warn "route dns fallo para $site_host — verifica el DNS manualmente."
+    fi
+
+    local cf_bin; cf_bin="$(command -v cloudflared)"
+    local unit="/etc/systemd/system/${CF_SVC}.service"
+    as_root tee "$unit" > /dev/null <<EOF
+[Unit]
+Description=Supermercado GO - Tunel Cloudflare (dominio propio)
+After=network-online.target ${NODE_SVC}.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=$SERVICE_USER
+ExecStart=$cf_bin tunnel --config $cf_dir/config.yml run $CF_TUNNEL_NAME
+Restart=on-failure
+RestartSec=10
+StandardOutput=append:$LOG_DIR/tunnel.log
+StandardError=append:$LOG_DIR/tunnel.log
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    as_root systemctl daemon-reload
+    as_root systemctl enable "$CF_SVC" &>/dev/null
+    as_root systemctl restart "$CF_SVC"
+
+    save_conf CF_APP_HOST "$app_host"
+    save_conf CF_SITE_HOST "$site_host"
+    save_conf TUNNEL_URL "https://$app_host"
+    env_set APP_PUBLIC_URL "https://$app_host/app/"
+    as_root systemctl restart "$SITE_SVC" 2>/dev/null || true
+    ok "Named tunnel activo — $app_host -> :$app_port$( [ -n "$site_host" ] && echo ", $site_host -> :$site_port" )"
+    warn "El puerto del panel admin ($ADMIN_PANEL_PORT) NO se agrego al tunel a proposito — solo accesible en 127.0.0.1 (VPN pendiente)."
 }
 
 install_tailscale() {
@@ -1034,9 +1346,10 @@ management_menu() {
             8 "Regenerar secretos (API_KEY / JWT_SECRET)" \
             9 "Configurar DuckDNS" \
             10 "Configurar dominio propio (nginx + HTTPS)" \
-            11 "Auditoria de seguridad" \
-            12 "Actualizar codigo (git pull + reinstalar)" \
-            13 "Desinstalar todo" \
+            11 "Configurar dominio propio en Cloudflare (named tunnel)" \
+            12 "Auditoria de seguridad" \
+            13 "Actualizar codigo (git pull + reinstalar)" \
+            14 "Desinstalar todo" \
             0 "Salir")
         case "$choice" in
             D) dashboard ;;
@@ -1059,9 +1372,13 @@ management_menu() {
                setup_duckdns "$sd" "$tk" ;;
             10) local dm; dm=$(ui_input "Dominio propio (ej: midominio.com)" "")
                 [ -n "$dm" ] && setup_nginx_certbot "$port" "$dm" ;;
-            11) security_audit ;;
-            12) (cd "$PROJ" && git pull --ff-only 2>&1 | tail -10) && install_npm_deps && as_root systemctl restart "$NODE_SVC" && ok "Actualizado" ;;
-            13) if ui_yesno "Esto detiene y elimina los servicios systemd instalados (no borra .env ni datos en $APPDATA_BOT). Continuar?"; then
+            11) install_cloudflared
+                setup_cloudflared_named_tunnel "$port" "$PUBLIC_SITE_PORT"
+                save_conf ACCESS_METHOD tunnel-named
+                harden_firewall false ;;
+            12) security_audit ;;
+            13) (cd "$PROJ" && git pull --ff-only 2>&1 | tail -10) && install_npm_deps && as_root systemctl restart "$NODE_SVC" && ok "Actualizado" ;;
+            14) if ui_yesno "Esto detiene y elimina los servicios systemd instalados (no borra .env ni datos en $APPDATA_BOT). Continuar?"; then
                     uninstall_services
                 fi ;;
             0|"") break ;;
@@ -1070,7 +1387,7 @@ management_menu() {
 }
 
 uninstall_services() {
-    for svc in "$NODE_SVC" "$CF_SVC" duckdns-pedidos-bot.timer duckdns-pedidos-bot.service; do
+    for svc in "$NODE_SVC" "$SITE_SVC" "$ADMIN_SVC" "$CF_SVC" duckdns-pedidos-bot.timer duckdns-pedidos-bot.service; do
         as_root systemctl disable --now "$svc" &>/dev/null || true
         as_root rm -f "/etc/systemd/system/${svc}.service" "/etc/systemd/system/${svc}.timer" 2>/dev/null || true
     done
@@ -1085,7 +1402,7 @@ main_install() {
     splash
     echo ""
     echo -e "${GREEN}${BOLD}  +================================================+${NC}"
-    echo -e "${GREEN}${BOLD}  |  CONCENTRADOS MONSERRATH v2.0 — Deploy Linux |${NC}"
+    echo -e "${GREEN}${BOLD}  |  ${BRAND_NAME^^} v2.1 — Deploy Linux |${NC}"
     echo -e "${GREEN}${BOLD}  +================================================+${NC}"
 
     [ -d "$SERVER_DIR" ] || die "No se encontro server/ en $PROJ — ejecuta este script desde la raiz del repo."
@@ -1114,7 +1431,13 @@ main_install() {
         local env_before; env_before=$(md5sum "$ENV_FILE" 2>/dev/null | cut -d' ' -f1)
         install_npm_deps
         configure_env
+        install_postgresql || die "PostgreSQL no se pudo provisionar — el server ya NO funciona sin Postgres (dejo de usar SQLite). Revisa manualmente y vuelve a correr el script."
+        install_redis      || warn "Redis no se pudo provisionar — el server sigue funcionando con rate-limit en memoria."
+        install_docker     || warn "Docker no se pudo instalar — no bloquea el resto del despliegue."
         install_dashboard_deps
+        [ -n "$(env_get PUBLIC_SITE_PORT)" ] || env_set PUBLIC_SITE_PORT "$PUBLIC_SITE_PORT"
+        [ -n "$(env_get ADMIN_PANEL_PORT)" ] || env_set ADMIN_PANEL_PORT "$ADMIN_PANEL_PORT"
+        ( cd "$SERVER_DIR" && node scripts/seed-catalog.js ) || warn "Seed de catálogo falló — no bloquea el resto."
         local env_after; env_after=$(md5sum "$ENV_FILE" 2>/dev/null | cut -d' ' -f1)
         as_root systemctl start "$NODE_SVC" 2>/dev/null || true
         # Reinicia si cambio el codigo (git pull trajo commits nuevos) O el
@@ -1125,8 +1448,27 @@ main_install() {
             info "Codigo o secretos cambiaron -- reiniciando para que el servicio tome lo nuevo."
             as_root systemctl restart "$NODE_SVC"
         fi
+        # Instalaciones previas a esta version del script no tienen el
+        # servicio del sitio publico -- se instala aqui si falta, y se
+        # reinicia igual que el servicio principal si el codigo cambio.
+        if ! systemctl cat "${SITE_SVC}.service" &>/dev/null 2>&1; then
+            install_public_site_service
+        elif [ "$code_before" != "$code_after" ] || [ "$env_before" != "$env_after" ]; then
+            as_root systemctl restart "$SITE_SVC" 2>/dev/null || true
+        else
+            as_root systemctl start "$SITE_SVC" 2>/dev/null || true
+        fi
+        if ! systemctl cat "${ADMIN_SVC}.service" &>/dev/null 2>&1; then
+            install_admin_panel_service
+        elif [ "$code_before" != "$code_after" ] || [ "$env_before" != "$env_after" ]; then
+            as_root systemctl restart "$ADMIN_SVC" 2>/dev/null || true
+        else
+            as_root systemctl start "$ADMIN_SVC" 2>/dev/null || true
+        fi
         wait_server_healthy "$(env_get PORT)" 20 || true
         ok "Servidor arriba en http://127.0.0.1:$(env_get PORT)/app/"
+        ok "Sitio público arriba en http://127.0.0.1:$(env_get PUBLIC_SITE_PORT)/"
+        ok "Panel admin arriba en http://127.0.0.1:$(env_get ADMIN_PANEL_PORT)/ (solo localhost)"
         info "Panel de analisis: python3 $PROJ/dashboard.py"
         return 0
     fi
@@ -1139,27 +1481,46 @@ main_install() {
     setup_service_user
     install_npm_deps
     configure_env
+    install_postgresql || warn "PostgreSQL no se pudo provisionar — revisa manualmente."
+    install_redis      || warn "Redis no se pudo provisionar — el server sigue funcionando con rate-limit en memoria."
+    install_docker     || warn "Docker no se pudo instalar — no bloquea el resto del despliegue."
     install_dashboard_deps
 
     local port; port=$(env_get PORT); port="${port:-$DEFAULT_PORT}"
+    [ -n "$(env_get PUBLIC_SITE_PORT)" ] || env_set PUBLIC_SITE_PORT "$PUBLIC_SITE_PORT"
+    [ -n "$(env_get ADMIN_PANEL_PORT)" ] || env_set ADMIN_PANEL_PORT "$ADMIN_PANEL_PORT"
 
     install_systemd_service
     wait_server_healthy "$port" 45 || true
 
+    step "Catálogo del sitio público"
+    ( cd "$SERVER_DIR" && node scripts/seed-catalog.js ) || warn "Seed de catálogo falló — puedes correrlo luego: node $SERVER_DIR/scripts/seed-catalog.js"
+
+    install_public_site_service
+    wait_server_healthy "$PUBLIC_SITE_PORT" 20 || warn "Sitio público no respondio a tiempo en :$PUBLIC_SITE_PORT — revisa: journalctl -u $SITE_SVC -n 50"
+
+    install_admin_panel_service
+    wait_server_healthy "$ADMIN_PANEL_PORT" 20 || warn "Panel admin no respondio a tiempo en :$ADMIN_PANEL_PORT — revisa: journalctl -u $ADMIN_SVC -n 50"
+    info "Panel admin SOLO en 127.0.0.1:$ADMIN_PANEL_PORT — nunca se expone a internet. Accede con: ssh -L $ADMIN_PANEL_PORT:localhost:$ADMIN_PANEL_PORT usuario@servidor"
+
     local access_method
     access_method=$(ui_menu "Como quieres exponer el servidor a internet?" \
-        1 "Cloudflare Tunnel (recomendado: sin abrir puertos, HTTPS auto)" \
-        2 "Dominio propio + nginx + Let's Encrypt (abre 80/443)" \
-        3 "Tailscale Funnel (HTTPS auto via tu tailnet, sin abrir puertos)" \
-        4 "Solo red local / VPN (no exponer a internet)")
+        1 "Cloudflare Tunnel rapido (sin dominio propio — *.trycloudflare.com)" \
+        2 "Cloudflare Tunnel con TU DOMINIO (named tunnel, requiere cuenta+dominio en Cloudflare)" \
+        3 "Dominio propio + nginx + Let's Encrypt (abre 80/443)" \
+        4 "Tailscale Funnel (HTTPS auto via tu tailnet, sin abrir puertos)" \
+        5 "Solo red local / VPN (no exponer a internet)")
 
     case "$access_method" in
         1) install_cloudflared; setup_cloudflared_tunnel "$port"; harden_firewall false
            save_conf ACCESS_METHOD tunnel ;;
-        2) local dm; dm=$(ui_input "Dominio (debe apuntar a la IP de este servidor)" "")
+        2) install_cloudflared
+           setup_cloudflared_named_tunnel "$port" "$PUBLIC_SITE_PORT"; harden_firewall false
+           save_conf ACCESS_METHOD tunnel-named ;;
+        3) local dm; dm=$(ui_input "Dominio (debe apuntar a la IP de este servidor)" "")
            setup_nginx_certbot "$port" "$dm"; harden_firewall true
            save_conf ACCESS_METHOD nginx ;;
-        3) install_tailscale && setup_tailscale_funnel "$port" || true; harden_firewall false
+        4) install_tailscale && setup_tailscale_funnel "$port" || true; harden_firewall false
            save_conf ACCESS_METHOD tailscale-funnel ;;
         *) harden_firewall false; save_conf ACCESS_METHOD local ;;
     esac
@@ -1180,10 +1541,12 @@ main_install() {
     echo -e "${GREEN}${BOLD}  +======================================================+${NC}"
     echo -e "${GREEN}${BOLD}  |        SISTEMA ACTIVO Y FUNCIONANDO                  |${NC}"
     echo -e "${GREEN}${BOLD}  +======================================================+${NC}"
-    echo -e "  Local  : http://127.0.0.1:$port/app/"
-    [ -n "$(load_conf TUNNEL_URL)" ] && echo -e "  Publico: $(load_conf TUNNEL_URL)/app/"
-    echo -e "  Logs   : $LOG_DIR/ (o: journalctl -u $NODE_SVC -f)"
-    echo -e "  Gestion: ./deploy-linux.sh --menu"
+    echo -e "  App local     : http://127.0.0.1:$port/app/"
+    [ -n "$(load_conf TUNNEL_URL)" ] && echo -e "  App publica   : $(load_conf TUNNEL_URL)/app/"
+    echo -e "  Sitio publico : http://127.0.0.1:$PUBLIC_SITE_PORT/$( [ -n "$(load_conf CF_SITE_HOST)" ] && echo " (publico: https://$(load_conf CF_SITE_HOST)/)")"
+    echo -e "  Panel admin   : http://127.0.0.1:$ADMIN_PANEL_PORT/  ${YELLOW}(SOLO localhost, nunca por internet)${NC}"
+    echo -e "  Logs          : $LOG_DIR/ (o: journalctl -u $NODE_SVC -f)"
+    echo -e "  Gestion       : ./deploy-linux.sh --menu"
     echo -e "  Analisis: python3 $PROJ/dashboard.py"
     echo -e "${GREEN}${BOLD}  +======================================================+${NC}"
     echo ""
@@ -1192,7 +1555,7 @@ main_install() {
 show_help() {
     echo -e "${GREEN}${BOLD}"
     echo "  +==========================================================+"
-    echo "  |        Concentrados Monserrath — deploy-linux.sh         |"
+    echo "  |        $BRAND_NAME — deploy-linux.sh         |"
     echo "  +==========================================================+"
     echo -e "${NC}"
     echo -e "  ${BOLD}Uso:${NC} ./deploy-linux.sh [comando]"

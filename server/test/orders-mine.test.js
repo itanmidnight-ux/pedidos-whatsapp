@@ -1,23 +1,14 @@
 'use strict';
-const path = require('path');
-const os = require('os');
-const fs = require('fs');
-
-const DB_PATH = path.join(os.tmpdir(), `orders-mine-${Date.now()}-${Math.random().toString(36).slice(2)}.db`);
-process.env.DB_PATH = DB_PATH;
-process.env.JWT_SECRET = 'test-secret';
+const { setupTestEnv, teardownTestSchema } = require('./helpers/testDb');
+setupTestEnv('orders-mine');
 process.env.SEED_PASSWORD_JESUS = 'admin-test-pw';
-process.env.NODE_ENV = 'test';
 
 const request = require('supertest');
-const { initDB, closeDB, getDB } = require('../src/db/database');
+const { initDB, getDB } = require('../src/db/database');
 const app = require('../src/app');
 
 beforeAll(async () => { await initDB(); });
-afterAll(() => {
-  closeDB();
-  for (const s of ['', '-wal', '-shm']) { try { fs.unlinkSync(DB_PATH + s); } catch (_) {} }
-});
+afterAll(async () => { await teardownTestSchema(); });
 
 function normPhone(phone) { return '57' + phone; }
 
@@ -31,6 +22,13 @@ async function registerClient(phone, label) {
   });
 }
 
+async function findOrCreateCustomer(db, phone, name) {
+  const { rows } = await db.query('SELECT id FROM customers WHERE phone=$1', [phone]);
+  if (rows[0]) return rows[0];
+  const { rows: inserted } = await db.query('INSERT INTO customers (phone, name) VALUES ($1, $2) RETURNING id', [phone, name]);
+  return inserted[0];
+}
+
 describe('GET /api/orders/mine', () => {
   test('devuelve solo los pedidos del cliente autenticado, mas recientes primero', async () => {
     await registerClient('3002220001', 'cliente_mine_a');
@@ -42,14 +40,13 @@ describe('GET /api/orders/mine', () => {
     const tokenB = loginB.body.token;
 
     const db = getDB();
-    const custA = db.prepare(`SELECT id FROM customers WHERE phone=?`).get(normPhone('3002220001'))
-      || { id: db.prepare(`INSERT INTO customers (phone, name) VALUES (?, 'A')`).run(normPhone('3002220001')).lastInsertRowid };
-    const custB = db.prepare(`SELECT id FROM customers WHERE phone=?`).get(normPhone('3002220002'))
-      || { id: db.prepare(`INSERT INTO customers (phone, name) VALUES (?, 'B')`).run(normPhone('3002220002')).lastInsertRowid };
+    const custA = await findOrCreateCustomer(db, normPhone('3002220001'), 'A');
+    const custB = await findOrCreateCustomer(db, normPhone('3002220002'), 'B');
 
-    db.prepare(`INSERT INTO orders (customer_id, product_name, status, requested_at) VALUES (?, 'Prod A1', 'pending', datetime('now','localtime','-1 minute'))`).run(custA.id);
-    db.prepare(`INSERT INTO orders (customer_id, product_name, status, requested_at) VALUES (?, 'Prod A2', 'en_camino', datetime('now','localtime'))`).run(custA.id);
-    db.prepare(`INSERT INTO orders (customer_id, product_name, status, requested_at) VALUES (?, 'Prod B1', 'pending', datetime('now','localtime'))`).run(custB.id);
+    await db.query(`INSERT INTO orders (customer_id, product_name, status, requested_at)
+      VALUES ($1, 'Prod A1', 'pending', to_char((now() AT TIME ZONE 'UTC') - INTERVAL '1 minute', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))`, [custA.id]);
+    await db.query(`INSERT INTO orders (customer_id, product_name, status, requested_at) VALUES ($1, 'Prod A2', 'en_camino', now_iso())`, [custA.id]);
+    await db.query(`INSERT INTO orders (customer_id, product_name, status, requested_at) VALUES ($1, 'Prod B1', 'pending', now_iso())`, [custB.id]);
 
     const res = await request(app).get('/api/orders/mine').set('Authorization', `Bearer ${tokenA}`);
     expect(res.status).toBe(200);

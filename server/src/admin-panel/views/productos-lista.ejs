@@ -1,0 +1,30 @@
+<%- include('partials/header', { csrf }) %>
+
+<h1>Productos</h1>
+<% if (error) { %><p class="error"><%= error %></p><% } %>
+
+<% if (products.length) { %>
+  <div class="grid">
+    <% products.forEach(p => { %>
+      <a class="product-card" href="/productos/<%= p.id %>">
+        <div class="product-thumb">
+          <% if (p.images && p.images.length) { %>
+            <img src="/img/<%= p.images[0] %>" alt="<%= p.name %>" loading="lazy">
+          <% } else { %>
+            <span class="ph">📦</span>
+          <% } %>
+        </div>
+        <div class="product-info">
+          <p class="name"><%= p.name %></p>
+          <p class="cat"><%= p.category || 'Sin categoría' %></p>
+          <p class="price">$<%= Number(p.price).toLocaleString('es-CO') %></p>
+          <% if (!p.available) { %><span class="badge-off">Inactivo</span><% } %>
+        </div>
+      </a>
+    <% }) %>
+  </div>
+<% } else { %>
+  <div class="empty-state">Aún no hay productos. <a href="/productos/nuevo">Crea el primero</a>.</div>
+<% } %>
+
+<%- include('partials/footer') %>

@@ -16,7 +16,7 @@ const {
 } = require('@whiskeysockets/baileys');
 const QRCode  = require('qrcode');
 const logger  = require('../utils/logger');
-const { getDB } = require('../db/database');
+const { getDB, withTransaction, createListenClient } = require('../db/database');
 const { encryptPhone, decryptPhone } = require('../utils/botCrypto');
 
 // ── Directorios ───────────────────────────────────────────────
@@ -40,8 +40,14 @@ let currentQR         = null; // data-URL para el endpoint admin
 let reconnectTimer    = null;
 let mediaCleanupInterval = null;
 let intentionalClose  = false; // true cuando pausamos/deslogueamos nosotros mismos
+let listenClient       = null; // conexion LISTEN/NOTIFY dedicada (ver setupOutboundListener)
+let listenRetryTimer   = null;
 
-const POLL_MS = 3000;
+// Con LISTEN/NOTIFY (ver setupOutboundListener) el bot se entera de
+// mensajes salientes nuevos casi al instante -- este intervalo ya es solo
+// la red de seguridad por si la suscripcion se cae, no el camino principal
+// como antes (que era de 3s fijos).
+const POLL_MS = 15_000;
 
 // ── Reconexión con backoff exponencial ─────────────────────────
 const BASE_RECONNECT_MS = 10_000;
@@ -165,15 +171,16 @@ async function convertToOggOpus(buffer, srcExt) {
   }
 }
 
-// ── bot_config (SQLite) ─────────────────────────────────────────
-function getBotConfigRow() {
-  return getDB().prepare('SELECT * FROM bot_config WHERE id = 1').get();
+// ── bot_config (Postgres) ─────────────────────────────────────────
+async function getBotConfigRow() {
+  const { rows } = await getDB().query('SELECT * FROM bot_config WHERE id = 1');
+  return rows[0];
 }
 
-function setDbStatus(status) {
-  getDB().prepare(
-    `UPDATE bot_config SET status = ?, updated_at = (datetime('now','localtime')) WHERE id = 1`
-  ).run(status);
+async function setDbStatus(status) {
+  await getDB().query(
+    `UPDATE bot_config SET status = $1, updated_at = now_iso() WHERE id = 1`, [status]
+  );
 }
 
 function wipeAuthDir() {
@@ -229,6 +236,49 @@ function unwrapMessage(message) {
   return message;
 }
 
+// ── LISTEN/NOTIFY: entrega casi instantanea de mensajes salientes ──────
+// Complementa (no reemplaza) el polling de mas abajo -- si Postgres o la
+// suscripcion fallan, el bot sigue funcionando igual, solo que con la
+// latencia del polling periodico (ver POLL_MS) en vez de instantanea.
+async function setupOutboundListener() {
+  if (listenClient) return;
+  try {
+    const client = createListenClient();
+    await client.connect();
+    await client.query('LISTEN outbound_message');
+    client.on('notification', () => {
+      pollOutbound().catch(e => logger.error({ err: e.message }, '[bot] pollOutbound (notify) err'));
+    });
+    client.on('error', (err) => {
+      logger.warn({ err: err.message }, '[bot] listener de mensajes salientes se cayo -- sigue funcionando solo con polling periodico');
+      listenClient = null;
+      scheduleListenerRetry();
+    });
+    listenClient = client;
+    logger.info('[bot] escuchando mensajes salientes nuevos en tiempo real (Postgres LISTEN)');
+  } catch (e) {
+    logger.warn({ err: e.message }, '[bot] no se pudo activar LISTEN -- el bot sigue funcionando solo con polling periodico');
+    listenClient = null;
+    scheduleListenerRetry();
+  }
+}
+
+function scheduleListenerRetry() {
+  if (listenRetryTimer) return;
+  listenRetryTimer = setTimeout(() => {
+    listenRetryTimer = null;
+    if (isReady) setupOutboundListener().catch(() => {});
+  }, 30_000).unref();
+}
+
+function teardownOutboundListener() {
+  if (listenRetryTimer) { clearTimeout(listenRetryTimer); listenRetryTimer = null; }
+  if (listenClient) {
+    try { listenClient.end(); } catch (_) {}
+    listenClient = null;
+  }
+}
+
 // ── Poll mensajes salientes ────────────────────────────────────
 async function pollOutbound() {
   if (!isReady || !sock) return;
@@ -236,13 +286,13 @@ async function pollOutbound() {
     // Bot y server viven en el mismo proceso -- antes esto era un
     // GET HTTP a si mismo cada POLL_MS (3s), agregando latencia de
     // red+JSON innecesaria a CADA ciclo, tenga o no mensajes pendientes.
-    const messages = getDB().prepare(`
+    const { rows: messages } = await getDB().query(`
       SELECT m.*, c.wa_jid AS wa_jid
       FROM messages m
       LEFT JOIN customers c ON c.phone = m.phone
       WHERE m.direction='outbound' AND m.sent=0
       ORDER BY m.created_at ASC
-    `).all();
+    `);
     for (const msg of messages) {
       if (!canSendMore()) {
         const now = Date.now();
@@ -308,7 +358,7 @@ async function pollOutbound() {
           await sock.sendMessage(jid, { text: msg.content });
         }
 
-        getDB().prepare('UPDATE messages SET sent=1 WHERE id=?').run(msg.id);
+        await getDB().query('UPDATE messages SET sent=1 WHERE id=$1', [msg.id]);
         sentTimestamps.push(Date.now());
         lastMessageAt = new Date().toISOString();
         await delay(1500 + Math.random() * 2000);
@@ -322,35 +372,39 @@ async function pollOutbound() {
 // del mismo contacto. En cuanto identificamos su numero real, se fusiona
 // todo (mensajes, pedidos, pendientes) bajo el numero correcto y se borra
 // el duplicado viejo.
-function mergeStaleLidCustomer(rawJid, realPhone) {
+async function mergeStaleLidCustomer(rawJid, realPhone) {
   if (!rawJid.endsWith('@lid')) return;
   const stalePhone = jidNormalizedUser(rawJid).split('@')[0];
   if (!stalePhone || stalePhone === realPhone) return;
-  const db    = getDB();
-  const stale = db.prepare('SELECT * FROM customers WHERE phone=?').get(stalePhone);
+  const db = getDB();
+  const { rows: staleRows } = await db.query('SELECT * FROM customers WHERE phone=$1', [stalePhone]);
+  const stale = staleRows[0];
   if (!stale) return;
-  const real  = db.prepare('SELECT * FROM customers WHERE phone=?').get(realPhone);
+  const { rows: realRows } = await db.query('SELECT * FROM customers WHERE phone=$1', [realPhone]);
+  const real = realRows[0];
 
-  db.transaction(() => {
-    db.prepare('UPDATE messages SET phone=? WHERE phone=?').run(realPhone, stalePhone);
+  await withTransaction(async (client) => {
+    await client.query('UPDATE messages SET phone=$1 WHERE phone=$2', [realPhone, stalePhone]);
 
-    if (db.prepare('SELECT 1 FROM pending_orders WHERE phone=?').get(stalePhone)) {
-      if (db.prepare('SELECT 1 FROM pending_orders WHERE phone=?').get(realPhone)) {
-        db.prepare('DELETE FROM pending_orders WHERE phone=?').run(stalePhone);
+    const { rows: staleHasPending } = await client.query('SELECT 1 FROM pending_orders WHERE phone=$1', [stalePhone]);
+    if (staleHasPending[0]) {
+      const { rows: realHasPending } = await client.query('SELECT 1 FROM pending_orders WHERE phone=$1', [realPhone]);
+      if (realHasPending[0]) {
+        await client.query('DELETE FROM pending_orders WHERE phone=$1', [stalePhone]);
       } else {
-        db.prepare('UPDATE pending_orders SET phone=? WHERE phone=?').run(realPhone, stalePhone);
+        await client.query('UPDATE pending_orders SET phone=$1 WHERE phone=$2', [realPhone, stalePhone]);
       }
     }
 
     if (real) {
-      db.prepare('UPDATE orders SET customer_id=? WHERE customer_id=?').run(real.id, stale.id);
-      db.prepare('UPDATE customers SET name=COALESCE(name,?), profile_pic_url=COALESCE(profile_pic_url,?) WHERE id=?')
-        .run(stale.name, stale.profile_pic_url, real.id);
-      db.prepare('DELETE FROM customers WHERE id=?').run(stale.id);
+      await client.query('UPDATE orders SET customer_id=$1 WHERE customer_id=$2', [real.id, stale.id]);
+      await client.query('UPDATE customers SET name=COALESCE(name,$1), profile_pic_url=COALESCE(profile_pic_url,$2) WHERE id=$3',
+        [stale.name, stale.profile_pic_url, real.id]);
+      await client.query('DELETE FROM customers WHERE id=$1', [stale.id]);
     } else {
-      db.prepare('UPDATE customers SET phone=? WHERE id=?').run(realPhone, stale.id);
+      await client.query('UPDATE customers SET phone=$1 WHERE id=$2', [realPhone, stale.id]);
     }
-  })();
+  });
 
   logger.info({ from: stalePhone, to: realPhone }, '[bot] fusionado chat duplicado @lid con numero real');
 }
@@ -370,7 +424,7 @@ async function handleInbound(msg) {
   const jid     = msg.key.senderPn ? jidNormalizedUser(msg.key.senderPn) : jidNormalizedUser(rawJid);
   const phone   = jid.split('@')[0];
   if (msg.key.senderPn) {
-    try { mergeStaleLidCustomer(rawJid, phone); } catch (e) { logger.error({ err: e.message }, '[bot] merge lid err'); }
+    try { await mergeStaleLidCustomer(rawJid, phone); } catch (e) { logger.error({ err: e.message }, '[bot] merge lid err'); }
   }
   const name    = msg.pushName || phone;
 
@@ -471,7 +525,7 @@ async function handleConnectionUpdate(update) {
   if (qr) {
     try {
       currentQR = await QRCode.toDataURL(qr);
-      setDbStatus('qr_pending');
+      await setDbStatus('qr_pending');
       logger.info('[bot] QR listo — GET /api/bot/qr');
     } catch (e) {
       currentQR = null;
@@ -485,16 +539,19 @@ async function handleConnectionUpdate(update) {
     connectedSince     = new Date().toISOString();
     reconnectAttempts  = 0;
     reconnectExhausted = false;
-    setDbStatus('connected');
+    await setDbStatus('connected');
     logger.info('[bot] Conectado y listo');
     if (pollTimer) clearInterval(pollTimer);
     pollTimer = setInterval(pollOutbound, POLL_MS);
+    setupOutboundListener().catch(() => {});
+    pollOutbound().catch(() => {}); // drena lo que se haya acumulado mientras estaba desconectado
   }
 
   if (connection === 'close') {
     isReady = false;
     connectedSince = null;
     if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    teardownOutboundListener();
 
     if (intentionalClose) {
       intentionalClose = false; // pausa/logout manual -- no auto-reconectar
@@ -509,12 +566,12 @@ async function handleConnectionUpdate(update) {
       wipeAuthDir();
       currentQR = null;
       reconnectAttempts = 0;
-      setDbStatus('disconnected');
+      await setDbStatus('disconnected');
       _connect().catch(e => logger.error({ err: e.message }, '[bot] error regenerando QR tras logout'));
       return;
     }
 
-    setDbStatus('connecting');
+    await setDbStatus('connecting');
     scheduleReconnect();
   }
 }
@@ -560,7 +617,7 @@ async function _connect() {
     auth: state,
     logger: baileysLogger,
     printQRInTerminal: false,
-    browser: ['Concentrados Monserrath', 'Chrome', '1.0.0'],
+    browser: ['Supermercado GO', 'Chrome', '1.0.0'],
     syncFullHistory: false,
     markOnlineOnConnect: false,
   });
@@ -586,7 +643,7 @@ async function initBot() {
     logger.warn('[bot] BOT_ENABLED != true — bot desactivado');
     return;
   }
-  const cfg = getBotConfigRow();
+  const cfg = await getBotConfigRow();
   if (!cfg.phone_encrypted) {
     logger.warn('[bot] Sin número configurado — esperando configuración desde el panel (POST /api/bot/configure)');
     return;
@@ -617,6 +674,7 @@ async function logoutBot() {
   currentQR = null;
   connectedSince = null;
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  teardownOutboundListener();
   if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
 }
 
@@ -627,14 +685,14 @@ async function configurePhone(newPhone) {
   const digits = String(newPhone || '').replace(/\D/g, '');
   if (digits.length < 10) throw new Error('Número inválido — incluye indicativo de país');
 
-  const cfg = getBotConfigRow();
+  const cfg = await getBotConfigRow();
   if (cfg.phone_encrypted) await logoutBot();
 
   const encrypted = encryptPhone(digits);
-  getDB().prepare(
-    `UPDATE bot_config SET phone_encrypted = ?, status = 'disconnected', paused = 0,
-     updated_at = (datetime('now','localtime')) WHERE id = 1`
-  ).run(encrypted);
+  await getDB().query(
+    `UPDATE bot_config SET phone_encrypted = $1, status = 'disconnected', paused = 0,
+     updated_at = now_iso() WHERE id = 1`, [encrypted]
+  );
 
   await initBot();
   return { changed: !!cfg.phone_encrypted };
@@ -646,28 +704,29 @@ async function pauseBot() {
   isReady = false;
   connectedSince = null;
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  teardownOutboundListener();
   if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
-  getDB().prepare(
-    `UPDATE bot_config SET paused = 1, status = 'paused', updated_at = (datetime('now','localtime')) WHERE id = 1`
-  ).run();
+  await getDB().query(
+    `UPDATE bot_config SET paused = 1, status = 'paused', updated_at = now_iso() WHERE id = 1`
+  );
   logger.info('[bot] Pausado por admin');
 }
 
 async function resumeBot() {
-  const cfg = getBotConfigRow();
+  const cfg = await getBotConfigRow();
   if (!cfg.phone_encrypted) throw new Error('No hay número configurado — configura uno primero');
-  getDB().prepare(
-    `UPDATE bot_config SET paused = 0, status = 'disconnected', updated_at = (datetime('now','localtime')) WHERE id = 1`
-  ).run();
+  await getDB().query(
+    `UPDATE bot_config SET paused = 0, status = 'disconnected', updated_at = now_iso() WHERE id = 1`
+  );
   logger.info('[bot] Reanudando…');
   reconnectAttempts  = 0;
   reconnectExhausted = false;
   await _connect();
 }
 
-function getStatus() {
+async function getStatus() {
   const cutoff = Date.now() - 3_600_000;
-  const cfg = getBotConfigRow();
+  const cfg = await getBotConfigRow();
   let phoneMasked = null;
   if (cfg.phone_encrypted) {
     try {

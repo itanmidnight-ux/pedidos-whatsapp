@@ -1,0 +1,74 @@
+<%- include('partials/header', { csrf }) %>
+
+<p><a href="/productos">&larr; Volver a productos</a></p>
+<h1><%= product ? 'Editar producto' : 'Nuevo producto' %></h1>
+<% if (error) { %><p class="error"><%= error %></p><% } %>
+
+<div class="form-layout">
+  <form class="card" method="post" action="<%= product ? ('/productos/' + product.id) : '/productos/nuevo' %>">
+    <input type="hidden" name="_csrf" value="<%= csrf %>">
+
+    <label>Nombre</label>
+    <input type="text" name="name" value="<%= product ? product.name : '' %>" required maxlength="200">
+
+    <label>Precio (COP)</label>
+    <input type="number" name="price" value="<%= product ? product.price : '' %>" required min="0" step="1">
+
+    <label>Categoría</label>
+    <select name="category">
+      <option value="">Sin categoría</option>
+      <% ['Frutas y Verduras','Carnes y Pollo','Lácteos y Huevos','Panadería','Abarrotes','Bebidas','Aseo del Hogar','Cuidado Personal','Mascotas','Congelados'].forEach(c => { %>
+        <option value="<%= c %>" <%= product && product.category === c ? 'selected' : '' %>><%= c %></option>
+      <% }) %>
+    </select>
+
+    <label>Descripción</label>
+    <textarea name="description" rows="4" maxlength="2000"><%= product ? (product.description || '') : '' %></textarea>
+
+    <label>SKU (opcional)</label>
+    <input type="text" name="sku" value="<%= product ? (product.sku || '') : '' %>" maxlength="60">
+
+    <label>Stock (vacío = sin límite)</label>
+    <input type="number" name="stock" value="<%= product && product.stock !== null && product.stock !== undefined ? product.stock : '' %>" min="0">
+
+    <label class="check"><input type="checkbox" name="available" <%= !product || product.available ? 'checked' : '' %>> Disponible</label>
+    <label class="check"><input type="checkbox" name="favorite" <%= product && product.favorite ? 'checked' : '' %>> Destacado</label>
+    <label class="check"><input type="checkbox" name="no_fiado" <%= product && product.no_fiado ? 'checked' : '' %>> No fiado</label>
+
+    <button type="submit">Guardar</button>
+  </form>
+
+  <% if (product) { %>
+    <div class="card">
+      <h2>Imágenes</h2>
+      <div class="thumbs">
+        <% (product.images || []).forEach(filename => { %>
+          <div class="thumb-item">
+            <img src="/img/<%= filename %>" alt="">
+            <form method="post" action="/productos/<%= product.id %>/imagenes/<%= encodeURIComponent(filename) %>/eliminar" onsubmit="return confirm('¿Eliminar esta imagen?');">
+              <input type="hidden" name="_csrf" value="<%= csrf %>">
+              <button type="submit" class="link-btn danger">Eliminar</button>
+            </form>
+          </div>
+        <% }) %>
+        <% if (!(product.images || []).length) { %><p class="muted">Sin imágenes aún.</p><% } %>
+      </div>
+      <form method="post" action="/productos/<%= product.id %>/imagenes" enctype="multipart/form-data" class="upload-form">
+        <input type="hidden" name="_csrf" value="<%= csrf %>">
+        <input type="file" name="image" accept="image/*" required>
+        <button type="submit">Subir imagen</button>
+      </form>
+    </div>
+
+    <div class="card danger-zone">
+      <h2>Eliminar producto</h2>
+      <p class="muted">Esta acción no se puede deshacer.</p>
+      <form method="post" action="/productos/<%= product.id %>/eliminar" onsubmit="return confirm('¿Eliminar este producto permanentemente?');">
+        <input type="hidden" name="_csrf" value="<%= csrf %>">
+        <button type="submit" class="danger">Eliminar producto</button>
+      </form>
+    </div>
+  <% } %>
+</div>
+
+<%- include('partials/footer') %>

@@ -3,30 +3,26 @@ const path = require('path');
 const os = require('os');
 const fs = require('fs');
 
-const DB_PATH = path.join(os.tmpdir(), `report-categories-test-${Date.now()}.db`);
-process.env.DB_PATH = DB_PATH;
-process.env.JWT_SECRET = 'test-secret';
-process.env.API_KEY = 'test-api-key';
+const { setupTestEnv, teardownTestSchema } = require('./helpers/testDb');
+setupTestEnv('report-categories');
 process.env.SEED_PASSWORD_JESUS = 'admin-test-pw';
-process.env.NODE_ENV = 'test';
 process.env.REPORTS_DIR = path.join(os.tmpdir(), `reports-cat-test-${Date.now()}`);
 
 const request = require('supertest');
 const ExcelJS = require('exceljs');
-const { initDB, closeDB, getDB } = require('../src/db/database');
+const { initDB, getDB } = require('../src/db/database');
 const app = require('../src/app');
 
 beforeAll(async () => {
   await initDB();
   const db = getDB();
-  const cust = db.prepare(`INSERT INTO customers (phone, name, created_at) VALUES ('573001112233','Cliente Test', datetime('now','localtime'))`).run();
-  const order = db.prepare(`INSERT INTO orders (customer_id, product_name, product_price, status, requested_at, delivered_at)
-              VALUES (?, 'Bulto 40kg', 50000, 'entregado', datetime('now','localtime'), datetime('now','localtime'))`).run(cust.lastInsertRowid);
-  db.prepare(`INSERT INTO order_items (order_id, product_name, product_price, quantity) VALUES (?, 'Bulto 40kg', 50000, 1)`).run(order.lastInsertRowid);
+  const { rows: custRows } = await db.query(`INSERT INTO customers (phone, name, created_at) VALUES ('573001112233','Cliente Test', now_iso()) RETURNING id`);
+  const { rows: orderRows } = await db.query(`INSERT INTO orders (customer_id, product_name, product_price, status, requested_at, delivered_at)
+              VALUES ($1, 'Bulto 40kg', 50000, 'entregado', now_iso(), now_iso()) RETURNING id`, [custRows[0].id]);
+  await db.query(`INSERT INTO order_items (order_id, product_name, product_price, quantity) VALUES ($1, 'Bulto 40kg', 50000, 1)`, [orderRows[0].id]);
 });
-afterAll(() => {
-  closeDB();
-  for (const s of ['', '-wal', '-shm']) { try { fs.unlinkSync(DB_PATH + s); } catch (_) {} }
+afterAll(async () => {
+  await teardownTestSchema();
 });
 
 async function loginAdmin() {

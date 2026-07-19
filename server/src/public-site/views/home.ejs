@@ -1,0 +1,33 @@
+<%- include('partials/header', { title, BRAND }) %>
+
+<div class="hero">
+  <h1><%= BRAND.tagline %></h1>
+  <p>Víveres, aseo, carnes y más — con la calidad de siempre, ahora también en línea.</p>
+  <a class="cta" href="/catalogo">Ver catálogo completo</a>
+</div>
+
+<main class="container">
+  <h2 class="section-title">Categorías</h2>
+  <div class="grid">
+    <% categories.forEach(c => { %>
+      <a class="cat-card" href="/catalogo?categoria=<%= encodeURIComponent(c.name) %>">
+        <div class="emoji"><%= c.meta.emoji %></div>
+        <div class="name"><%= c.name %></div>
+        <div class="count"><%= c.total %> productos</div>
+      </a>
+    <% }) %>
+  </div>
+
+  <h2 class="section-title" style="margin-top:2.5rem;">Productos destacados</h2>
+  <% if (destacados.length) { %>
+    <div class="grid">
+      <% destacados.forEach(p => { %>
+        <%- include('partials/product-card', { p }) %>
+      <% }) %>
+    </div>
+  <% } else { %>
+    <div class="empty-state">Aún no hay productos publicados. Vuelve pronto.</div>
+  <% } %>
+</main>
+
+<%- include('partials/footer', { BRAND }) %>

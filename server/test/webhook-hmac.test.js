@@ -1,24 +1,16 @@
 'use strict';
-const path = require('path');
-const os = require('os');
 const crypto = require('crypto');
-const fs = require('fs');
 
-const DB_PATH = path.join(os.tmpdir(), `webhook-hmac-test-${Date.now()}.db`);
-process.env.DB_PATH = DB_PATH;
-process.env.API_KEY = 'test-api-key';
+const { setupTestEnv, teardownTestSchema } = require('./helpers/testDb');
+setupTestEnv('webhook-hmac');
 process.env.WEBHOOK_SECRET = 'test-webhook-secret';
-process.env.NODE_ENV = 'test';
 
 const request = require('supertest');
-const { initDB, closeDB } = require('../src/db/database');
+const { initDB } = require('../src/db/database');
 const app = require('../src/app');
 
 beforeAll(async () => { await initDB(); });
-afterAll(() => {
-  closeDB();
-  for (const s of ['', '-wal', '-shm']) { try { fs.unlinkSync(DB_PATH + s); } catch (_) {} }
-});
+afterAll(async () => { await teardownTestSchema(); });
 
 function sign(body, ts) {
   return crypto.createHmac('sha256', process.env.WEBHOOK_SECRET)

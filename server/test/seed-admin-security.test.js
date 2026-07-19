@@ -1,24 +1,18 @@
 'use strict';
-const path = require('path');
-const os = require('os');
-
-const DB_PATH = path.join(os.tmpdir(), `seed-admin-test-${Date.now()}.db`);
-process.env.DB_PATH = DB_PATH;
-process.env.NODE_ENV = 'test';
+const { setupTestEnv, teardownTestSchema } = require('./helpers/testDb');
+setupTestEnv('seed-admin-security');
 delete process.env.SEED_PASSWORD_JESUS;
 
 const bcrypt = require('bcrypt');
-const { initDB, getDB, closeDB } = require('../src/db/database');
+const { initDB, getDB } = require('../src/db/database');
 
-afterAll(() => {
-  closeDB();
-  const fs = require('fs');
-  for (const s of ['', '-wal', '-shm']) { try { fs.unlinkSync(DB_PATH + s); } catch (_) {} }
+afterAll(async () => {
+  await teardownTestSchema();
 });
 
 test('el admin jesus NUNCA se crea con password literal "jesus" cuando falta SEED_PASSWORD_JESUS', async () => {
   await initDB();
-  const user = getDB().prepare('SELECT password_hash FROM users WHERE username = ?').get('jesus');
-  const isDefaultWeak = await bcrypt.compare('jesus', user.password_hash);
+  const { rows } = await getDB().query('SELECT password_hash FROM users WHERE username = $1', ['jesus']);
+  const isDefaultWeak = await bcrypt.compare('jesus', rows[0].password_hash);
   expect(isDefaultWeak).toBe(false);
 });

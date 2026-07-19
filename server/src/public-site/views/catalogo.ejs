@@ -1,0 +1,33 @@
+<%- include('partials/header', { title, BRAND }) %>
+
+<main class="container">
+  <h2 class="section-title">Catálogo</h2>
+
+  <form class="search-box" method="get" action="/catalogo">
+    <% if (categoria) { %><input type="hidden" name="categoria" value="<%= categoria %>"><% } %>
+    <input type="text" name="q" value="<%= q %>" placeholder="Buscar producto...">
+    <button type="submit">Buscar</button>
+  </form>
+
+  <div class="filters">
+    <a href="/catalogo<%= q ? ('?q=' + encodeURIComponent(q)) : '' %>" class="<%= !categoria ? 'active' : '' %>">Todas</a>
+    <% categories.forEach(c => { %>
+      <a class="<%= categoria === c.name ? 'active' : '' %>"
+         href="/catalogo?categoria=<%= encodeURIComponent(c.name) %><%= q ? ('&q=' + encodeURIComponent(q)) : '' %>">
+        <%= c.meta.emoji %> <%= c.name %>
+      </a>
+    <% }) %>
+  </div>
+
+  <% if (products.length) { %>
+    <div class="grid">
+      <% products.forEach(p => { %>
+        <%- include('partials/product-card', { p }) %>
+      <% }) %>
+    </div>
+  <% } else { %>
+    <div class="empty-state">No encontramos productos con ese filtro.</div>
+  <% } %>
+</main>
+
+<%- include('partials/footer', { BRAND }) %>

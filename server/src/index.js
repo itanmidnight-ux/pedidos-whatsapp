@@ -40,8 +40,8 @@ initDB().then(() => {
     if (shuttingDown) return;
     shuttingDown = true;
     logger.info(`[shutdown] ${signal} recibido, cerrando ordenadamente...`);
-    server.close(() => {
-      closeDB();
+    server.close(async () => {
+      await closeDB();
       logger.info('[shutdown] servidor y DB cerrados.');
       process.exit(0);
     });

@@ -1,0 +1,39 @@
+<%- include('../partials/header', { title, BRAND }) %>
+
+<main class="container">
+  <div class="card">
+    <h1>Términos y Condiciones</h1>
+    <p><em>Plantilla general — debe ser revisada por un abogado antes de publicarse como versión definitiva.</em></p>
+
+    <h2>1. Aceptación de los términos</h2>
+    <p>Al usar el sitio web, la aplicación o los canales de pedido de <%= BRAND.name %>, aceptas estos términos
+       y condiciones, así como nuestra <a href="/politicas/privacidad">política de privacidad</a>.</p>
+
+    <h2>2. Pedidos y disponibilidad</h2>
+    <p>Los productos mostrados en el catálogo están sujetos a disponibilidad de inventario. <%= BRAND.name %>
+       se reserva el derecho de cancelar o ajustar un pedido si un producto no está disponible al momento de
+       prepararlo, notificando al cliente antes de la entrega.</p>
+
+    <h2>3. Precios</h2>
+    <p>Los precios se muestran en pesos colombianos (COP) e incluyen los impuestos aplicables según la ley
+       colombiana vigente. Los precios pueden cambiar sin previo aviso, pero el precio válido para un pedido
+       ya confirmado es el vigente al momento de la confirmación.</p>
+
+    <h2>4. Medios de pago</h2>
+    <p>Se aceptan los medios de pago habilitados en la app o indicados por nuestro equipo de atención
+       (transferencia, pago contra entrega u otros que se habiliten).</p>
+
+    <h2>5. Responsabilidad del cliente</h2>
+    <p>El cliente es responsable de proporcionar una dirección de entrega correcta y de estar disponible en el
+       horario acordado para recibir el pedido.</p>
+
+    <h2>6. Ley aplicable</h2>
+    <p>Estos términos se rigen por la legislación colombiana, incluyendo el Estatuto del Consumidor
+       (Ley 1480 de 2011).</p>
+
+    <h2>7. Contacto</h2>
+    <p>Para dudas sobre estos términos, escríbenos a <a href="mailto:<%= BRAND.email %>"><%= BRAND.email %></a>.</p>
+  </div>
+</main>
+
+<%- include('../partials/footer', { BRAND }) %>

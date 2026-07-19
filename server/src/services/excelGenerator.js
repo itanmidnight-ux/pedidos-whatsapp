@@ -63,12 +63,12 @@ async function generateRangeReportXLSX(fromISO, toISO, categories) {
   const cats = (categories && categories.length ? categories : CATEGORIES).filter(c => CATEGORIES.includes(c));
   const db = getDB();
   const wb = new ExcelJS.Workbook();
-  wb.creator = 'Concentrados Monserrath';
+  wb.creator = 'Supermercado GO';
   wb.created = new Date(fromISO);
   const rangeLabel = `${fromISO} a ${toISO}`;
 
   if (cats.includes('resumen')) {
-    const s = getFinancialSummary(db, fromISO, toISO);
+    const s = await getFinancialSummary(db, fromISO, toISO);
     const ws = wb.addWorksheet('Resumen');
     ws.columns = [{ key: 'k', width: 28 }, { key: 'v', width: 20 }];
     addTitleRow(ws, CATEGORY_LABELS.resumen, rangeLabel, 2);
@@ -85,7 +85,7 @@ async function generateRangeReportXLSX(fromISO, toISO, categories) {
   }
 
   if (cats.includes('ventas_dia')) {
-    const rows = getSalesByDay(db, fromISO, toISO);
+    const rows = await getSalesByDay(db, fromISO, toISO);
     const ws = wb.addWorksheet('Ventas por día', { views: [{ state: 'frozen', ySplit: 3 }] });
     ws.columns = [{ key: 'dia', width: 16 }, { key: 'pedidos', width: 12 }, { key: 'ingresos', width: 16 }];
     addTitleRow(ws, CATEGORY_LABELS.ventas_dia, rangeLabel, 3);
@@ -98,7 +98,7 @@ async function generateRangeReportXLSX(fromISO, toISO, categories) {
   }
 
   if (cats.includes('ventas_producto')) {
-    const rows = getSalesByProduct(db, fromISO, toISO);
+    const rows = await getSalesByProduct(db, fromISO, toISO);
     const ws = wb.addWorksheet('Ventas por producto', { views: [{ state: 'frozen', ySplit: 3 }] });
     ws.columns = [{ key: 'producto', width: 30 }, { key: 'unidades', width: 12 }, { key: 'ingresos', width: 16 }];
     addTitleRow(ws, CATEGORY_LABELS.ventas_producto, rangeLabel, 3);
@@ -111,7 +111,7 @@ async function generateRangeReportXLSX(fromISO, toISO, categories) {
   }
 
   if (cats.includes('empleados')) {
-    const rows = getEmployeePerformance(db, fromISO, toISO);
+    const rows = await getEmployeePerformance(db, fromISO, toISO);
     const ws = wb.addWorksheet('Empleados', { views: [{ state: 'frozen', ySplit: 3 }] });
     ws.columns = [
       { key: 'username', width: 16 }, { key: 'nombre', width: 22 },
@@ -126,7 +126,7 @@ async function generateRangeReportXLSX(fromISO, toISO, categories) {
   }
 
   if (cats.includes('clientes')) {
-    const { nuevos, recurrentes, clientes } = getCustomerReport(db, fromISO, toISO);
+    const { nuevos, recurrentes, clientes } = await getCustomerReport(db, fromISO, toISO);
     const ws = wb.addWorksheet('Clientes', { views: [{ state: 'frozen', ySplit: 3 }] });
     ws.columns = [
       { key: 'cliente', width: 24 }, { key: 'telefono', width: 16 },
