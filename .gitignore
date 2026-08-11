@@ -16,6 +16,7 @@ reports/
 android-app/.dart_tool/
 android-app/build/
 android-app/debug-symbols/
+debug-symbols/
 installer/node_modules/
 .pids.json
 .wwebjs_auth/
