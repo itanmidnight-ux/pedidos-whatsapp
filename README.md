@@ -15,6 +15,14 @@
 
 ---
 
+## Identidad pública del repositorio
+
+- **Nombre recomendado:** `whatsapp-order-platform`
+- **Nombre actual:** `PROJECT-2-monserrath`
+- **Posicionamiento:** plataforma comercial reutilizable para ventas, pedidos y atención por WhatsApp.
+
+---
+
 Pensada para equipos de ventas, distribución y atención al cliente que operan por WhatsApp — sin importar el rubro — y necesitan dejar de gestionar pedidos a mano en el chat. Los clientes piden en lenguaje natural, el bot interpreta la intención automáticamente, el equipo recibe y gestiona todo desde una app propia, y la gerencia obtiene analíticas reales de ventas sin depender de terceros.
 
 Cualquier empresa con un flujo de "el cliente escribe, alguien anota el pedido en un cuaderno o en el chat" puede adoptar esta plataforma tal cual o como base para su propio catálogo, marca y reglas de negocio.
