@@ -13,7 +13,7 @@ const app = express();
 
 // Necesario cuando el servidor está detrás de un proxy (ngrok, nginx, etc.)
 // Sin esto express-rate-limit lanza ERR_ERL_UNEXPECTED_X_FORWARDED_FOR
-app.set('trust proxy', 1);
+app.set('trust proxy', process.env.TRUST_PROXY === 'true' ? 1 : false);
 app.use(compression());
 
 const { ipActivityMiddleware, startIpActivityFlusher } = require('./middleware/ipActivity');
@@ -102,13 +102,13 @@ app.use(cors({
       cb(new Error('Origen no permitido por CORS'));
     } catch (e) { cb(e); }
   },
-  credentials: true,
+  credentials: process.env.CORS_ALLOW_CREDENTIALS === 'true',
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-API-Key'],
 }));
 
 app.use(express.json({ limit: '2mb' }));
-app.use(express.urlencoded({ extended: true, limit: '2mb' }));
+app.use(express.urlencoded({ extended: false, limit: '2mb', parameterLimit: 100 }));
 
 // ── Rate limiting (desactivado en tests: no aporta nada y solo hace
 // que los tests se pisen entre sí a través del contador compartido) ──

@@ -2,6 +2,10 @@
 
 # 📦 Plataforma de Pedidos por WhatsApp
 
+> Seguridad y despliegue: [SECURITY_AUDIT.md](SECURITY_AUDIT.md)
+
+[![Project focus](https://readme-typing-svg.demolab.com?font=Inter&weight=700&size=20&duration=2600&pause=700&color=16A34A&center=true&vCenter=true&width=860&lines=Pedidos+por+WhatsApp;API+segura+para+operaciones;Flutter+para+equipos+y+clientes)](https://github.com/itanmidnight-ux/PROJECT-2-monserrath)
+
 **Convierte cualquier número de WhatsApp en un canal de ventas completo: bot con lenguaje natural, servidor endurecido en seguridad, panel de analíticas nativo y app multiplataforma para tu equipo y tus clientes.**
 
 [![Node.js](https://img.shields.io/badge/Node.js-20_LTS-339933?logo=node.js&logoColor=white)](server/package.json)

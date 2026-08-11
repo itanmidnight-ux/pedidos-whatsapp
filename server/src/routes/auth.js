@@ -49,10 +49,12 @@ function clearAttempts(key) {
 // ── Helpers ────────────────────────────────────────────────────
 function signToken(user) {
   const jti = crypto.randomUUID();
+  const issuer = process.env.JWT_ISSUER || 'supermercado-go-api';
+  const audience = process.env.JWT_AUDIENCE || 'supermercado-go-app';
   const token = jwt.sign(
     { id: user.id, username: user.username, role: user.role, jti },
     process.env.JWT_SECRET,
-    { expiresIn: '30d' }
+    { expiresIn: '30d', algorithm: 'HS256', issuer, audience }
   );
   return {
     token,
@@ -166,7 +168,12 @@ router.post('/refresh', async (req, res, next) => {
     let payload;
     try {
       // Allow expired tokens (up to 7 extra days) so refresh still works
-      payload = jwt.verify(old, process.env.JWT_SECRET, { ignoreExpiration: true });
+      payload = jwt.verify(old, process.env.JWT_SECRET, {
+        ignoreExpiration: true,
+        algorithms: ['HS256'],
+        issuer: process.env.JWT_ISSUER || 'supermercado-go-api',
+        audience: process.env.JWT_AUDIENCE || 'supermercado-go-app',
+      });
     } catch {
       return res.status(401).json({ error: 'Token inválido' });
     }
