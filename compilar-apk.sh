@@ -8,6 +8,17 @@
 
 set -euo pipefail
 
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+    cat <<'HELP'
+Uso: ./compilar-apk.sh [--clean]
+
+Compila android-app y deja el APK generado en app-release.apk (ignorado por Git).
+  --clean   limpia artefactos Flutter antes de resolver dependencias.
+  -h,--help muestra esta ayuda sin instalar paquetes ni compilar.
+HELP
+    exit 0
+fi
+
 # ── Rutas ────────────────────────────────────────────────────────
 PROJ="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APPDIR="$PROJ/android-app"
